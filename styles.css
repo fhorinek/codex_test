@@ -62,6 +62,7 @@ body {
   margin: 0;
   padding: 16px;
   font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+  font-variant-ligatures: none;
   font-size: 14px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -78,6 +79,7 @@ body {
   caret-color: #1d1f2b;
   padding: 16px;
   font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+  font-variant-ligatures: none;
   font-size: 14px;
   line-height: 1.5;
   outline: none;
@@ -121,13 +123,14 @@ body {
 
 .editor-actions {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   margin-top: 12px;
   gap: 12px;
 }
 
-.editor-actions button {
+.editor-actions button,
+.toolbar-button {
   background: #1d1f2b;
   color: #ffffff;
   border: none;
@@ -192,6 +195,10 @@ body {
   flex-wrap: wrap;
   gap: 12px;
   align-items: center;
+}
+
+.toolbar-button {
+  margin-left: auto;
 }
 
 .graph-toolbar input[type="text"] {

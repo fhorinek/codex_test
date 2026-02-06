@@ -268,7 +268,7 @@ function highlightText(lines) {
       }
       return `<span class="${baseClass}">&nbsp;</span>`;
     })
-    .join("");
+    .join("\n");
   highlightLayer.innerHTML = highlighted;
 }
 
@@ -329,8 +329,9 @@ function setActiveSuggestion() {
 function positionSuggestions() {
   const cursor = editor.selectionStart;
   const coords = getCaretCoordinates(editor, cursor);
-  suggestions.style.left = `${coords.left}px`;
-  suggestions.style.top = `${coords.top + coords.height + 6}px`;
+  const wrapperRect = editor.parentElement.getBoundingClientRect();
+  suggestions.style.left = `${coords.left - wrapperRect.left}px`;
+  suggestions.style.top = `${coords.top - wrapperRect.top + coords.height + 6}px`;
 }
 
 function getCaretCoordinates(textarea, position) {
@@ -472,6 +473,8 @@ function renderGraph() {
   const positions = new Map();
   let y = 40;
   const spacingY = 170;
+  const nodeWidth = 220;
+  const nodeHeight = 120;
 
   visibleTasks.forEach((task) => {
     const x = 60 + task.depth * 260;
@@ -487,10 +490,10 @@ function renderGraph() {
       .filter((child) => positions.has(child.id))
       .forEach((child) => {
         const childPos = positions.get(child.id);
-        const startX = pos.x + 110;
-        const startY = pos.y + 40;
-        const endX = childPos.x + 110;
-        const endY = childPos.y;
+        const startX = pos.x + nodeWidth;
+        const startY = pos.y + nodeHeight / 2;
+        const endX = childPos.x;
+        const endY = childPos.y + nodeHeight / 2;
         const midY = (startY + endY) / 2;
         paths.push(
           `<path d="M ${startX} ${startY} C ${startX} ${midY} ${endX} ${midY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="2" fill="none" />`
@@ -631,11 +634,14 @@ function focusOnTask(task) {
   const centerY = pos.y + 40;
   state.transform.x = canvasRect.width / 2 - centerX * state.transform.scale;
   state.transform.y = canvasRect.height / 2 - centerY * state.transform.scale;
-  applyTransform();
+  applyTransform(true);
 }
 
-function applyTransform() {
+function applyTransform(animate = false) {
   const { x, y, scale } = state.transform;
+  const transitionValue = animate ? "transform 0.35s ease" : "none";
+  graphNodes.style.transition = transitionValue;
+  graphLines.style.transition = transitionValue;
   graphNodes.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
   graphLines.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
 }
