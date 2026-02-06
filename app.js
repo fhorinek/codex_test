@@ -1,18 +1,24 @@
-const editor = document.getElementById("task-editor");
-const highlightLayer = document.getElementById("highlight-layer");
-const suggestions = document.getElementById("suggestions");
-const graphNodes = document.getElementById("graph-nodes");
-const graphLines = document.getElementById("graph-lines");
-const searchInput = document.getElementById("search-input");
-const searchName = document.getElementById("search-name");
-const searchDescription = document.getElementById("search-description");
-const searchTag = document.getElementById("search-tag");
-const searchPerson = document.getElementById("search-person");
-const tagList = document.getElementById("tag-list");
-const personList = document.getElementById("person-list");
-const clearFilters = document.getElementById("clear-filters");
-const graphCanvas = document.getElementById("graph-canvas");
-const divider = document.getElementById("divider");
+import { parseTasks, renderMarkdown } from "./task.js";
+import { createEditor } from "./editor.js";
+import { createCanvas } from "./canvas.js";
+
+const dom = {
+  editor: document.getElementById("task-editor"),
+  highlightLayer: document.getElementById("highlight-layer"),
+  suggestions: document.getElementById("suggestions"),
+  graphNodes: document.getElementById("graph-nodes"),
+  graphLines: document.getElementById("graph-lines"),
+  searchInput: document.getElementById("search-input"),
+  searchName: document.getElementById("search-name"),
+  searchDescription: document.getElementById("search-description"),
+  searchTag: document.getElementById("search-tag"),
+  searchPerson: document.getElementById("search-person"),
+  tagList: document.getElementById("tag-list"),
+  personList: document.getElementById("person-list"),
+  clearFilters: document.getElementById("clear-filters"),
+  graphCanvas: document.getElementById("graph-canvas"),
+  divider: document.getElementById("divider"),
+};
 
 const state = {
   tasks: [],
@@ -33,577 +39,33 @@ const state = {
 
 const sample = `* Launch sprint board\n#productivity #planning\n@maya @luis\n**Goal:** Turn raw task scripts into a visual map. {Refinement}\n\n    * Define parsing rules\n    #parser\n    @maya\n    Draft the parser for tags, people, and markdown descriptions.\n\n* Refinement\n#ux\n@luis\nCollect feedback and iterate on the experience.\n`;
 
-editor.value = sample;
+dom.editor.value = sample;
 
-function escapeHtml(value) {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
-}
+const editorController = createEditor({
+  state,
+  dom,
+  onSync: sync,
+  onSelectTask: handleEditorSelection,
+});
 
-function applyInlineMarkdown(text) {
-  let value = text;
-  value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "<img alt=\"$1\" src=\"$2\" />");
-  value = value.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    "<a href=\"$2\" target=\"_blank\" rel=\"noopener\">$1</a>"
-  );
-  value = value.replace(
-    /(https?:\/\/[^\s<]+)/g,
-    "<a href=\"$1\" target=\"_blank\" rel=\"noopener\">$1</a>"
-  );
-  value = value.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  value = value.replace(/__([^_]+)__/g, "<u>$1</u>");
-  value = value.replace(/==([^=]+)==/g, "<mark>$1</mark>");
-  value = value.replace(/\*([^*]+)\*/g, "<em>$1</em>");
-  return value;
-}
+const canvasController = createCanvas({
+  state,
+  dom,
+  renderMarkdown,
+  onSelectTask: selectTask,
+  findTaskByName,
+});
 
-function renderMarkdown(text) {
-  const lines = escapeHtml(text).split("\n");
-  let html = "";
-  let inList = false;
-  let inTable = false;
-  let tableHeader = [];
-
-  const closeList = () => {
-    if (inList) {
-      html += "</ul>";
-      inList = false;
-    }
-  };
-
-  const closeTable = () => {
-    if (inTable) {
-      html += "</tbody></table>";
-      inTable = false;
-      tableHeader = [];
-    }
-  };
-
-  const toCells = (line) =>
-    line
-      .split("|")
-      .map((cell) => cell.trim())
-      .filter((cell) => cell.length);
-
-  lines.forEach((line, index) => {
-    const trimmed = line.trim();
-    const nextLine = lines[index + 1]?.trim() || "";
-    const isTableSeparator = /^\|?\s*[-:]+/.test(nextLine) && nextLine.includes("|");
-
-    if (trimmed.includes("|") && isTableSeparator && !inTable) {
-      closeList();
-      inTable = true;
-      tableHeader = toCells(line);
-      html += "<table><thead><tr>";
-      tableHeader.forEach((cell) => {
-        html += `<th>${applyInlineMarkdown(cell)}</th>`;
-      });
-      html += "</tr></thead><tbody>";
-      return;
-    }
-
-    if (inTable) {
-      if (!trimmed.includes("|") || trimmed === "") {
-        closeTable();
-      } else {
-        const cells = toCells(line);
-        if (cells.length) {
-          html += "<tr>";
-          cells.forEach((cell) => {
-            html += `<td>${applyInlineMarkdown(cell)}</td>`;
-          });
-          html += "</tr>";
-        }
-        return;
-      }
-    }
-
-    const checkboxMatch = trimmed.match(/^[-*]\s+\[([ xX])\]\s+(.*)/);
-    const listMatch = trimmed.match(/^[-*]\s+(.*)/);
-
-    if (checkboxMatch || listMatch) {
-      closeTable();
-      if (!inList) {
-        html += "<ul>";
-        inList = true;
-      }
-      if (checkboxMatch) {
-        const checked = checkboxMatch[1].toLowerCase() === "x";
-        html += `<li><input type="checkbox" disabled ${checked ? "checked" : ""} /> ${applyInlineMarkdown(checkboxMatch[2])}</li>`;
-      } else if (listMatch) {
-        html += `<li>${applyInlineMarkdown(listMatch[1])}</li>`;
-      }
-      return;
-    }
-
-    closeList();
-    closeTable();
-
-    if (trimmed === "") {
-      html += "<br />";
-    } else {
-      html += `<p>${applyInlineMarkdown(trimmed)}</p>`;
-    }
-  });
-
-  closeList();
-  closeTable();
-  return html;
-}
-
-function parseTasks(text) {
-  const lines = text.split("\n");
-  const tasks = [];
-  const stack = [];
-  let currentTask = null;
-  const tags = new Set();
-  const people = new Set();
-
-  lines.forEach((line, index) => {
-    const raw = line;
-    const trimmed = raw.trim();
-    const taskMatch = raw.match(/^(\s*)\*\s+(.*)$/);
-    if (taskMatch) {
-      const indent = taskMatch[1].length;
-      const depth = Math.floor(indent / 4);
-      const name = taskMatch[2].trim();
-      const task = {
-        id: `${index}-${name}`,
-        name,
-        depth,
-        parent: null,
-        tags: [],
-        people: [],
-        description: [],
-        references: [],
-        children: [],
-        lineIndex: index,
-      };
-      if (depth === 0) {
-        tasks.push(task);
-        stack.length = 0;
-        stack.push(task);
-      } else {
-        const parent = stack[depth - 1];
-        if (parent) {
-          parent.children.push(task);
-          task.parent = parent;
-        }
-        stack[depth] = task;
-      }
-      currentTask = task;
-      return;
-    }
-
-    if (!currentTask || trimmed === "") {
-      return;
-    }
-
-    if (trimmed.startsWith("#")) {
-      const found = trimmed.split(/\s+/).filter(Boolean);
-      found.forEach((tag) => {
-        if (tag.startsWith("#")) {
-          currentTask.tags.push(tag);
-          tags.add(tag);
-        }
-      });
-      return;
-    }
-
-    if (trimmed.startsWith("@")) {
-      const found = trimmed.split(/\s+/).filter(Boolean);
-      found.forEach((person) => {
-        if (person.startsWith("@")) {
-          currentTask.people.push(person);
-          people.add(person);
-        }
-      });
-      return;
-    }
-
-    currentTask.description.push(trimmed);
-    const matches = trimmed.matchAll(/\{([^}]+)\}/g);
-    for (const match of matches) {
-      currentTask.references.push(match[1]);
-    }
-  });
-
-  const allTasks = [];
-  const collect = (items) => {
-    items.forEach((task) => {
-      allTasks.push(task);
-      if (task.children.length) {
-        collect(task.children);
-      }
-    });
-  };
-  collect(tasks);
-
-  return { tasks, tags, people, lines, allTasks };
-}
-
-function highlightText(lines) {
-  const highlighted = lines
-    .map((line, index) => {
-      const taskMatch = line.match(/^(\s*)\*\s+(.*)$/);
-      const isActive = state.selectedLine === index;
-      const baseClass = isActive ? "highlight-line active" : "highlight-line";
-      if (taskMatch) {
-        const indent = taskMatch[1];
-        const name = taskMatch[2];
-        const className = indent.length >= 4 ? "highlight-subtask" : "highlight-task";
-        return `<span class="${baseClass} ${className}">${escapeHtml(indent)}* ${escapeHtml(name)}</span>`;
-      }
-      if (line.trim().startsWith("#")) {
-        return `<span class="${baseClass} highlight-tags">${escapeHtml(line)}</span>`;
-      }
-      if (line.trim().startsWith("@")) {
-        return `<span class="${baseClass} highlight-people">${escapeHtml(line)}</span>`;
-      }
-      if (line.trim() !== "") {
-        return `<span class="${baseClass} highlight-description">${escapeHtml(line)}</span>`;
-      }
-      return `<span class="${baseClass}">&nbsp;</span>`;
-    })
-    .join("\n");
-  highlightLayer.innerHTML = highlighted;
-}
-
-function updateSuggestions() {
-  const cursor = editor.selectionStart;
-  const before = editor.value.slice(0, cursor);
-  const triggerMatch = before.match(/([#@{])([^\s}]*)$/);
-  if (!triggerMatch) {
-    suggestions.classList.add("hidden");
-    suggestions.innerHTML = "";
-    return;
-  }
-  const trigger = triggerMatch[1];
-  const partial = triggerMatch[2].toLowerCase();
-  let items = [];
-  if (trigger === "#") {
-    items = Array.from(state.tags);
-  } else if (trigger === "@") {
-    items = Array.from(state.people);
+function handleEditorSelection(line) {
+  const task = state.allTasks.find((item) => item.lineIndex === line);
+  if (task) {
+    state.selectedTaskId = task.id;
+    state.selectedLine = task.lineIndex;
+    canvasController.focusOnTask(task);
+    canvasController.renderGraph();
   } else {
-    items = state.allTasks.map((task) => task.name);
+    editorController.updateSelectedLine();
   }
-  const filtered = items.filter((item) => item.toLowerCase().includes(partial));
-  if (!filtered.length) {
-    suggestions.classList.add("hidden");
-    suggestions.innerHTML = "";
-    return;
-  }
-  suggestions.innerHTML = "";
-  state.suggestionItems = filtered;
-  state.suggestionIndex = 0;
-  filtered.forEach((item) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = item;
-    button.addEventListener("click", () => {
-      const insert = trigger === "{" ? `${item}}` : item.slice(1);
-      const start = cursor - partial.length;
-      editor.setRangeText(insert, start, cursor, "end");
-      editor.focus();
-      suggestions.classList.add("hidden");
-      sync();
-    });
-    suggestions.appendChild(button);
-  });
-  setActiveSuggestion();
-  positionSuggestions();
-  suggestions.classList.remove("hidden");
-}
-
-function setActiveSuggestion() {
-  const buttons = Array.from(suggestions.querySelectorAll("button"));
-  buttons.forEach((button, index) => {
-    button.classList.toggle("active", index === state.suggestionIndex);
-  });
-}
-
-function positionSuggestions() {
-  const cursor = editor.selectionStart;
-  const coords = getCaretCoordinates(editor, cursor);
-  const wrapperRect = editor.parentElement.getBoundingClientRect();
-  suggestions.style.left = `${coords.left - wrapperRect.left}px`;
-  suggestions.style.top = `${coords.top - wrapperRect.top + coords.height + 6}px`;
-}
-
-function getCaretCoordinates(textarea, position) {
-  const div = document.createElement("div");
-  const style = window.getComputedStyle(textarea);
-  Array.from(style).forEach((prop) => {
-    div.style[prop] = style[prop];
-  });
-  div.style.position = "absolute";
-  div.style.visibility = "hidden";
-  div.style.whiteSpace = "pre-wrap";
-  div.style.wordWrap = "break-word";
-  div.style.overflow = "auto";
-  div.style.height = "auto";
-  div.style.width = `${textarea.clientWidth}px`;
-  div.textContent = textarea.value.slice(0, position);
-  const span = document.createElement("span");
-  span.textContent = textarea.value.slice(position) || ".";
-  div.appendChild(span);
-  document.body.appendChild(div);
-  const rect = span.getBoundingClientRect();
-  const textRect = textarea.getBoundingClientRect();
-  const top = rect.top - div.getBoundingClientRect().top + textRect.top - textarea.scrollTop;
-  const left = rect.left - div.getBoundingClientRect().left + textRect.left - textarea.scrollLeft;
-  const height = rect.height;
-  document.body.removeChild(div);
-  return { top, left, height };
-}
-
-function buildPill(text, active, onClick) {
-  const pill = document.createElement("button");
-  pill.type = "button";
-  pill.className = `pill ${active ? "active" : ""}`;
-  pill.textContent = text;
-  pill.addEventListener("click", onClick);
-  return pill;
-}
-
-function buildTagPersonLists() {
-  tagList.innerHTML = "";
-  personList.innerHTML = "";
-  Array.from(state.tags)
-    .sort()
-    .forEach((tag) => {
-      tagList.appendChild(
-        buildPill(tag, state.selectedTags.has(tag), () => toggleTag(tag))
-      );
-    });
-  Array.from(state.people)
-    .sort()
-    .forEach((person) => {
-      personList.appendChild(
-        buildPill(person, state.selectedPeople.has(person), () => togglePerson(person))
-      );
-    });
-}
-
-function toggleTag(tag) {
-  if (state.selectedTags.has(tag)) {
-    state.selectedTags.delete(tag);
-  } else {
-    state.selectedTags.add(tag);
-  }
-  expandForFilters();
-  renderGraph();
-}
-
-function togglePerson(person) {
-  if (state.selectedPeople.has(person)) {
-    state.selectedPeople.delete(person);
-  } else {
-    state.selectedPeople.add(person);
-  }
-  expandForFilters();
-  renderGraph();
-}
-
-function expandForFilters() {
-  if (!state.selectedTags.size && !state.selectedPeople.size) {
-    return;
-  }
-  const ensureExpanded = (task, ancestors) => {
-    const matches =
-      task.tags.some((tag) => state.selectedTags.has(tag)) ||
-      task.people.some((person) => state.selectedPeople.has(person));
-    const childMatch = task.children.some((child) => ensureExpanded(child, [...ancestors, task]));
-    if (matches || childMatch) {
-      ancestors.forEach((ancestor) => state.collapsed.delete(ancestor.id));
-      state.collapsed.delete(task.id);
-    }
-    return matches || childMatch;
-  };
-  state.tasks.forEach((task) => ensureExpanded(task, []));
-}
-
-function matchesSearch(task) {
-  if (!state.searchQuery) {
-    return false;
-  }
-  const query = state.searchQuery.toLowerCase();
-  if (searchName.checked && task.name.toLowerCase().includes(query)) {
-    return true;
-  }
-  if (
-    searchDescription.checked &&
-    task.description.join(" ").toLowerCase().includes(query)
-  ) {
-    return true;
-  }
-  if (searchTag.checked && task.tags.join(" ").toLowerCase().includes(query)) {
-    return true;
-  }
-  if (searchPerson.checked && task.people.join(" ").toLowerCase().includes(query)) {
-    return true;
-  }
-  return false;
-}
-
-function findTaskByName(name) {
-  return state.allTasks.find((task) => task.name === name);
-}
-
-function gatherVisible(tasks, result = [], depth = 0) {
-  tasks.forEach((task) => {
-    result.push(task);
-    if (!state.collapsed.has(task.id)) {
-      gatherVisible(task.children, result, depth + 1);
-    }
-  });
-  return result;
-}
-
-function renderGraph() {
-  graphNodes.innerHTML = "";
-  graphLines.innerHTML = "";
-  graphLines.setAttribute("viewBox", "0 0 1200 800");
-
-  const visibleTasks = gatherVisible(state.tasks);
-  const positions = new Map();
-  let y = 40;
-  const spacingY = 170;
-  const nodeWidth = 220;
-  const nodeHeight = 120;
-
-  visibleTasks.forEach((task) => {
-    const x = 60 + task.depth * 260;
-    positions.set(task.id, { x, y });
-    y += spacingY;
-  });
-  state.positions = positions;
-
-  const paths = [];
-  visibleTasks.forEach((task) => {
-    const pos = positions.get(task.id);
-    task.children
-      .filter((child) => positions.has(child.id))
-      .forEach((child) => {
-        const childPos = positions.get(child.id);
-        const startX = pos.x + nodeWidth;
-        const startY = pos.y + nodeHeight / 2;
-        const endX = childPos.x;
-        const endY = childPos.y + nodeHeight / 2;
-        const midY = (startY + endY) / 2;
-        paths.push(
-          `<path d="M ${startX} ${startY} C ${startX} ${midY} ${endX} ${midY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="2" fill="none" />`
-        );
-      });
-  });
-  graphLines.innerHTML = `<g>${paths.join("")}</g>`;
-
-  visibleTasks.forEach((task) => {
-    const pos = positions.get(task.id);
-    const node = document.createElement("div");
-    node.className = "task-node";
-    node.style.left = `${pos.x}px`;
-    node.style.top = `${pos.y}px`;
-
-    if (state.selectedTaskId === task.id) {
-      node.classList.add("selected");
-    }
-
-    const hasFilters = state.selectedTags.size || state.selectedPeople.size;
-    if (hasFilters) {
-      const matches =
-        task.tags.some((tag) => state.selectedTags.has(tag)) ||
-        task.people.some((person) => state.selectedPeople.has(person));
-      if (!matches) {
-        node.classList.add("dimmed");
-      }
-    }
-
-    if (matchesSearch(task)) {
-      node.classList.add("search-highlight");
-    }
-
-    const title = document.createElement("h4");
-    title.textContent = task.name;
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    task.tags.forEach((tag) => {
-      meta.appendChild(
-        buildPill(tag, state.selectedTags.has(tag), (event) => {
-          event.stopPropagation();
-          toggleTag(tag);
-        })
-      );
-    });
-    task.people.forEach((person) => {
-      meta.appendChild(
-        buildPill(person, state.selectedPeople.has(person), (event) => {
-          event.stopPropagation();
-          togglePerson(person);
-        })
-      );
-    });
-
-    const desc = document.createElement("div");
-    desc.className = "description";
-    desc.innerHTML = renderMarkdown(task.description.join("\n"));
-
-    const references = document.createElement("div");
-    task.references.forEach((ref) => {
-      const refLink = document.createElement("span");
-      refLink.className = "references";
-      refLink.textContent = ref;
-      refLink.addEventListener("click", (event) => {
-        event.stopPropagation();
-        const target = findTaskByName(ref);
-        if (target) {
-          selectTask(target);
-        }
-      });
-      references.appendChild(refLink);
-    });
-
-    const toggle = document.createElement("div");
-    toggle.className = "collapse-toggle";
-    if (task.children.length) {
-      const label = state.collapsed.has(task.id)
-        ? `${task.children.length} Subtasks show`
-        : `${task.children.length} Subtasks hide`;
-      toggle.textContent = label;
-      toggle.addEventListener("click", (event) => {
-        event.stopPropagation();
-        if (state.collapsed.has(task.id)) {
-          state.collapsed.delete(task.id);
-        } else {
-          state.collapsed.add(task.id);
-        }
-        renderGraph();
-      });
-    }
-
-    node.appendChild(title);
-    node.appendChild(meta);
-    if (task.description.length) {
-      node.appendChild(desc);
-    }
-    if (task.references.length) {
-      node.appendChild(references);
-    }
-    if (task.children.length) {
-      node.appendChild(toggle);
-    }
-
-    node.addEventListener("click", () => selectTask(task));
-
-    graphNodes.appendChild(node);
-  });
-
-  applyTransform();
 }
 
 function selectTask(task) {
@@ -614,40 +76,41 @@ function selectTask(task) {
     state.collapsed.delete(current.id);
     current = current.parent;
   }
-  const lines = editor.value.split("\n");
+  const lines = dom.editor.value.split("\n");
   const targetLine = task.lineIndex;
   const caretPosition = lines.slice(0, targetLine).reduce((sum, line) => sum + line.length + 1, 0);
-  editor.focus();
-  editor.setSelectionRange(caretPosition, caretPosition);
-  updateSelectedLine();
-  focusOnTask(task);
-  renderGraph();
+  dom.editor.focus();
+  dom.editor.setSelectionRange(caretPosition, caretPosition);
+  editorController.updateSelectedLine();
+  canvasController.focusOnTask(task);
+  canvasController.renderGraph();
 }
 
-function focusOnTask(task) {
-  const pos = state.positions.get(task.id);
-  if (!pos) {
-    return;
-  }
-  const canvasRect = graphCanvas.getBoundingClientRect();
-  const centerX = pos.x + 110;
-  const centerY = pos.y + 40;
-  state.transform.x = canvasRect.width / 2 - centerX * state.transform.scale;
-  state.transform.y = canvasRect.height / 2 - centerY * state.transform.scale;
-  applyTransform(true);
-}
-
-function applyTransform(animate = false) {
-  const { x, y, scale } = state.transform;
-  const transitionValue = animate ? "transform 0.35s ease" : "none";
-  graphNodes.style.transition = transitionValue;
-  graphLines.style.transition = transitionValue;
-  graphNodes.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
-  graphLines.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+function buildTagPersonLists() {
+  dom.tagList.innerHTML = "";
+  dom.personList.innerHTML = "";
+  Array.from(state.tags)
+    .sort()
+    .forEach((tag) => {
+      dom.tagList.appendChild(
+        canvasController.buildPill(tag, state.selectedTags.has(tag), () =>
+          canvasController.toggleTag(tag)
+        )
+      );
+    });
+  Array.from(state.people)
+    .sort()
+    .forEach((person) => {
+      dom.personList.appendChild(
+        canvasController.buildPill(person, state.selectedPeople.has(person), () =>
+          canvasController.togglePerson(person)
+        )
+      );
+    });
 }
 
 function sync() {
-  const { tasks, tags, people, lines, allTasks } = parseTasks(editor.value);
+  const { tasks, tags, people, lines, allTasks } = parseTasks(dom.editor.value);
   state.tasks = tasks;
   state.allTasks = allTasks;
   state.tags = tags;
@@ -655,185 +118,39 @@ function sync() {
   if (state.selectedLine === null) {
     state.selectedLine = 0;
   }
-  highlightText(lines);
+  editorController.highlightText(lines);
   buildTagPersonLists();
-  renderGraph();
-  updateSuggestions();
+  canvasController.renderGraph();
+  editorController.updateSuggestions();
 }
 
-function updateSelectedLine() {
-  const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
-  state.selectedLine = line;
-  highlightText(editor.value.split("\n"));
+function findTaskByName(name) {
+  return state.allTasks.find((task) => task.name === name);
 }
 
-editor.addEventListener("scroll", () => {
-  highlightLayer.scrollTop = editor.scrollTop;
-  highlightLayer.scrollLeft = editor.scrollLeft;
-  if (!suggestions.classList.contains("hidden")) {
-    positionSuggestions();
-  }
+dom.searchInput.addEventListener("input", () => {
+  state.searchQuery = dom.searchInput.value;
+  canvasController.renderGraph();
 });
 
-editor.addEventListener("input", () => {
-  sync();
-  updateSelectedLine();
+[dom.searchName, dom.searchDescription, dom.searchTag, dom.searchPerson].forEach((checkbox) => {
+  checkbox.addEventListener("change", () => canvasController.renderGraph());
 });
 
-editor.addEventListener("click", () => {
-  updateSuggestions();
-  const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
-  const task = state.allTasks.find((t) => t.lineIndex === line);
-  if (task) {
-    state.selectedTaskId = task.id;
-    state.selectedLine = task.lineIndex;
-    focusOnTask(task);
-    renderGraph();
-  } else {
-    updateSelectedLine();
-  }
-});
-
-editor.addEventListener("keydown", (event) => {
-  if (event.key === "Tab") {
-    event.preventDefault();
-    const start = editor.selectionStart;
-    const end = editor.selectionEnd;
-    const value = editor.value;
-    const selected = value.slice(start, end) || "";
-    if (event.shiftKey || event.ctrlKey) {
-      const updated = selected
-        .split("\n")
-        .map((line) => (line.startsWith("    ") ? line.slice(4) : line))
-        .join("\n");
-      editor.setRangeText(updated, start, end, "end");
-    } else {
-      const updated = selected
-        .split("\n")
-        .map((line) => `    ${line}`)
-        .join("\n");
-      editor.setRangeText(updated, start, end, "end");
-    }
-    sync();
-  }
-
-  if (!suggestions.classList.contains("hidden")) {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      state.suggestionIndex = Math.min(
-        state.suggestionIndex + 1,
-        state.suggestionItems.length - 1
-      );
-      setActiveSuggestion();
-      return;
-    }
-    if (event.key === "ArrowUp") {
-      event.preventDefault();
-      state.suggestionIndex = Math.max(state.suggestionIndex - 1, 0);
-      setActiveSuggestion();
-      return;
-    }
-    if (event.key === "Enter") {
-      event.preventDefault();
-      const item = state.suggestionItems[state.suggestionIndex];
-      if (item) {
-        const cursor = editor.selectionStart;
-        const before = editor.value.slice(0, cursor);
-        const triggerMatch = before.match(/([#@{])([^\s}]*)$/);
-        const trigger = triggerMatch?.[1] || "";
-        const partial = triggerMatch?.[2] || "";
-        const insert = trigger === "{" ? `${item}}` : item.slice(1);
-        const start = cursor - partial.length;
-        editor.setRangeText(insert, start, cursor, "end");
-        suggestions.classList.add("hidden");
-        sync();
-      }
-      return;
-    }
-  }
-
-  if (event.key === "Enter") {
-    event.preventDefault();
-    const start = editor.selectionStart;
-    const value = editor.value;
-    const lineStart = value.lastIndexOf("\n", start - 1) + 1;
-    const currentLine = value.slice(lineStart, start);
-    const indent = currentLine.match(/^\s*/)[0];
-    editor.setRangeText(`\n${indent}`, start, start, "end");
-    sync();
-  }
-});
-
-editor.addEventListener("keyup", () => {
-  updateSuggestions();
-  updateSelectedLine();
-});
-
-searchInput.addEventListener("input", () => {
-  state.searchQuery = searchInput.value;
-  renderGraph();
-});
-
-[searchName, searchDescription, searchTag, searchPerson].forEach((checkbox) => {
-  checkbox.addEventListener("change", () => renderGraph());
-});
-
-clearFilters.addEventListener("click", () => {
+dom.clearFilters.addEventListener("click", () => {
   state.selectedTags.clear();
   state.selectedPeople.clear();
   state.searchQuery = "";
-  searchInput.value = "";
-  renderGraph();
+  dom.searchInput.value = "";
+  canvasController.renderGraph();
   buildTagPersonLists();
 });
 
-let isPanning = false;
-let lastPoint = { x: 0, y: 0 };
-
-graphCanvas.addEventListener("mousedown", (event) => {
-  if (event.target.closest(".task-node")) {
-    return;
-  }
-  isPanning = true;
-  lastPoint = { x: event.clientX, y: event.clientY };
-});
-
-graphCanvas.addEventListener("mousemove", (event) => {
-  if (!isPanning) {
-    return;
-  }
-  state.transform.x += event.clientX - lastPoint.x;
-  state.transform.y += event.clientY - lastPoint.y;
-  lastPoint = { x: event.clientX, y: event.clientY };
-  applyTransform();
-});
-
-graphCanvas.addEventListener("mouseup", () => {
-  isPanning = false;
-});
-
-graphCanvas.addEventListener("mouseleave", () => {
-  isPanning = false;
-});
-
-graphCanvas.addEventListener("wheel", (event) => {
-  event.preventDefault();
-  const delta = event.deltaY > 0 ? -0.1 : 0.1;
-  const newScale = Math.min(1.6, Math.max(0.5, state.transform.scale + delta));
-  const rect = graphCanvas.getBoundingClientRect();
-  const pointerX = event.clientX - rect.left;
-  const pointerY = event.clientY - rect.top;
-  const scaleFactor = newScale / state.transform.scale;
-  state.transform.x = pointerX - (pointerX - state.transform.x) * scaleFactor;
-  state.transform.y = pointerY - (pointerY - state.transform.y) * scaleFactor;
-  state.transform.scale = newScale;
-  applyTransform();
-});
-
 let resizing = false;
-divider.addEventListener("mousedown", () => {
+
+dom.divider.addEventListener("mousedown", () => {
   resizing = true;
-  divider.classList.add("dragging");
+  dom.divider.classList.add("dragging");
 });
 
 window.addEventListener("mousemove", (event) => {
@@ -851,7 +168,7 @@ window.addEventListener("mouseup", () => {
     return;
   }
   resizing = false;
-  divider.classList.remove("dragging");
+  dom.divider.classList.remove("dragging");
 });
 
 sync();

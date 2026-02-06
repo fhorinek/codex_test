@@ -197,8 +197,13 @@ body {
   align-items: center;
 }
 
+.graph-footer {
+  display: flex;
+  justify-content: flex-start;
+}
+
 .toolbar-button {
-  margin-left: auto;
+  margin-left: 0;
 }
 
 .graph-toolbar input[type="text"] {

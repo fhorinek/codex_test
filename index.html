@@ -30,7 +30,6 @@
         <label><input type="checkbox" id="search-description" checked /> Description</label>
         <label><input type="checkbox" id="search-tag" checked /> Tag</label>
         <label><input type="checkbox" id="search-person" checked /> Person</label>
-        <button id="clear-filters" class="toolbar-button">Clear Highlights</button>
       </div>
       <div id="graph-canvas" class="graph-canvas">
         <svg id="graph-lines"></svg>
@@ -46,9 +45,12 @@
           <div id="person-list" class="pill-list"></div>
         </div>
       </div>
+      <div class="graph-footer">
+        <button id="clear-filters" class="toolbar-button">Clear Highlights</button>
+      </div>
     </section>
   </div>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>
