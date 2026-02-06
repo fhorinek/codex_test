@@ -299,6 +299,39 @@ body {
   margin-bottom: 6px;
 }
 
+.task-node .description p {
+  margin: 0 0 4px;
+}
+
+.task-node .description ul {
+  margin: 0 0 4px;
+  padding-left: 16px;
+}
+
+.task-node .description table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+
+.task-node .description th,
+.task-node .description td {
+  border: 1px solid #cfd5f0;
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.task-node .description img {
+  max-width: 100%;
+  border-radius: 6px;
+  margin-top: 4px;
+}
+
+.task-node .description a {
+  color: #2f54eb;
+}
+
 .task-node .references {
   font-size: 11px;
   color: #2f54eb;
