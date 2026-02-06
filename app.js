@@ -86,6 +86,7 @@ function selectTask(task) {
   dom.editor.focus();
   dom.editor.setSelectionRange(caretPosition, caretPosition);
   editorController.updateSelectedLine();
+  editorController.highlightText(dom.editor.value.split("\n"));
   canvasController.focusOnTask(task);
   canvasController.renderGraph();
 }

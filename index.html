@@ -31,7 +31,6 @@
         <label><input type="checkbox" id="search-description" checked /> Description</label>
         <label><input type="checkbox" id="search-tag" checked /> Tag</label>
         <label><input type="checkbox" id="search-person" checked /> Person</label>
-        <button id="help-button" class="info-button" aria-haspopup="dialog" aria-expanded="false">i</button>
       </div>
       <div id="graph-canvas" class="graph-canvas">
         <svg id="graph-lines"></svg>
@@ -46,7 +45,10 @@
           <div id="tag-list" class="pill-list"></div>
         </div>
         <div>
-          <h3>People</h3>
+          <div class="legend-header">
+            <h3>People</h3>
+            <button id="help-button" class="info-button" aria-haspopup="dialog" aria-expanded="false">i</button>
+          </div>
           <div id="person-list" class="pill-list"></div>
         </div>
       </div>
@@ -62,6 +64,7 @@
             <li>Use <strong>{Task Name}</strong> to reference another task.</li>
             <li>Description supports <strong>bold</strong>, <em>italic</em>, <u>underline</u>, <mark>highlight</mark>, lists, checkboxes, tables, images, and links.</li>
           </ul>
+          <pre class="help-example">* Onboard client\n#launch #priority\n@maya\n**Bold**, *italic*, __underline__, ==highlight==\n- List item\n- [x] Checkbox\n| Col | Val |\n| --- | --- |\n| A | 1 |\n{Onboard client}</pre>
         </div>
       </div>
     </section>
