@@ -25,31 +25,33 @@
     </section>
     <div class="divider" id="divider" role="separator" aria-orientation="vertical"></div>
     <section class="graph-panel">
-      <div class="graph-toolbar">
-        <input id="search-input" type="text" placeholder="Search tasks" />
-        <label><input type="checkbox" id="search-name" checked /> Name</label>
-        <label><input type="checkbox" id="search-description" checked /> Description</label>
-        <label><input type="checkbox" id="search-tag" checked /> Tag</label>
-        <label><input type="checkbox" id="search-person" checked /> Person</label>
-      </div>
       <div id="graph-canvas" class="graph-canvas">
         <svg id="graph-lines"></svg>
         <div id="graph-nodes" class="graph-nodes"></div>
-      </div>
-      <div class="legend">
-        <div>
-          <div class="legend-header">
-            <h3>Tags</h3>
-            <button id="clear-filters" class="toolbar-button">Clear Highlights</button>
+        <div class="graph-search">
+          <input id="search-input" type="text" placeholder="Search tasks" />
+          <div class="search-options">
+            <label><input type="checkbox" id="search-name" checked /> Name</label>
+            <label><input type="checkbox" id="search-description" checked /> Description</label>
+            <label><input type="checkbox" id="search-tag" checked /> Tag</label>
+            <label><input type="checkbox" id="search-person" checked /> Person</label>
           </div>
-          <div id="tag-list" class="pill-list"></div>
         </div>
-        <div>
-          <div class="legend-header">
-            <h3>People</h3>
-            <button id="help-button" class="info-button" aria-haspopup="dialog" aria-expanded="false">i</button>
+        <div class="graph-footer">
+          <button id="clear-filters" class="toolbar-button">Clear Highlights</button>
+        </div>
+        <div class="legend">
+          <div>
+            <h3>Tags</h3>
+            <div id="tag-list" class="pill-list"></div>
           </div>
-          <div id="person-list" class="pill-list"></div>
+          <div>
+            <div class="legend-header">
+              <h3>People</h3>
+              <button id="help-button" class="info-button" aria-haspopup="dialog" aria-expanded="false" aria-label="Syntax help">ℹ️</button>
+            </div>
+            <div id="person-list" class="pill-list"></div>
+          </div>
         </div>
       </div>
       <div id="help-modal" class="help-modal hidden" role="dialog" aria-modal="true" aria-labelledby="help-title">
