@@ -26,7 +26,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
         }
         return `<span class=\"${baseClass}\">&nbsp;</span>`;
       })
-      .join("\n");
+      .join("");
     highlightLayer.innerHTML = highlighted;
   }
 

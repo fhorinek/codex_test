@@ -20,6 +20,7 @@ export function applyInlineMarkdown(text) {
   value = value.replace(/__([^_]+)__/g, "<u>$1</u>");
   value = value.replace(/==([^=]+)==/g, "<mark>$1</mark>");
   value = value.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  value = value.replace(/\{([^}]+)\}/g, "<span class=\"references\" data-ref=\"$1\">$1</span>");
   return value;
 }
 

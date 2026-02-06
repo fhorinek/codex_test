@@ -90,21 +90,6 @@ export function createCanvas({ state, dom, renderMarkdown, onSelectTask, findTas
       desc.className = "description";
       desc.innerHTML = renderMarkdown(task.description.join("\n"));
 
-      const references = document.createElement("div");
-      task.references.forEach((ref) => {
-        const refLink = document.createElement("span");
-        refLink.className = "references";
-        refLink.textContent = ref;
-        refLink.addEventListener("click", (event) => {
-          event.stopPropagation();
-          const target = findTaskByName(ref);
-          if (target) {
-            onSelectTask(target);
-          }
-        });
-        references.appendChild(refLink);
-      });
-
       const toggle = document.createElement("div");
       toggle.className = "collapse-toggle";
       if (task.children.length) {
@@ -128,8 +113,17 @@ export function createCanvas({ state, dom, renderMarkdown, onSelectTask, findTas
       if (task.description.length) {
         node.appendChild(desc);
       }
-      if (task.references.length) {
-        node.appendChild(references);
+      if (task.description.length) {
+        desc.querySelectorAll(".references").forEach((link) => {
+          link.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const ref = link.dataset.ref;
+            const target = findTaskByName(ref);
+            if (target) {
+              onSelectTask(target);
+            }
+          });
+        });
       }
       if (task.children.length) {
         node.appendChild(toggle);

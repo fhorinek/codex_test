@@ -115,6 +115,7 @@ body {
   box-sizing: border-box;
   padding: 0 4px;
   border-radius: 6px;
+  line-height: 1.5;
 }
 
 .highlight-line.active {
@@ -197,13 +198,15 @@ body {
   align-items: center;
 }
 
-.graph-footer {
-  display: flex;
-  justify-content: flex-start;
-}
-
 .toolbar-button {
   margin-left: 0;
+}
+
+.legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .graph-toolbar input[type="text"] {
