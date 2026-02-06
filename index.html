@@ -14,6 +14,7 @@
         <p>Define tasks in code and see them rendered as an interactive tree.</p>
       </header>
       <div class="editor-wrapper">
+        <div id="line-numbers" class="line-numbers" aria-hidden="true"></div>
         <pre id="highlight-layer" aria-hidden="true"></pre>
         <textarea id="task-editor" spellcheck="false"></textarea>
         <div id="suggestions" class="suggestions hidden" role="listbox"></div>
@@ -30,6 +31,7 @@
         <label><input type="checkbox" id="search-description" checked /> Description</label>
         <label><input type="checkbox" id="search-tag" checked /> Tag</label>
         <label><input type="checkbox" id="search-person" checked /> Person</label>
+        <button id="help-button" class="info-button" aria-haspopup="dialog" aria-expanded="false">i</button>
       </div>
       <div id="graph-canvas" class="graph-canvas">
         <svg id="graph-lines"></svg>
@@ -46,6 +48,20 @@
         <div>
           <h3>People</h3>
           <div id="person-list" class="pill-list"></div>
+        </div>
+      </div>
+      <div id="help-modal" class="help-modal hidden" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <div class="help-card">
+          <div class="help-header">
+            <h3 id="help-title">Syntax Help</h3>
+            <button id="help-close" class="help-close" aria-label="Close">×</button>
+          </div>
+          <ul>
+            <li><strong>* Task name</strong> starts a new task. Indent subtasks with 4 spaces.</li>
+            <li><strong>#tags</strong> and <strong>@people</strong> lines are optional.</li>
+            <li>Use <strong>{Task Name}</strong> to reference another task.</li>
+            <li>Description supports <strong>bold</strong>, <em>italic</em>, <u>underline</u>, <mark>highlight</mark>, lists, checkboxes, tables, images, and links.</li>
+          </ul>
         </div>
       </div>
     </section>

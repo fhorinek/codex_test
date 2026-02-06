@@ -1,9 +1,10 @@
 import { escapeHtml } from "./task.js";
 
 export function createEditor({ state, dom, onSync, onSelectTask }) {
-  const { editor, highlightLayer, suggestions } = dom;
+  const { editor, highlightLayer, suggestions, lineNumbers } = dom;
 
   function highlightText(lines) {
+    updateLineNumbers(lines);
     const highlighted = lines
       .map((line, index) => {
         const taskMatch = line.match(/^(\s*)\*\s+(.*)$/);
@@ -28,6 +29,15 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       })
       .join("");
     highlightLayer.innerHTML = highlighted;
+  }
+
+  function updateLineNumbers(lines) {
+    if (!lineNumbers) {
+      return;
+    }
+    lineNumbers.innerHTML = lines
+      .map((_, index) => `<span>${index + 1}</span>`)
+      .join("");
   }
 
   function updateSuggestions() {
@@ -128,6 +138,9 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   editor.addEventListener("scroll", () => {
     highlightLayer.scrollTop = editor.scrollTop;
     highlightLayer.scrollLeft = editor.scrollLeft;
+    if (lineNumbers) {
+      lineNumbers.scrollTop = editor.scrollTop;
+    }
     if (!suggestions.classList.contains("hidden")) {
       positionSuggestions();
     }

@@ -8,11 +8,15 @@ const dom = {
   suggestions: document.getElementById("suggestions"),
   graphNodes: document.getElementById("graph-nodes"),
   graphLines: document.getElementById("graph-lines"),
+  lineNumbers: document.getElementById("line-numbers"),
   searchInput: document.getElementById("search-input"),
   searchName: document.getElementById("search-name"),
   searchDescription: document.getElementById("search-description"),
   searchTag: document.getElementById("search-tag"),
   searchPerson: document.getElementById("search-person"),
+  helpButton: document.getElementById("help-button"),
+  helpModal: document.getElementById("help-modal"),
+  helpClose: document.getElementById("help-close"),
   tagList: document.getElementById("tag-list"),
   personList: document.getElementById("person-list"),
   clearFilters: document.getElementById("clear-filters"),
@@ -144,6 +148,23 @@ dom.clearFilters.addEventListener("click", () => {
   dom.searchInput.value = "";
   canvasController.renderGraph();
   buildTagPersonLists();
+});
+
+dom.helpButton.addEventListener("click", () => {
+  dom.helpModal.classList.remove("hidden");
+  dom.helpButton.setAttribute("aria-expanded", "true");
+});
+
+dom.helpClose.addEventListener("click", () => {
+  dom.helpModal.classList.add("hidden");
+  dom.helpButton.setAttribute("aria-expanded", "false");
+});
+
+dom.helpModal.addEventListener("click", (event) => {
+  if (event.target === dom.helpModal) {
+    dom.helpModal.classList.add("hidden");
+    dom.helpButton.setAttribute("aria-expanded", "false");
+  }
 });
 
 let resizing = false;

@@ -78,8 +78,9 @@ export function createCanvas({ state, dom, renderMarkdown, onSelectTask, findTas
         );
       });
       task.people.forEach((person) => {
+        const label = `👤 ${person.replace(/^@/, "")}`;
         meta.appendChild(
-          buildPill(person, state.selectedPeople.has(person), (event) => {
+          buildPill(label, state.selectedPeople.has(person), (event) => {
             event.stopPropagation();
             togglePerson(person);
           })
