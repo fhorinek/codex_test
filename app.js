@@ -12,6 +12,7 @@ const tagList = document.getElementById("tag-list");
 const personList = document.getElementById("person-list");
 const clearFilters = document.getElementById("clear-filters");
 const graphCanvas = document.getElementById("graph-canvas");
+const divider = document.getElementById("divider");
 
 const state = {
   tasks: [],
@@ -136,25 +137,26 @@ function highlightText(lines) {
   const highlighted = lines
     .map((line, index) => {
       const taskMatch = line.match(/^(\s*)\*\s+(.*)$/);
-      const activeClass = state.selectedLine === index ? " highlight-active" : "";
+      const isActive = state.selectedLine === index;
+      const baseClass = isActive ? "highlight-line active" : "highlight-line";
       if (taskMatch) {
         const indent = taskMatch[1];
         const name = taskMatch[2];
         const className = indent.length >= 4 ? "highlight-subtask" : "highlight-task";
-        return `${escapeHtml(indent)}<span class="${className}${activeClass}">* ${escapeHtml(name)}</span>`;
+        return `<span class="${baseClass} ${className}">${escapeHtml(indent)}* ${escapeHtml(name)}</span>`;
       }
       if (line.trim().startsWith("#")) {
-        return `<span class="highlight-tags${activeClass}">${escapeHtml(line)}</span>`;
+        return `<span class="${baseClass} highlight-tags">${escapeHtml(line)}</span>`;
       }
       if (line.trim().startsWith("@")) {
-        return `<span class="highlight-people${activeClass}">${escapeHtml(line)}</span>`;
+        return `<span class="${baseClass} highlight-people">${escapeHtml(line)}</span>`;
       }
       if (line.trim() !== "") {
-        return `<span class="highlight-description${activeClass}">${escapeHtml(line)}</span>`;
+        return `<span class="${baseClass} highlight-description">${escapeHtml(line)}</span>`;
       }
-      return activeClass ? `<span class="highlight-active">&nbsp;</span>` : "";
+      return `<span class="${baseClass}">&nbsp;</span>`;
     })
-    .join("\n");
+    .join("");
   highlightLayer.innerHTML = highlighted;
 }
 
@@ -357,7 +359,7 @@ function renderGraph() {
   const visibleTasks = gatherVisible(state.tasks);
   const positions = new Map();
   let y = 40;
-  const spacingY = 140;
+  const spacingY = 170;
 
   visibleTasks.forEach((task) => {
     const x = 60 + task.depth * 260;
@@ -366,18 +368,24 @@ function renderGraph() {
   });
   state.positions = positions;
 
-  graphLines.innerHTML = visibleTasks
-    .map((task) => {
-      const pos = positions.get(task.id);
-      return task.children
-        .filter((child) => positions.has(child.id))
-        .map((child) => {
-          const childPos = positions.get(child.id);
-          return `<line x1="${pos.x + 110}" y1="${pos.y + 20}" x2="${childPos.x + 110}" y2="${childPos.y}" stroke="#b9c0ff" stroke-width="2" />`;
-        })
-        .join("");
-    })
-    .join("");
+  const paths = [];
+  visibleTasks.forEach((task) => {
+    const pos = positions.get(task.id);
+    task.children
+      .filter((child) => positions.has(child.id))
+      .forEach((child) => {
+        const childPos = positions.get(child.id);
+        const startX = pos.x + 110;
+        const startY = pos.y + 40;
+        const endX = childPos.x + 110;
+        const endY = childPos.y;
+        const midY = (startY + endY) / 2;
+        paths.push(
+          `<path d="M ${startX} ${startY} C ${startX} ${midY} ${endX} ${midY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="2" fill="none" />`
+        );
+      });
+  });
+  graphLines.innerHTML = `<g>${paths.join("")}</g>`;
 
   visibleTasks.forEach((task) => {
     const pos = positions.get(task.id);
@@ -496,6 +504,7 @@ function selectTask(task) {
   const caretPosition = lines.slice(0, targetLine).reduce((sum, line) => sum + line.length + 1, 0);
   editor.focus();
   editor.setSelectionRange(caretPosition, caretPosition);
+  updateSelectedLine();
   focusOnTask(task);
   renderGraph();
 }
@@ -574,7 +583,7 @@ editor.addEventListener("keydown", (event) => {
     const end = editor.selectionEnd;
     const value = editor.value;
     const selected = value.slice(start, end) || "";
-    if (event.ctrlKey) {
+    if (event.shiftKey || event.ctrlKey) {
       const updated = selected
         .split("\n")
         .map((line) => (line.startsWith("    ") ? line.slice(4) : line))
@@ -701,6 +710,30 @@ graphCanvas.addEventListener("wheel", (event) => {
   state.transform.y = pointerY - (pointerY - state.transform.y) * scaleFactor;
   state.transform.scale = newScale;
   applyTransform();
+});
+
+let resizing = false;
+divider.addEventListener("mousedown", () => {
+  resizing = true;
+  divider.classList.add("dragging");
+});
+
+window.addEventListener("mousemove", (event) => {
+  if (!resizing) {
+    return;
+  }
+  const rect = document.body.getBoundingClientRect();
+  const percentage = (event.clientX / rect.width) * 100;
+  const clamped = Math.min(70, Math.max(25, percentage));
+  document.documentElement.style.setProperty("--left-width", `${clamped}%`);
+});
+
+window.addEventListener("mouseup", () => {
+  if (!resizing) {
+    return;
+  }
+  resizing = false;
+  divider.classList.remove("dragging");
 });
 
 sync();
