@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Task Script Board</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <section class="editor-panel">
+      <header>
+        <h1>Task Script</h1>
+        <p>Define tasks in code and see them rendered as an interactive tree.</p>
+      </header>
+      <div class="editor-wrapper">
+        <pre id="highlight-layer" aria-hidden="true"></pre>
+        <textarea id="task-editor" spellcheck="false"></textarea>
+        <div id="suggestions" class="suggestions hidden" role="listbox"></div>
+      </div>
+      <div class="editor-actions">
+        <button id="clear-filters">Clear Highlights</button>
+        <span class="hint">Tab/Shift+Tab to indent, Ctrl+Tab to unindent, Enter keeps indent.</span>
+      </div>
+    </section>
+
+    <section class="graph-panel">
+      <div class="graph-toolbar">
+        <input id="search-input" type="text" placeholder="Search tasks" />
+        <label><input type="checkbox" id="search-name" checked /> Name</label>
+        <label><input type="checkbox" id="search-description" checked /> Description</label>
+        <label><input type="checkbox" id="search-tag" checked /> Tag</label>
+        <label><input type="checkbox" id="search-person" checked /> Person</label>
+      </div>
+      <div id="graph-canvas" class="graph-canvas">
+        <svg id="graph-lines"></svg>
+        <div id="graph-nodes" class="graph-nodes"></div>
+      </div>
+      <div class="legend">
+        <div>
+          <h3>Tags</h3>
+          <div id="tag-list" class="pill-list"></div>
+        </div>
+        <div>
+          <h3>People</h3>
+          <div id="person-list" class="pill-list"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
