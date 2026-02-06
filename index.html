@@ -12,6 +12,7 @@
       <header>
         <h1>Task Script</h1>
         <p>Define tasks in code and see them rendered as an interactive tree.</p>
+        <button id="help-button" class="info-button editor-info" aria-haspopup="dialog" aria-expanded="false" aria-label="Syntax help">ℹ️</button>
       </header>
       <div class="editor-wrapper">
         <div id="line-numbers" class="line-numbers" aria-hidden="true"></div>
@@ -48,7 +49,6 @@
           <div>
             <div class="legend-header">
               <h3>People</h3>
-              <button id="help-button" class="info-button" aria-haspopup="dialog" aria-expanded="false" aria-label="Syntax help">ℹ️</button>
             </div>
             <div id="person-list" class="pill-list"></div>
           </div>
@@ -64,9 +64,9 @@
             <li><strong>* Task name</strong> starts a new task. Indent subtasks with 4 spaces.</li>
             <li><strong>#tags</strong> and <strong>@people</strong> lines are optional.</li>
             <li>Use <strong>{Task Name}</strong> to reference another task.</li>
-            <li>Description supports <strong>bold</strong>, <em>italic</em>, <u>underline</u>, <mark>highlight</mark>, lists, checkboxes, tables, images, and links.</li>
+            <li>Markdown formatting examples (write exactly as shown):</li>
           </ul>
-          <pre class="help-example">* Onboard client\n#launch #priority\n@maya\n**Bold**, *italic*, __underline__, ==highlight==\n- List item\n- [x] Checkbox\n| Col | Val |\n| --- | --- |\n| A | 1 |\n{Onboard client}</pre>
+          <pre class="help-example">Bold\n**bold**\n\nItalic\n*italic*\n\nUnderline\n__underline__\n\nHighlight\n==highlight==\n\nList\n- item\n- [x] checkbox\n\nTable\n| Col | Val |\n| --- | --- |\n| A | 1 |\n\nImage\n![alt](url)\n\nLink\n[title](https://example.com)\n\nTask reference\n{Task name}</pre>
         </div>
       </div>
     </section>
