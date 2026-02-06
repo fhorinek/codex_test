@@ -22,8 +22,12 @@ const state = {
   selectedPeople: new Set(),
   collapsed: new Set(),
   selectedTaskId: null,
+  selectedLine: null,
   searchQuery: "",
   transform: { x: 40, y: 40, scale: 1 },
+  positions: new Map(),
+  suggestionIndex: 0,
+  suggestionItems: [],
 };
 
 const sample = `* Launch sprint board\n#productivity #planning\n@maya @luis\n**Goal:** Turn raw task scripts into a visual map. [Refinement]\n\n    * Define parsing rules\n    #parser\n    @maya\n    Draft the parser for tags, people, and markdown descriptions.\n\n* Refinement\n#ux\n@luis\nCollect feedback and iterate on the experience.\n`;
@@ -130,24 +134,25 @@ function parseTasks(text) {
 
 function highlightText(lines) {
   const highlighted = lines
-    .map((line) => {
+    .map((line, index) => {
       const taskMatch = line.match(/^(\s*)\*\s+(.*)$/);
+      const activeClass = state.selectedLine === index ? " highlight-active" : "";
       if (taskMatch) {
         const indent = taskMatch[1];
         const name = taskMatch[2];
         const className = indent.length >= 4 ? "highlight-subtask" : "highlight-task";
-        return `${escapeHtml(indent)}<span class="${className}">* ${escapeHtml(name)}</span>`;
+        return `${escapeHtml(indent)}<span class="${className}${activeClass}">* ${escapeHtml(name)}</span>`;
       }
       if (line.trim().startsWith("#")) {
-        return `<span class="highlight-tags">${escapeHtml(line)}</span>`;
+        return `<span class="highlight-tags${activeClass}">${escapeHtml(line)}</span>`;
       }
       if (line.trim().startsWith("@")) {
-        return `<span class="highlight-people">${escapeHtml(line)}</span>`;
+        return `<span class="highlight-people${activeClass}">${escapeHtml(line)}</span>`;
       }
       if (line.trim() !== "") {
-        return `<span class="highlight-description">${escapeHtml(line)}</span>`;
+        return `<span class="highlight-description${activeClass}">${escapeHtml(line)}</span>`;
       }
-      return "";
+      return activeClass ? `<span class="highlight-active">&nbsp;</span>` : "";
     })
     .join("\n");
   highlightLayer.innerHTML = highlighted;
@@ -179,6 +184,8 @@ function updateSuggestions() {
     return;
   }
   suggestions.innerHTML = "";
+  state.suggestionItems = filtered;
+  state.suggestionIndex = 0;
   filtered.forEach((item) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -193,7 +200,50 @@ function updateSuggestions() {
     });
     suggestions.appendChild(button);
   });
+  setActiveSuggestion();
+  positionSuggestions();
   suggestions.classList.remove("hidden");
+}
+
+function setActiveSuggestion() {
+  const buttons = Array.from(suggestions.querySelectorAll("button"));
+  buttons.forEach((button, index) => {
+    button.classList.toggle("active", index === state.suggestionIndex);
+  });
+}
+
+function positionSuggestions() {
+  const cursor = editor.selectionStart;
+  const coords = getCaretCoordinates(editor, cursor);
+  suggestions.style.left = `${coords.left}px`;
+  suggestions.style.top = `${coords.top + coords.height + 6}px`;
+}
+
+function getCaretCoordinates(textarea, position) {
+  const div = document.createElement("div");
+  const style = window.getComputedStyle(textarea);
+  Array.from(style).forEach((prop) => {
+    div.style[prop] = style[prop];
+  });
+  div.style.position = "absolute";
+  div.style.visibility = "hidden";
+  div.style.whiteSpace = "pre-wrap";
+  div.style.wordWrap = "break-word";
+  div.style.overflow = "auto";
+  div.style.height = "auto";
+  div.style.width = `${textarea.clientWidth}px`;
+  div.textContent = textarea.value.slice(0, position);
+  const span = document.createElement("span");
+  span.textContent = textarea.value.slice(position) || ".";
+  div.appendChild(span);
+  document.body.appendChild(div);
+  const rect = span.getBoundingClientRect();
+  const textRect = textarea.getBoundingClientRect();
+  const top = rect.top - div.getBoundingClientRect().top + textRect.top - textarea.scrollTop;
+  const left = rect.left - div.getBoundingClientRect().left + textRect.left - textarea.scrollLeft;
+  const height = rect.height;
+  document.body.removeChild(div);
+  return { top, left, height };
 }
 
 function buildPill(text, active, onClick) {
@@ -314,6 +364,7 @@ function renderGraph() {
     positions.set(task.id, { x, y });
     y += spacingY;
   });
+  state.positions = positions;
 
   graphLines.innerHTML = visibleTasks
     .map((task) => {
@@ -434,6 +485,7 @@ function renderGraph() {
 
 function selectTask(task) {
   state.selectedTaskId = task.id;
+  state.selectedLine = task.lineIndex;
   let current = task.parent;
   while (current) {
     state.collapsed.delete(current.id);
@@ -449,16 +501,15 @@ function selectTask(task) {
 }
 
 function focusOnTask(task) {
-  const node = Array.from(graphNodes.children).find((child) =>
-    child.querySelector("h4")?.textContent === task.name
-  );
-  if (!node) {
+  const pos = state.positions.get(task.id);
+  if (!pos) {
     return;
   }
-  const rect = node.getBoundingClientRect();
   const canvasRect = graphCanvas.getBoundingClientRect();
-  state.transform.x += canvasRect.width / 2 - (rect.left + rect.width / 2);
-  state.transform.y += canvasRect.height / 2 - (rect.top + rect.height / 2);
+  const centerX = pos.x + 110;
+  const centerY = pos.y + 40;
+  state.transform.x = canvasRect.width / 2 - centerX * state.transform.scale;
+  state.transform.y = canvasRect.height / 2 - centerY * state.transform.scale;
   applyTransform();
 }
 
@@ -474,19 +525,32 @@ function sync() {
   state.allTasks = allTasks;
   state.tags = tags;
   state.people = people;
+  if (state.selectedLine === null) {
+    state.selectedLine = 0;
+  }
   highlightText(lines);
   buildTagPersonLists();
   renderGraph();
   updateSuggestions();
 }
 
+function updateSelectedLine() {
+  const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
+  state.selectedLine = line;
+  highlightText(editor.value.split("\n"));
+}
+
 editor.addEventListener("scroll", () => {
   highlightLayer.scrollTop = editor.scrollTop;
   highlightLayer.scrollLeft = editor.scrollLeft;
+  if (!suggestions.classList.contains("hidden")) {
+    positionSuggestions();
+  }
 });
 
 editor.addEventListener("input", () => {
   sync();
+  updateSelectedLine();
 });
 
 editor.addEventListener("click", () => {
@@ -495,8 +559,11 @@ editor.addEventListener("click", () => {
   const task = state.allTasks.find((t) => t.lineIndex === line);
   if (task) {
     state.selectedTaskId = task.id;
+    state.selectedLine = task.lineIndex;
     focusOnTask(task);
     renderGraph();
+  } else {
+    updateSelectedLine();
   }
 });
 
@@ -523,6 +590,41 @@ editor.addEventListener("keydown", (event) => {
     sync();
   }
 
+  if (!suggestions.classList.contains("hidden")) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      state.suggestionIndex = Math.min(
+        state.suggestionIndex + 1,
+        state.suggestionItems.length - 1
+      );
+      setActiveSuggestion();
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      state.suggestionIndex = Math.max(state.suggestionIndex - 1, 0);
+      setActiveSuggestion();
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const item = state.suggestionItems[state.suggestionIndex];
+      if (item) {
+        const cursor = editor.selectionStart;
+        const before = editor.value.slice(0, cursor);
+        const triggerMatch = before.match(/([#@\[])([^\s\]]*)$/);
+        const trigger = triggerMatch?.[1] || "";
+        const partial = triggerMatch?.[2] || "";
+        const insert = trigger === "[" ? `${item}]` : item.slice(1);
+        const start = cursor - partial.length;
+        editor.setRangeText(insert, start, cursor, "end");
+        suggestions.classList.add("hidden");
+        sync();
+      }
+      return;
+    }
+  }
+
   if (event.key === "Enter") {
     event.preventDefault();
     const start = editor.selectionStart;
@@ -535,7 +637,10 @@ editor.addEventListener("keydown", (event) => {
   }
 });
 
-editor.addEventListener("keyup", updateSuggestions);
+editor.addEventListener("keyup", () => {
+  updateSuggestions();
+  updateSelectedLine();
+});
 
 searchInput.addEventListener("input", () => {
   state.searchQuery = searchInput.value;
@@ -587,7 +692,14 @@ graphCanvas.addEventListener("mouseleave", () => {
 graphCanvas.addEventListener("wheel", (event) => {
   event.preventDefault();
   const delta = event.deltaY > 0 ? -0.1 : 0.1;
-  state.transform.scale = Math.min(1.6, Math.max(0.5, state.transform.scale + delta));
+  const newScale = Math.min(1.6, Math.max(0.5, state.transform.scale + delta));
+  const rect = graphCanvas.getBoundingClientRect();
+  const pointerX = event.clientX - rect.left;
+  const pointerY = event.clientY - rect.top;
+  const scaleFactor = newScale / state.transform.scale;
+  state.transform.x = pointerX - (pointerX - state.transform.x) * scaleFactor;
+  state.transform.y = pointerY - (pointerY - state.transform.y) * scaleFactor;
+  state.transform.scale = newScale;
   applyTransform();
 });
 
