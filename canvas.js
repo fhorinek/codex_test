@@ -11,7 +11,14 @@ export function createCanvas({
   function renderGraph() {
     graphNodes.innerHTML = "";
     graphLines.innerHTML = "";
-    graphLines.setAttribute("viewBox", "0 0 1200 800");
+    const canvasRect = graphCanvas.getBoundingClientRect();
+    graphLines.setAttribute(
+      "viewBox",
+      `0 0 ${Math.max(1, Math.floor(canvasRect.width))} ${Math.max(
+        1,
+        Math.floor(canvasRect.height)
+      )}`
+    );
 
     const visibleTasks = gatherVisible(state.tasks);
     const positions = new Map();
@@ -39,8 +46,9 @@ export function createCanvas({
           const endX = childPos.x;
           const endY = childPos.y + nodeHeight / 2;
           const midX = (startX + endX) / 2;
+          const midY = (startY + endY) / 2;
           paths.push(
-            `<path d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="2" fill="none" />`
+            `<path d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="5" fill="none" />`
           );
         });
     });
