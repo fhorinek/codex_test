@@ -108,9 +108,9 @@ function selectTask(task) {
 function buildTagPersonLists() {
   dom.tagList.innerHTML = "";
   dom.personList.innerHTML = "";
-  const tags = state.config?.tags?.length
-    ? state.config.tags.map((tag) => `#${tag.key}`)
-    : Array.from(state.tags).sort();
+  const tagOrder = state.config?.tags?.map((tag) => `#${tag.key}`) || [];
+  const extraTags = Array.from(state.tags).filter((tag) => !tagOrder.includes(tag)).sort();
+  const tags = [...tagOrder, ...extraTags];
   tags.forEach((tag) => {
     const meta = state.tagMeta?.get(tag);
     dom.tagList.appendChild(
@@ -124,9 +124,11 @@ function buildTagPersonLists() {
       )
     );
   });
-  const people = state.config?.people?.length
-    ? state.config.people.map((person) => `@${person.key}`)
-    : Array.from(state.people).sort();
+  const peopleOrder = state.config?.people?.map((person) => `@${person.key}`) || [];
+  const extraPeople = Array.from(state.people)
+    .filter((person) => !peopleOrder.includes(person))
+    .sort();
+  const people = [...peopleOrder, ...extraPeople];
   people.forEach((person) => {
     const meta = state.peopleMeta?.get(person);
     dom.personList.appendChild(
@@ -167,7 +169,9 @@ function sync() {
   state.peopleMeta = peopleMeta;
   state.stateMeta = stateMeta;
   if (dom.boardTitle) {
-    dom.boardTitle.textContent = config.boardName || "Task Script";
+    const title = config.boardName || "Task Script";
+    dom.boardTitle.textContent = title;
+    document.title = title;
   }
   if (state.selectedLine === null) {
     state.selectedLine = 0;
@@ -184,7 +188,11 @@ function buildKanban() {
     return;
   }
   dom.kanbanBoard.innerHTML = "";
-  const states = Array.from(state.states).sort((a, b) => a.localeCompare(b));
+  const stateOrder = state.config?.states?.map((state) => `!${state.key}`) || [];
+  const extraStates = Array.from(state.states)
+    .filter((stateTag) => !stateOrder.includes(stateTag))
+    .sort((a, b) => a.localeCompare(b));
+  const states = [...stateOrder, ...extraStates];
   const tasksByState = new Map();
   states.forEach((stateTag) => tasksByState.set(stateTag, []));
   const unassigned = [];

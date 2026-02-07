@@ -6,6 +6,7 @@ Overview
 - Keep this document updated whenever project behavior or UI changes.
 - Optional config header precedes tasks and defines board name, states, people, and tag metadata.
 - Board name from the header is shown in the left-pane title.
+- Board name from the header also updates the HTML document title.
 
 Editor
 - Fixed-width font with line numbers and syntax highlighting for tasks, subtasks, tags, people, and references.
@@ -43,6 +44,7 @@ Graph
 - Nodes can be collapsed/expanded; focus centers the selected task with animation.
 - Pan and zoom supported on the graph canvas.
 - A kanban board appears above the graph showing tasks grouped by their !state tags (states are generated dynamically).
+- Kanban columns follow the header state order first, followed by any dynamically detected states.
 - The kanban board and graph are separated by a draggable horizontal divider.
 - Drag tasks from the graph or between kanban columns to update the task !state in the editor.
 
@@ -70,6 +72,7 @@ Config header
           jesica
           fero
 - Header-defined states/people/tags keep their order in the legend/kanban and define pill colors.
+- Dynamically detected states/people/tags are appended after the header-defined order so new items still appear.
 
 Misc
 - Clear Highlights resets all tag/person filters and search input.
