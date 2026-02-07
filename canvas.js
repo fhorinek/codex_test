@@ -219,6 +219,7 @@ export function createCanvas({
       });
       node.addEventListener("drop", (event) => {
         event.preventDefault();
+        event.stopPropagation();
         const payload = event.dataTransfer.getData("application/json");
         if (!payload) {
           return;
@@ -432,6 +433,9 @@ export function createCanvas({
   });
 
   graphCanvas.addEventListener("drop", (event) => {
+    if (event.defaultPrevented) {
+      return;
+    }
     event.preventDefault();
     const payload = event.dataTransfer.getData("application/json");
     if (!payload) {
