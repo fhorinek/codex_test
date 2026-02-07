@@ -169,9 +169,12 @@ export function parseTasks(text) {
     if (trimmed.startsWith("#")) {
       const found = trimmed.split(/\s+/).filter(Boolean);
       found.forEach((tag) => {
-        if (tag.startsWith("#")) {
-          currentTask.tags.push(tag);
-          tags.add(tag);
+        if (tag.startsWith("#") && tag.length > 1) {
+          const cleanTag = tag.trim();
+          if (cleanTag.length > 1) {
+            currentTask.tags.push(cleanTag);
+            tags.add(cleanTag);
+          }
         }
       });
       return;
@@ -180,9 +183,12 @@ export function parseTasks(text) {
     if (trimmed.startsWith("@")) {
       const found = trimmed.split(/\s+/).filter(Boolean);
       found.forEach((person) => {
-        if (person.startsWith("@")) {
-          currentTask.people.push(person);
-          people.add(person);
+        if (person.startsWith("@") && person.length > 1) {
+          const cleanPerson = person.trim();
+          if (cleanPerson.length > 1) {
+            currentTask.people.push(cleanPerson);
+            people.add(cleanPerson);
+          }
         }
       });
       return;

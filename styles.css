@@ -67,7 +67,6 @@ body {
   line-height: 1.5;
   white-space: pre;
   word-wrap: break-word;
-  overflow-x: hidden;
   min-width: 100%;
   width: max-content;
 }
@@ -222,7 +221,7 @@ body {
 .legend-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -274,10 +273,18 @@ body {
   z-index: 2;
 }
 
+.legend > div {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
 .legend h3 {
   margin: 0 0 6px;
   font-size: 13px;
   color: #4c526c;
+  text-align: right;
+  width: 100%;
 }
 
 .help-modal {

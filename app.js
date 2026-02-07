@@ -58,6 +58,7 @@ const canvasController = createCanvas({
   renderMarkdown,
   onSelectTask: selectTask,
   findTaskByName,
+  onFiltersChange: buildTagPersonLists,
 });
 
 function handleEditorSelection(line) {

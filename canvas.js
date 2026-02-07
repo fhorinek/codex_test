@@ -1,4 +1,11 @@
-export function createCanvas({ state, dom, renderMarkdown, onSelectTask, findTaskByName }) {
+export function createCanvas({
+  state,
+  dom,
+  renderMarkdown,
+  onSelectTask,
+  findTaskByName,
+  onFiltersChange,
+}) {
   const { graphNodes, graphLines, graphCanvas } = dom;
 
   function renderGraph() {
@@ -165,6 +172,9 @@ export function createCanvas({ state, dom, renderMarkdown, onSelectTask, findTas
     }
     expandForFilters();
     renderGraph();
+    if (onFiltersChange) {
+      onFiltersChange();
+    }
   }
 
   function togglePerson(person) {
@@ -175,6 +185,9 @@ export function createCanvas({ state, dom, renderMarkdown, onSelectTask, findTas
     }
     expandForFilters();
     renderGraph();
+    if (onFiltersChange) {
+      onFiltersChange();
+    }
   }
 
   function expandForFilters() {
