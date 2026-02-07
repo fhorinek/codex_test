@@ -189,8 +189,8 @@ body {
   flex-direction: column;
   height: 100%;
   background: #f5f6fb;
-  padding: 20px;
-  gap: 12px;
+  padding: 0;
+  gap: 0;
 }
 
 .editor-panel header {
@@ -344,9 +344,9 @@ body {
 .graph-canvas {
   position: relative;
   flex: 1;
-  border-radius: 16px;
   background: #ffffff;
-  border: 1px solid #d6d9e6;
+  border: none;
+  border-radius: 0;
   overflow: hidden;
 }
 

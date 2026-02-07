@@ -112,10 +112,16 @@ export function createCanvas({
           });
         });
         desc.querySelectorAll(".inline-pill").forEach((pill) => {
+          const type = pill.dataset.type;
+          const value = pill.dataset.value;
+          if (type === "tag" && state.selectedTags.has(value)) {
+            pill.classList.add("active");
+          }
+          if (type === "person" && state.selectedPeople.has(value)) {
+            pill.classList.add("active");
+          }
           pill.addEventListener("click", (event) => {
             event.stopPropagation();
-            const type = pill.dataset.type;
-            const value = pill.dataset.value;
             if (type === "tag") {
               toggleTag(value);
             } else if (type === "person") {
