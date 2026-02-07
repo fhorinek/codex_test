@@ -205,7 +205,17 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       event.preventDefault();
       const start = editor.selectionStart;
       const end = editor.selectionEnd;
-      if (!event.shiftKey && !event.ctrlKey && start === end) {
+      if (!event.ctrlKey && start === end) {
+        if (event.shiftKey) {
+          const lineStart = editor.value.lastIndexOf("\n", start - 1) + 1;
+          const column = start - lineStart;
+          const remainder = column % 4;
+          const spaces = remainder === 0 ? 4 : remainder;
+          const target = Math.max(lineStart, start - spaces);
+          editor.setSelectionRange(target, target);
+          updateSelectedLine();
+          return;
+        }
         const lineStart = editor.value.lastIndexOf("\n", start - 1) + 1;
         const column = start - lineStart;
         const remainder = column % 4;

@@ -75,6 +75,7 @@ Config header
           fero
 - Header-defined states/people/tags keep their order in the legend/kanban and define pill colors.
 - Dynamically detected states/people/tags are appended after the header-defined order so new items still appear.
+- Pills display the configured display name when provided in the header.
 
 Misc
 - Clear Highlights resets all tag/person filters and search input.

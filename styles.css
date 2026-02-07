@@ -489,8 +489,8 @@ body {
 }
 
 .state-pill {
-  background: #2f54eb;
-  color: #ffffff;
+  background: transparent;
+  color: #2f54eb;
   border-color: #2f54eb;
   font-weight: 600;
 }

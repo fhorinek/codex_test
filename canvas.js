@@ -93,10 +93,10 @@ export function createCanvas({
       if (task.state) {
         const statePill = document.createElement("span");
         statePill.className = "pill state-pill";
-        statePill.textContent = task.state.replace(/^!/, "");
+        const stateMeta = state.stateMeta?.get(task.state);
+        statePill.textContent = stateMeta?.name || task.state.replace(/^!/, "");
         const stateColor = state.stateMeta?.get(task.state)?.color;
         if (stateColor) {
-          statePill.style.background = stateColor;
           statePill.style.borderColor = stateColor;
         }
         statePill.draggable = true;
@@ -169,18 +169,18 @@ export function createCanvas({
           if (type === "tag") {
             const color = state.tagMeta?.get(value)?.color;
             if (color) {
-              pill.style.background = color;
               pill.style.borderColor = color;
-              pill.style.color = "#ffffff";
             }
+            const label = state.tagMeta?.get(value)?.name || value;
+            pill.textContent = label;
           }
           if (type === "person") {
             const color = state.peopleMeta?.get(value)?.color;
             if (color) {
-              pill.style.background = color;
               pill.style.borderColor = color;
-              pill.style.color = "#ffffff";
             }
+            const personLabel = state.peopleMeta?.get(value)?.name || value.replace("@", "");
+            pill.textContent = `👤 ${personLabel}`;
           }
           pill.draggable = true;
           pill.addEventListener("dragstart", (event) => {
@@ -251,11 +251,10 @@ export function createCanvas({
     const pill = document.createElement("button");
     pill.type = "button";
     pill.className = `pill ${active ? "active" : ""}`;
-    pill.textContent = text;
+    const label = meta?.name || text;
+    pill.textContent = label;
     if (meta?.color) {
       pill.style.borderColor = meta.color;
-      pill.style.background = meta.color;
-      pill.style.color = "#ffffff";
     }
     if (text.startsWith("#") || text.startsWith("@")) {
       pill.draggable = true;
