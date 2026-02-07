@@ -26,7 +26,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     highlightLayer.innerHTML = highlighted;
     highlightLayer.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
     if (lineNumbers) {
-      lineNumbers.style.transform = `translateY(${-editor.scrollTop}px)`;
+      lineNumbers.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
     }
   }
 
@@ -112,8 +112,9 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     const cursor = editor.selectionStart;
     const coords = getCaretCoordinates(editor, cursor);
     const editorRect = editor.getBoundingClientRect();
-    suggestions.style.left = `${coords.left - editorRect.left}px`;
-    suggestions.style.top = `${coords.top - editorRect.top + coords.height + 6}px`;
+    const wrapperRect = editor.parentElement.getBoundingClientRect();
+    suggestions.style.left = `${coords.left - wrapperRect.left}px`;
+    suggestions.style.top = `${coords.top - wrapperRect.top + coords.height + 6}px`;
   }
 
   function getCaretCoordinates(textarea, position) {
@@ -137,10 +138,9 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     div.scrollTop = textarea.scrollTop;
     div.scrollLeft = textarea.scrollLeft;
     const rect = span.getBoundingClientRect();
-    const textRect = textarea.getBoundingClientRect();
     const divRect = div.getBoundingClientRect();
-    const top = rect.top - divRect.top + textRect.top;
-    const left = rect.left - divRect.left + textRect.left;
+    const top = rect.top - divRect.top + textarea.offsetTop;
+    const left = rect.left - divRect.left + textarea.offsetLeft;
     const height = rect.height;
     document.body.removeChild(div);
     return { top, left, height };
@@ -155,7 +155,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   editor.addEventListener("scroll", () => {
     highlightLayer.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
     if (lineNumbers) {
-      lineNumbers.style.transform = `translateY(${-editor.scrollTop}px)`;
+      lineNumbers.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
     }
     if (!suggestions.classList.contains("hidden")) {
       positionSuggestions();
