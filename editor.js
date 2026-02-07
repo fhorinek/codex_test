@@ -18,7 +18,10 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
           return `<span class=\"${baseClass} ${className}\">${escapeHtml(indent)}* ${escapeHtml(name)}</span>`;
         }
         if (line.trim() !== "") {
-          return `<span class=\"${baseClass} highlight-description\">${highlightInlineTokens(line)}</span>`;
+          return `<span class=\"${baseClass} highlight-description\">${highlightInlineTokens(
+            line,
+            index
+          )}</span>`;
         }
         return `<span class=\"${baseClass}\">&nbsp;</span>`;
       })
@@ -41,11 +44,19 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       .join("");
   }
 
-  function highlightInlineTokens(line) {
+  function highlightInlineTokens(line, index) {
     const escaped = escapeHtml(line);
+    const invalidStates = state.invalidStateTags?.get(index) || [];
+    const invalidLookup = new Set(invalidStates);
     return escaped
       .replace(/(^|\s)(#[^\s#@]+)/g, "$1<span class=\"highlight-tags\">$2</span>")
-      .replace(/(^|\s)(@[^\s#@]+)/g, "$1<span class=\"highlight-people\">$2</span>");
+      .replace(/(^|\s)(@[^\s#@]+)/g, "$1<span class=\"highlight-people\">$2</span>")
+      .replace(/(^|\s)(![^\s#@]+)/g, (match, prefix, token) => {
+        if (invalidLookup.has(token)) {
+          return `${prefix}<span class="highlight-invalid-state">${token}</span>`;
+        }
+        return `${prefix}<span class="highlight-state">${token}</span>`;
+      });
   }
 
   function updateSuggestions({ forceOpen = false } = {}) {

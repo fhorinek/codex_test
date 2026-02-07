@@ -133,6 +133,8 @@ export function parseTasks(text) {
   let currentTask = null;
   const tags = new Set();
   const people = new Set();
+  const states = new Set();
+  const invalidStateTags = new Map();
 
   lines.forEach((line, index) => {
     const raw = line;
@@ -149,6 +151,7 @@ export function parseTasks(text) {
         parent: null,
         tags: [],
         people: [],
+        state: null,
         description: [],
         references: [],
         children: [],
@@ -194,6 +197,21 @@ export function parseTasks(text) {
     for (const match of matches) {
       currentTask.references.push(match[1]);
     }
+    const stateMatches = trimmed.matchAll(/(^|\s)(![^\s#@]+)/g);
+    for (const match of stateMatches) {
+      const stateTag = match[2];
+      if (!stateTag || stateTag.length <= 1) {
+        continue;
+      }
+      if (!currentTask.state) {
+        currentTask.state = stateTag;
+        states.add(stateTag);
+      } else {
+        const lineInvalid = invalidStateTags.get(index) || [];
+        lineInvalid.push(stateTag);
+        invalidStateTags.set(index, lineInvalid);
+      }
+    }
   });
 
   const allTasks = [];
@@ -207,5 +225,5 @@ export function parseTasks(text) {
   };
   collect(tasks);
 
-  return { tasks, tags, people, lines, allTasks };
+  return { tasks, tags, people, states, invalidStateTags, lines, allTasks };
 }

@@ -16,6 +16,7 @@ Task syntax
 - Subtasks are indented by 4 spaces and use the same "*" syntax.
 - Task descriptions follow task lines until a blank line; tags and people can appear anywhere inline in the description.
 - Tags use #tag, people use @person, and references use {Task name}.
+- Kanban state tags use !state (first !tag per task is used for the kanban column; additional !tags are invalid and shown with a wavy underline in the editor).
 - Markdown in descriptions supports bold, italic, underline, highlight, lists, tables, images, and links.
 
 Formatting syntax examples
@@ -38,6 +39,7 @@ Graph
 - Nodes display the task title and render description markdown with inline pills for tags/people.
 - Nodes can be collapsed/expanded; focus centers the selected task with animation.
 - Pan and zoom supported on the graph canvas.
+- A kanban board appears above the graph showing tasks grouped by their !state tags (states are generated dynamically).
 
 Tags & People
 - Legend lists all tags and people; clicking toggles highlight filters.

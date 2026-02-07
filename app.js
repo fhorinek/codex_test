@@ -17,6 +17,7 @@ const dom = {
   helpButton: document.getElementById("help-button"),
   helpModal: document.getElementById("help-modal"),
   helpClose: document.getElementById("help-close"),
+  kanbanBoard: document.getElementById("kanban-board"),
   tagList: document.getElementById("tag-list"),
   personList: document.getElementById("person-list"),
   clearFilters: document.getElementById("clear-filters"),
@@ -29,6 +30,8 @@ const state = {
   allTasks: [],
   tags: new Set(),
   people: new Set(),
+  states: new Set(),
+  invalidStateTags: new Map(),
   selectedTags: new Set(),
   selectedPeople: new Set(),
   collapsed: new Set(),
@@ -117,18 +120,68 @@ function buildTagPersonLists() {
 }
 
 function sync() {
-  const { tasks, tags, people, lines, allTasks } = parseTasks(dom.editor.value);
+  const { tasks, tags, people, states, invalidStateTags, lines, allTasks } = parseTasks(
+    dom.editor.value
+  );
   state.tasks = tasks;
   state.allTasks = allTasks;
   state.tags = tags;
   state.people = people;
+  state.states = states;
+  state.invalidStateTags = invalidStateTags;
   if (state.selectedLine === null) {
     state.selectedLine = 0;
   }
   editorController.highlightText(lines);
   buildTagPersonLists();
+  buildKanban();
   canvasController.renderGraph();
   editorController.updateSuggestions();
+}
+
+function buildKanban() {
+  if (!dom.kanbanBoard) {
+    return;
+  }
+  dom.kanbanBoard.innerHTML = "";
+  const states = Array.from(state.states).sort((a, b) => a.localeCompare(b));
+  const tasksByState = new Map();
+  states.forEach((stateTag) => tasksByState.set(stateTag, []));
+  const unassigned = [];
+  state.allTasks.forEach((task) => {
+    if (task.state && tasksByState.has(task.state)) {
+      tasksByState.get(task.state).push(task);
+    } else {
+      unassigned.push(task);
+    }
+  });
+  const orderedStates = [...states];
+  if (unassigned.length) {
+    orderedStates.push("!unassigned");
+    tasksByState.set("!unassigned", unassigned);
+  }
+  orderedStates.forEach((stateTag) => {
+    const column = document.createElement("div");
+    column.className = "kanban-column";
+    const title = document.createElement("h3");
+    title.textContent =
+      stateTag === "!unassigned"
+        ? "Unassigned"
+        : stateTag.replace(/^!/, "").replace(/^\w/, (char) => char.toUpperCase());
+    column.appendChild(title);
+    const list = document.createElement("div");
+    list.className = "kanban-list";
+    (tasksByState.get(stateTag) || []).forEach((task) => {
+      const card = document.createElement("button");
+      card.type = "button";
+      card.className = "kanban-card";
+      card.textContent = task.name;
+      card.addEventListener("click", () => selectTask(task));
+      list.appendChild(card);
+    });
+    column.appendChild(list);
+    dom.kanbanBoard.appendChild(column);
+  });
 }
 
 function findTaskByName(name) {
