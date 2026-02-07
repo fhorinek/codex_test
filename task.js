@@ -126,8 +126,72 @@ export function renderMarkdown(text) {
   return html;
 }
 
+function parseConfig(lines) {
+  const config = {
+    boardName: "Task Script",
+    states: [],
+    people: [],
+    tags: [],
+  };
+  let index = 0;
+  const headerLine = lines[index]?.trim();
+  if (headerLine && !headerLine.startsWith("*") && headerLine.endsWith(":")) {
+    config.boardName = headerLine.slice(0, -1).trim() || config.boardName;
+    index += 1;
+  }
+  let currentSection = null;
+  let currentEntry = null;
+  for (; index < lines.length; index += 1) {
+    const raw = lines[index];
+    if (raw.trim() === "") {
+      continue;
+    }
+    if (/^\s*\*/.test(raw)) {
+      break;
+    }
+    const indent = raw.match(/^\s*/)[0].length;
+    const trimmed = raw.trim();
+    if (indent === 4 && trimmed.endsWith(":")) {
+      currentSection = trimmed.slice(0, -1).toLowerCase();
+      currentEntry = null;
+      continue;
+    }
+    if (indent === 8 && currentSection) {
+      const match = trimmed.match(/^([^\s:]+)\s*:\s*(.*)?$/);
+      const key = match ? match[1] : trimmed;
+      const entry = { key, name: key, color: "" };
+      if (match && match[2]) {
+        entry.name = match[2].trim() || entry.name;
+      }
+      if (currentSection === "states") {
+        config.states.push(entry);
+      } else if (currentSection === "people") {
+        config.people.push(entry);
+      } else if (currentSection === "tags") {
+        config.tags.push(entry);
+      }
+      currentEntry = entry;
+      continue;
+    }
+    if (indent === 12 && currentEntry) {
+      const propMatch = trimmed.match(/^([a-zA-Z]+)\s*:\s*(.*)$/);
+      if (propMatch) {
+        const prop = propMatch[1].toLowerCase();
+        const value = propMatch[2].trim();
+        if (prop === "name") {
+          currentEntry.name = value || currentEntry.name;
+        } else if (prop === "color") {
+          currentEntry.color = value;
+        }
+      }
+    }
+  }
+  return { config, startIndex: index };
+}
+
 export function parseTasks(text) {
   const lines = text.split("\n");
+  const { config, startIndex } = parseConfig(lines);
   const tasks = [];
   const stack = [];
   let currentTask = null;
@@ -135,8 +199,30 @@ export function parseTasks(text) {
   const people = new Set();
   const states = new Set();
   const invalidStateTags = new Map();
+  const tagMeta = new Map();
+  const peopleMeta = new Map();
+  const stateMeta = new Map();
+
+  config.tags.forEach((tag) => {
+    const value = `#${tag.key}`;
+    tags.add(value);
+    tagMeta.set(value, tag);
+  });
+  config.people.forEach((person) => {
+    const value = `@${person.key}`;
+    people.add(value);
+    peopleMeta.set(value, person);
+  });
+  config.states.forEach((state) => {
+    const value = `!${state.key}`;
+    states.add(value);
+    stateMeta.set(value, state);
+  });
 
   lines.forEach((line, index) => {
+    if (index < startIndex) {
+      return;
+    }
     const raw = line;
     const trimmed = raw.trim();
     const taskMatch = raw.match(/^(\s*)\*\s+(.*)$/);
@@ -183,6 +269,9 @@ export function parseTasks(text) {
       if (tag && tag.length > 1) {
         currentTask.tags.push(tag);
         tags.add(tag);
+        if (!tagMeta.has(tag)) {
+          tagMeta.set(tag, { key: tag.slice(1), name: tag.slice(1), color: "" });
+        }
       }
     }
     const personMatches = trimmed.matchAll(/(^|\s)(@[^\s#@]+)/g);
@@ -191,6 +280,9 @@ export function parseTasks(text) {
       if (person && person.length > 1) {
         currentTask.people.push(person);
         people.add(person);
+        if (!peopleMeta.has(person)) {
+          peopleMeta.set(person, { key: person.slice(1), name: person.slice(1), color: "" });
+        }
       }
     }
     const matches = trimmed.matchAll(/\{([^}]+)\}/g);
@@ -206,6 +298,9 @@ export function parseTasks(text) {
       if (!currentTask.state) {
         currentTask.state = stateTag;
         states.add(stateTag);
+        if (!stateMeta.has(stateTag)) {
+          stateMeta.set(stateTag, { key: stateTag.slice(1), name: stateTag.slice(1), color: "" });
+        }
       } else {
         const lineInvalid = invalidStateTags.get(index) || [];
         lineInvalid.push(stateTag);
@@ -225,5 +320,17 @@ export function parseTasks(text) {
   };
   collect(tasks);
 
-  return { tasks, tags, people, states, invalidStateTags, lines, allTasks };
+  return {
+    tasks,
+    tags,
+    people,
+    states,
+    invalidStateTags,
+    lines,
+    allTasks,
+    config,
+    tagMeta,
+    peopleMeta,
+    stateMeta,
+  };
 }

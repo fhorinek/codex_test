@@ -92,6 +92,11 @@ export function createCanvas({
         const statePill = document.createElement("span");
         statePill.className = "pill state-pill";
         statePill.textContent = task.state.replace(/^!/, "");
+        const stateColor = state.stateMeta?.get(task.state)?.color;
+        if (stateColor) {
+          statePill.style.background = stateColor;
+          statePill.style.borderColor = stateColor;
+        }
         header.appendChild(statePill);
       }
 
@@ -146,6 +151,22 @@ export function createCanvas({
           if (type === "person" && state.selectedPeople.has(value)) {
             pill.classList.add("active");
           }
+          if (type === "tag") {
+            const color = state.tagMeta?.get(value)?.color;
+            if (color) {
+              pill.style.background = color;
+              pill.style.borderColor = color;
+              pill.style.color = "#ffffff";
+            }
+          }
+          if (type === "person") {
+            const color = state.peopleMeta?.get(value)?.color;
+            if (color) {
+              pill.style.background = color;
+              pill.style.borderColor = color;
+              pill.style.color = "#ffffff";
+            }
+          }
           pill.addEventListener("click", (event) => {
             event.stopPropagation();
             if (type === "tag") {
@@ -183,11 +204,16 @@ export function createCanvas({
     return result;
   }
 
-  function buildPill(text, active, onClick) {
+  function buildPill(text, active, onClick, meta = null) {
     const pill = document.createElement("button");
     pill.type = "button";
     pill.className = `pill ${active ? "active" : ""}`;
     pill.textContent = text;
+    if (meta?.color) {
+      pill.style.borderColor = meta.color;
+      pill.style.background = meta.color;
+      pill.style.color = "#ffffff";
+    }
     pill.addEventListener("click", onClick);
     return pill;
   }

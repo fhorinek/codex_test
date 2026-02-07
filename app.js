@@ -14,6 +14,7 @@ const dom = {
   searchDescription: document.getElementById("search-description"),
   searchTag: document.getElementById("search-tag"),
   searchPerson: document.getElementById("search-person"),
+  boardTitle: document.getElementById("board-title"),
   helpButton: document.getElementById("help-button"),
   helpModal: document.getElementById("help-modal"),
   helpClose: document.getElementById("help-close"),
@@ -33,6 +34,10 @@ const state = {
   people: new Set(),
   states: new Set(),
   invalidStateTags: new Map(),
+  config: null,
+  tagMeta: new Map(),
+  peopleMeta: new Map(),
+  stateMeta: new Map(),
   selectedTags: new Set(),
   selectedPeople: new Set(),
   collapsed: new Set(),
@@ -46,7 +51,7 @@ const state = {
   suggestionItems: [],
 };
 
-const sample = `* Launch sprint board\n#productivity #planning\n@maya @luis\n**Goal:** Turn raw task scripts into a visual map. {Refinement}\n\n    * Define parsing rules\n    #parser\n    @maya\n    Draft the parser for tags, people, and markdown descriptions.\n\n* Refinement\n#ux\n@luis\nCollect feedback and iterate on the experience.\n`;
+const sample = `Launch board:\n    states:\n        todo\n        inprogress:\n            name: In progress\n            color: #9aa0b8\n        done:\n            name: Done\n            color: #2f54eb\n    people:\n        bob:\n            name: Bob Dilan\n            color: #ff00bb\n        jesica\n        fero\n\n* Launch sprint board\n#productivity #planning !todo\n@maya @luis\n**Goal:** Turn raw task scripts into a visual map. {Refinement}\n\n    * Define parsing rules\n    #parser !inprogress\n    @maya\n    Draft the parser for tags, people, and markdown descriptions.\n\n* Refinement\n#ux !done\n@luis\nCollect feedback and iterate on the experience.\n`;
 
 dom.editor.value = sample;
 
@@ -63,7 +68,10 @@ const canvasController = createCanvas({
   renderMarkdown,
   onSelectTask: selectTask,
   findTaskByName,
-  onFiltersChange: buildTagPersonLists,
+  onFiltersChange: () => {
+    buildTagPersonLists();
+    buildKanban();
+  },
 });
 
 function handleEditorSelection(line) {
@@ -100,36 +108,67 @@ function selectTask(task) {
 function buildTagPersonLists() {
   dom.tagList.innerHTML = "";
   dom.personList.innerHTML = "";
-  Array.from(state.tags)
-    .sort()
-    .forEach((tag) => {
-      dom.tagList.appendChild(
-        canvasController.buildPill(tag, state.selectedTags.has(tag), () =>
-          canvasController.toggleTag(tag)
-        )
-      );
-    });
-  Array.from(state.people)
-    .sort()
-    .forEach((person) => {
-      dom.personList.appendChild(
-        canvasController.buildPill(person, state.selectedPeople.has(person), () =>
-          canvasController.togglePerson(person)
-        )
-      );
-    });
+  const tags = state.config?.tags?.length
+    ? state.config.tags.map((tag) => `#${tag.key}`)
+    : Array.from(state.tags).sort();
+  tags.forEach((tag) => {
+    const meta = state.tagMeta?.get(tag);
+    dom.tagList.appendChild(
+      canvasController.buildPill(
+        tag,
+        state.selectedTags.has(tag),
+        () => {
+          canvasController.toggleTag(tag);
+        },
+        meta
+      )
+    );
+  });
+  const people = state.config?.people?.length
+    ? state.config.people.map((person) => `@${person.key}`)
+    : Array.from(state.people).sort();
+  people.forEach((person) => {
+    const meta = state.peopleMeta?.get(person);
+    dom.personList.appendChild(
+      canvasController.buildPill(
+        person,
+        state.selectedPeople.has(person),
+        () => {
+          canvasController.togglePerson(person);
+        },
+        meta
+      )
+    );
+  });
 }
 
 function sync() {
-  const { tasks, tags, people, states, invalidStateTags, lines, allTasks } = parseTasks(
-    dom.editor.value
-  );
+  const {
+    tasks,
+    tags,
+    people,
+    states,
+    invalidStateTags,
+    lines,
+    allTasks,
+    config,
+    tagMeta,
+    peopleMeta,
+    stateMeta,
+  } = parseTasks(dom.editor.value);
   state.tasks = tasks;
   state.allTasks = allTasks;
   state.tags = tags;
   state.people = people;
   state.states = states;
   state.invalidStateTags = invalidStateTags;
+  state.config = config;
+  state.tagMeta = tagMeta;
+  state.peopleMeta = peopleMeta;
+  state.stateMeta = stateMeta;
+  if (dom.boardTitle) {
+    dom.boardTitle.textContent = config.boardName || "Task Script";
+  }
   if (state.selectedLine === null) {
     state.selectedLine = 0;
   }
@@ -169,7 +208,8 @@ function buildKanban() {
     title.textContent =
       stateTag === "!unassigned"
         ? "Unassigned"
-        : stateTag.replace(/^!/, "").replace(/^\w/, (char) => char.toUpperCase());
+        : state.stateMeta?.get(stateTag)?.name ||
+          stateTag.replace(/^!/, "").replace(/^\w/, (char) => char.toUpperCase());
     column.appendChild(title);
     const list = document.createElement("div");
     list.className = "kanban-list";
@@ -178,6 +218,18 @@ function buildKanban() {
       card.type = "button";
       card.className = "kanban-card";
       card.textContent = task.name;
+      if (matchesSearchTask(task)) {
+        card.classList.add("kanban-search");
+      }
+      if (filtersActive() && !matchesFilters(task)) {
+        card.classList.add("kanban-hidden");
+      }
+      if (task.state) {
+        const color = state.stateMeta?.get(task.state)?.color;
+        if (color) {
+          card.style.borderColor = color;
+        }
+      }
       card.addEventListener("click", () => selectTask(task));
       card.draggable = true;
       card.addEventListener("dragstart", (event) => {
@@ -247,13 +299,51 @@ function findTaskByName(name) {
   return state.allTasks.find((task) => task.name === name);
 }
 
+function matchesSearchTask(task) {
+  if (!state.searchQuery) {
+    return false;
+  }
+  const query = state.searchQuery.toLowerCase();
+  if (dom.searchName.checked && task.name.toLowerCase().includes(query)) {
+    return true;
+  }
+  if (dom.searchDescription.checked && task.description.join(" ").toLowerCase().includes(query)) {
+    return true;
+  }
+  if (dom.searchTag.checked && task.tags.join(" ").toLowerCase().includes(query)) {
+    return true;
+  }
+  if (dom.searchPerson.checked && task.people.join(" ").toLowerCase().includes(query)) {
+    return true;
+  }
+  return false;
+}
+
+function filtersActive() {
+  return state.selectedTags.size || state.selectedPeople.size;
+}
+
+function matchesFilters(task) {
+  if (!filtersActive()) {
+    return true;
+  }
+  return (
+    task.tags.some((tag) => state.selectedTags.has(tag)) ||
+    task.people.some((person) => state.selectedPeople.has(person))
+  );
+}
+
 dom.searchInput.addEventListener("input", () => {
   state.searchQuery = dom.searchInput.value;
   canvasController.renderGraph();
+  buildKanban();
 });
 
 [dom.searchName, dom.searchDescription, dom.searchTag, dom.searchPerson].forEach((checkbox) => {
-  checkbox.addEventListener("change", () => canvasController.renderGraph());
+  checkbox.addEventListener("change", () => {
+    canvasController.renderGraph();
+    buildKanban();
+  });
 });
 
 dom.clearFilters.addEventListener("click", () => {
@@ -263,6 +353,7 @@ dom.clearFilters.addEventListener("click", () => {
   dom.searchInput.value = "";
   canvasController.renderGraph();
   buildTagPersonLists();
+  buildKanban();
 });
 
 dom.helpButton.addEventListener("click", () => {

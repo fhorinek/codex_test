@@ -4,6 +4,8 @@ Overview
 - Split-pane web app with a code editor on the left and an interactive task graph on the right.
 - The editor defines tasks using a lightweight script syntax that is parsed into graph nodes.
 - Keep this document updated whenever project behavior or UI changes.
+- Optional config header precedes tasks and defines board name, states, people, and tag metadata.
+- Board name from the header is shown in the left-pane title.
 
 Editor
 - Fixed-width font with line numbers and syntax highlighting for tasks, subtasks, tags, people, and references.
@@ -51,6 +53,23 @@ Tags & People
 
 Search
 - Search input filters/highlights tasks by name, description, tags, or people with toggleable scope options.
+- Search highlights matching tasks in the kanban board.
+
+Config header
+- Header format (before first task):
+  Board name:
+      states:
+          todo
+          inprogress:
+              name: In progress
+              color: gray
+      people:
+          bob:
+              name: Bob Dilan
+              color: #FF00BB
+          jesica
+          fero
+- Header-defined states/people/tags keep their order in the legend/kanban and define pill colors.
 
 Misc
 - Clear Highlights resets all tag/person filters and search input.
