@@ -197,29 +197,19 @@ function buildKanban() {
   const states = [...stateOrder, ...extraStates];
   const tasksByState = new Map();
   states.forEach((stateTag) => tasksByState.set(stateTag, []));
-  const unassigned = [];
   state.allTasks.forEach((task) => {
     if (task.state && tasksByState.has(task.state)) {
       tasksByState.get(task.state).push(task);
-    } else {
-      unassigned.push(task);
     }
   });
-  const orderedStates = [...states];
-  if (unassigned.length) {
-    orderedStates.push("!unassigned");
-    tasksByState.set("!unassigned", unassigned);
-  }
-  orderedStates.forEach((stateTag) => {
+  states.forEach((stateTag) => {
     const column = document.createElement("div");
     column.className = "kanban-column";
     column.dataset.stateTag = stateTag;
     const title = document.createElement("h3");
     title.textContent =
-      stateTag === "!unassigned"
-        ? "Unassigned"
-        : state.stateMeta?.get(stateTag)?.name ||
-          stateTag.replace(/^!/, "").replace(/^\w/, (char) => char.toUpperCase());
+      state.stateMeta?.get(stateTag)?.name ||
+      stateTag.replace(/^!/, "").replace(/^\w/, (char) => char.toUpperCase());
     column.appendChild(title);
     const list = document.createElement("div");
     list.className = "kanban-list";
@@ -259,7 +249,7 @@ function buildKanban() {
         return;
       }
       const stateTag = column.dataset.stateTag;
-      updateTaskState(task, stateTag === "!unassigned" ? null : stateTag);
+      updateTaskState(task, stateTag);
     });
     dom.kanbanBoard.appendChild(column);
   });
