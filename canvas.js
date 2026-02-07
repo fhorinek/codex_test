@@ -34,13 +34,13 @@ export function createCanvas({
         .filter((child) => positions.has(child.id))
         .forEach((child) => {
           const childPos = positions.get(child.id);
-          const startX = pos.x + nodeWidth / 2;
-          const startY = pos.y + 40;
+          const startX = pos.x + nodeWidth;
+          const startY = pos.y + nodeHeight / 2;
           const endX = childPos.x;
           const endY = childPos.y + nodeHeight / 2;
-          const midY = (startY + endY) / 2;
+          const midX = (startX + endX) / 2;
           paths.push(
-            `<path d="M ${startX} ${startY} C ${startX} ${midY} ${endX} ${midY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="2" fill="none" />`
+            `<path d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="2" fill="none" />`
           );
         });
     });

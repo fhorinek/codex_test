@@ -120,9 +120,9 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     });
     div.style.position = "absolute";
     div.style.visibility = "hidden";
-    div.style.whiteSpace = "pre-wrap";
-    div.style.wordWrap = "break-word";
-    div.style.overflow = "auto";
+    div.style.whiteSpace = "pre";
+    div.style.wordWrap = "normal";
+    div.style.overflow = "hidden";
     div.style.height = "auto";
     div.style.width = `${textarea.clientWidth}px`;
     div.textContent = textarea.value.slice(0, position);

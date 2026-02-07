@@ -3,6 +3,7 @@ Project requirements
 Overview
 - Split-pane web app with a code editor on the left and an interactive task graph on the right.
 - The editor defines tasks using a lightweight script syntax that is parsed into graph nodes.
+- Keep this document updated whenever project behavior or UI changes.
 
 Editor
 - Fixed-width font with line numbers and syntax highlighting for tasks, subtasks, tags, people, and references.
@@ -16,6 +17,21 @@ Task syntax
 - Task descriptions follow task lines until a blank line; tags and people can appear anywhere inline in the description.
 - Tags use #tag, people use @person, and references use {Task name}.
 - Markdown in descriptions supports bold, italic, underline, highlight, lists, tables, images, and links.
+
+Formatting syntax examples
+- Bold: **bold**
+- Italic: *italic*
+- Underline: __underline__
+- Highlight: ==highlight==
+- List item: - item
+- Checkbox: - [x] checked
+- Table:
+  | Col | Val |
+  | --- | --- |
+  | A | 1 |
+- Image: ![alt](url)
+- Link: [title](https://example.com)
+- Task reference: {Task name}
 
 Graph
 - Right pane renders tasks and subtasks as a tree, connected by bezier lines.
