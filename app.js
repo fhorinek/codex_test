@@ -205,8 +205,11 @@ function buildKanban() {
       unassigned.push(task);
     }
   });
-  const orderedStates = [...states, "!unassigned"];
-  tasksByState.set("!unassigned", unassigned);
+  const orderedStates = [...states];
+  if (unassigned.length) {
+    orderedStates.push("!unassigned");
+    tasksByState.set("!unassigned", unassigned);
+  }
   orderedStates.forEach((stateTag) => {
     const column = document.createElement("div");
     column.className = "kanban-column";
