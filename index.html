@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Task Script Board</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <section class="editor-panel">
+      <header>
+        <h1>Task Script</h1>
+        <p>Define tasks in code and see them rendered as an interactive tree.</p>
+        <button id="help-button" class="info-button editor-info" aria-haspopup="dialog" aria-expanded="false" aria-label="Syntax help">ℹ️</button>
+      </header>
+      <div class="editor-wrapper">
+        <div id="line-numbers" class="line-numbers" aria-hidden="true"></div>
+        <pre id="highlight-layer" aria-hidden="true"></pre>
+        <textarea id="task-editor" spellcheck="false"></textarea>
+        <div id="suggestions" class="suggestions hidden" role="listbox"></div>
+      </div>
+      <div class="editor-actions">
+        <span class="hint">Tab to indent, Shift+Tab to unindent, Enter keeps indent.</span>
+      </div>
+    </section>
+    <div class="divider" id="divider" role="separator" aria-orientation="vertical"></div>
+    <section class="graph-panel">
+      <div id="graph-canvas" class="graph-canvas">
+        <svg id="graph-lines"></svg>
+        <div id="graph-nodes" class="graph-nodes"></div>
+        <div class="graph-search">
+          <input id="search-input" type="text" placeholder="Search tasks" />
+          <div class="search-options">
+            <label><input type="checkbox" id="search-name" checked /> Name</label>
+            <label><input type="checkbox" id="search-description" checked /> Description</label>
+            <label><input type="checkbox" id="search-tag" checked /> Tag</label>
+            <label><input type="checkbox" id="search-person" checked /> Person</label>
+          </div>
+        </div>
+        <div class="graph-footer">
+          <button id="clear-filters" class="toolbar-button">Clear Highlights</button>
+        </div>
+        <div class="legend">
+          <div>
+            <h3>Tags</h3>
+            <div id="tag-list" class="pill-list"></div>
+          </div>
+          <div>
+            <div class="legend-header">
+              <h3>People</h3>
+            </div>
+            <div id="person-list" class="pill-list"></div>
+          </div>
+        </div>
+      </div>
+      <div id="help-modal" class="help-modal hidden" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <div class="help-card">
+          <div class="help-header">
+            <h3 id="help-title">Syntax Help</h3>
+            <button id="help-close" class="help-close" aria-label="Close">×</button>
+          </div>
+          <ul>
+            <li><strong>* Task name</strong> starts a new task. Indent subtasks with 4 spaces.</li>
+            <li><strong>#tags</strong> and <strong>@people</strong> lines are optional.</li>
+            <li>Use <strong>{Task Name}</strong> to reference another task.</li>
+            <li>Markdown formatting examples (write exactly as shown):</li>
+          </ul>
+          <pre class="help-example">Bold\n**bold**\n\nItalic\n*italic*\n\nUnderline\n__underline__\n\nHighlight\n==highlight==\n\nList\n- item\n- [x] checkbox\n\nTable\n| Col | Val |\n| --- | --- |\n| A | 1 |\n\nImage\n![alt](url)\n\nLink\n[title](https://example.com)\n\nTask reference\n{Task name}</pre>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

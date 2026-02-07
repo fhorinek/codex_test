@@ -1,0 +1,52 @@
+Project requirements
+
+Overview
+- Split-pane web app with a code editor on the left and an interactive task graph on the right.
+- The editor defines tasks using a lightweight script syntax that is parsed into graph nodes.
+- Keep this document updated whenever project behavior or UI changes.
+
+Editor
+- Fixed-width font with line numbers and syntax highlighting for tasks, subtasks, tags, people, and references.
+- Indentation with Tab (indent) and Shift+Tab (unindent); Enter maintains current indentation.
+- Undo/redo supported by the native textarea.
+- Inline context suggestions for #tags, @people, and {task references}, navigable with arrows and accepted with Enter/Tab.
+
+Task syntax
+- A task starts with "* Task name" on its own line.
+- Subtasks are indented by 4 spaces and use the same "*" syntax.
+- Task descriptions follow task lines until a blank line; tags and people can appear anywhere inline in the description.
+- Tags use #tag, people use @person, and references use {Task name}.
+- Markdown in descriptions supports bold, italic, underline, highlight, lists, tables, images, and links.
+
+Formatting syntax examples
+- Bold: **bold**
+- Italic: *italic*
+- Underline: __underline__
+- Highlight: ==highlight==
+- List item: - item
+- Checkbox: - [x] checked
+- Table:
+  | Col | Val |
+  | --- | --- |
+  | A | 1 |
+- Image: ![alt](url)
+- Link: [title](https://example.com)
+- Task reference: {Task name}
+
+Graph
+- Right pane renders tasks and subtasks as a tree, connected by bezier lines.
+- Nodes display the task title and render description markdown with inline pills for tags/people.
+- Nodes can be collapsed/expanded; focus centers the selected task with animation.
+- Pan and zoom supported on the graph canvas.
+
+Tags & People
+- Legend lists all tags and people; clicking toggles highlight filters.
+- Clicking a tag/person pill in a node toggles the corresponding legend filter.
+- When filters are active, non-matching tasks are dimmed and matching inline pills highlight.
+
+Search
+- Search input filters/highlights tasks by name, description, tags, or people with toggleable scope options.
+
+Misc
+- Clear Highlights resets all tag/person filters and search input.
+- Clicking a task node focuses the corresponding editor line; moving the cursor in the editor updates focus in the graph.
