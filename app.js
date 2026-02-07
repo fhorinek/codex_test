@@ -325,11 +325,16 @@ function updateTaskToken(task, token, action) {
       return;
     }
     for (let i = start; i < end; i += 1) {
-      lines[i] = lines[i].replace(tokenRegex, "$1").replace(/\s{2,}/g, " ").trimEnd();
+      lines[i] = lines[i].replace(tokenRegex, "$1").replace(/\s{2,}/g, " ").trim();
     }
-    const allEmpty = lines.slice(start, end).every((line) => line.trim() === "");
-    if (allEmpty) {
-      lines.splice(start, end - start);
+    const emptyIndexes = [];
+    for (let i = start; i < end; i += 1) {
+      if (lines[i].trim() === "") {
+        emptyIndexes.push(i);
+      }
+    }
+    for (let i = emptyIndexes.length - 1; i >= 0; i -= 1) {
+      lines.splice(emptyIndexes[i], 1);
     }
   }
   dom.editor.value = lines.join("\n");

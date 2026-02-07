@@ -205,6 +205,13 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       event.preventDefault();
       const start = editor.selectionStart;
       const end = editor.selectionEnd;
+      if (!event.shiftKey && !event.ctrlKey && start === end) {
+        const nextTab = editor.value.indexOf("\t", start);
+        const target = nextTab === -1 ? start + 4 : nextTab + 1;
+        editor.setSelectionRange(target, target);
+        updateSelectedLine();
+        return;
+      }
       const value = editor.value;
       const selected = value.slice(start, end) || "";
       if (event.shiftKey || event.ctrlKey) {
