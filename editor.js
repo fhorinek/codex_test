@@ -244,14 +244,18 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       const indent = currentLine.match(/^\s*/)[0];
       editor.setRangeText(`\n${indent}`, start, start, "end");
       onSync();
+      updateSelectedLine();
     }
   });
 
   editor.addEventListener("keyup", (event) => {
-    if (["ArrowDown", "ArrowUp", "Enter", "Tab"].includes(event.key)) {
+    if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+      updateSelectedLine();
       return;
     }
-    updateSelectedLine();
+    if (!["Enter", "Tab"].includes(event.key)) {
+      updateSelectedLine();
+    }
   });
 
   return {
