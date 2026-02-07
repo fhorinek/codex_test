@@ -133,7 +133,8 @@ export function createCanvas({
       graphNodes.appendChild(node);
     });
 
-    applyTransform();
+    applyTransform(state.animateTransform);
+    state.animateTransform = false;
   }
 
   function gatherVisible(tasks, result = []) {
@@ -232,6 +233,7 @@ export function createCanvas({
     const centerY = pos.y + 40;
     state.transform.x = canvasRect.width / 2 - centerX * state.transform.scale;
     state.transform.y = canvasRect.height / 2 - centerY * state.transform.scale;
+    state.animateTransform = true;
     applyTransform(true);
   }
 

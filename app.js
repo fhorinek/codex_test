@@ -36,6 +36,7 @@ const state = {
   selectedLine: null,
   searchQuery: "",
   transform: { x: 40, y: 40, scale: 1 },
+  animateTransform: false,
   positions: new Map(),
   suggestionIndex: 0,
   suggestionItems: [],
