@@ -7,6 +7,11 @@ export function escapeHtml(value) {
 
 export function applyInlineMarkdown(text) {
   let value = text;
+  value = value.replace(/(^|\s)(#[^\s#@]+)/g, "$1<span class=\"pill inline-pill\">$2</span>");
+  value = value.replace(
+    /(^|\s)@([^\s#@]+)/g,
+    "$1<span class=\"pill inline-pill\">👤 $2</span>"
+  );
   value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "<img alt=\"$1\" src=\"$2\" />");
   value = value.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
@@ -165,14 +170,7 @@ export function parseTasks(text) {
     if (!currentTask || trimmed === "") {
       return;
     }
-    const cleanedDescription = trimmed
-      .replace(/(^|\s)(#[^\s#@]+)/g, " ")
-      .replace(/(^|\s)(@[^\s#@]+)/g, " ")
-      .replace(/\s{2,}/g, " ")
-      .trim();
-    if (cleanedDescription) {
-      currentTask.description.push(cleanedDescription);
-    }
+    currentTask.description.push(trimmed);
     const tagMatches = trimmed.matchAll(/(^|\s)(#[^\s#@]+)/g);
     for (const match of tagMatches) {
       const tag = match[2];

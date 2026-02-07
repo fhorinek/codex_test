@@ -414,6 +414,21 @@ body {
   cursor: pointer;
 }
 
+.pill.inline-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  font-size: 10px;
+  cursor: default;
+}
+
+.legend .pill.active {
+  background: #2f54eb;
+  color: #ffffff;
+  border-color: #2f54eb;
+}
+
 .pill.active {
   background: #2f54eb;
   color: #ffffff;
