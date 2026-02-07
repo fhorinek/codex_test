@@ -52,6 +52,7 @@ Tags & People
 - Legend lists all tags and people; clicking toggles highlight filters.
 - Clicking a tag/person pill in a node toggles the corresponding legend filter.
 - When filters are active, non-matching tasks are dimmed and matching inline pills highlight.
+- Drag legend tags/people onto task cards to add them, and drag pills out of a task to remove them (updates the code).
 
 Search
 - Search input filters/highlights tasks by name, description, tags, or people with toggleable scope options.

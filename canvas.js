@@ -4,6 +4,7 @@ export function createCanvas({
   renderMarkdown,
   onSelectTask,
   findTaskByName,
+  onUpdateTaskToken,
   onFiltersChange,
 }) {
   const { graphNodes, graphLines, graphCanvas } = dom;
@@ -167,6 +168,18 @@ export function createCanvas({
               pill.style.color = "#ffffff";
             }
           }
+          pill.draggable = true;
+          pill.addEventListener("dragstart", (event) => {
+            event.dataTransfer.setData(
+              "application/json",
+              JSON.stringify({
+                type,
+                value,
+                source: "task",
+                taskId: task.id,
+              })
+            );
+          });
           pill.addEventListener("click", (event) => {
             event.stopPropagation();
             if (type === "tag") {
@@ -185,6 +198,21 @@ export function createCanvas({
       node.draggable = true;
       node.addEventListener("dragstart", (event) => {
         event.dataTransfer.setData("text/plain", task.id);
+      });
+      node.addEventListener("dragover", (event) => {
+        event.preventDefault();
+      });
+      node.addEventListener("drop", (event) => {
+        event.preventDefault();
+        const payload = event.dataTransfer.getData("application/json");
+        if (!payload) {
+          return;
+        }
+        const data = JSON.parse(payload);
+        if (!onUpdateTaskToken || (data.type !== "tag" && data.type !== "person")) {
+          return;
+        }
+        onUpdateTaskToken(task, data.value, "add");
       });
 
       graphNodes.appendChild(node);
@@ -213,6 +241,19 @@ export function createCanvas({
       pill.style.borderColor = meta.color;
       pill.style.background = meta.color;
       pill.style.color = "#ffffff";
+    }
+    if (text.startsWith("#") || text.startsWith("@")) {
+      pill.draggable = true;
+      pill.addEventListener("dragstart", (event) => {
+        event.dataTransfer.setData(
+          "application/json",
+          JSON.stringify({
+            type: text.startsWith("#") ? "tag" : "person",
+            value: text,
+            source: "legend",
+          })
+        );
+      });
     }
     pill.addEventListener("click", onClick);
     return pill;
@@ -349,6 +390,25 @@ export function createCanvas({
     state.transform.y = pointerY - (pointerY - state.transform.y) * scaleFactor;
     state.transform.scale = newScale;
     applyTransform();
+  });
+
+  graphCanvas.addEventListener("dragover", (event) => {
+    event.preventDefault();
+  });
+
+  graphCanvas.addEventListener("drop", (event) => {
+    event.preventDefault();
+    const payload = event.dataTransfer.getData("application/json");
+    if (!payload || !onUpdateTaskToken) {
+      return;
+    }
+    const data = JSON.parse(payload);
+    if (data.source === "task" && (data.type === "tag" || data.type === "person")) {
+      const task = state.allTasks.find((item) => item.id === data.taskId);
+      if (task) {
+        onUpdateTaskToken(task, data.value, "remove");
+      }
+    }
   });
 
   return {

@@ -68,6 +68,7 @@ const canvasController = createCanvas({
   renderMarkdown,
   onSelectTask: selectTask,
   findTaskByName,
+  onUpdateTaskToken: updateTaskToken,
   onFiltersChange: () => {
     buildTagPersonLists();
     buildKanban();
@@ -301,6 +302,51 @@ function updateTaskState(task, newState) {
   }
   dom.editor.value = lines.join("\n");
   sync();
+}
+
+function updateTaskToken(task, token, action) {
+  const lines = dom.editor.value.split("\n");
+  const taskLine = lines[task.lineIndex] || "";
+  const indentMatch = taskLine.match(/^(\s*)\*/) || ["", ""];
+  const indent = indentMatch[1] || "";
+  let start = task.lineIndex + 1;
+  let end = start;
+  while (end < lines.length) {
+    const line = lines[end];
+    if (line.trim() === "" || /^\s*\*/.test(line)) {
+      break;
+    }
+    end += 1;
+  }
+  const tokenRegex = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
+  const hasToken = lines.slice(start, end).some((line) => tokenRegex.test(line));
+  if (action === "add") {
+    if (hasToken) {
+      return;
+    }
+    if (start === end) {
+      lines.splice(start, 0, `${indent}${token}`);
+    } else {
+      lines[start] = `${lines[start]} ${token}`.replace(/\s{2,}/g, " ").trimEnd();
+    }
+  } else if (action === "remove") {
+    if (start === end) {
+      return;
+    }
+    for (let i = start; i < end; i += 1) {
+      lines[i] = lines[i].replace(tokenRegex, "$1").replace(/\s{2,}/g, " ").trimEnd();
+    }
+    const allEmpty = lines.slice(start, end).every((line) => line.trim() === "");
+    if (allEmpty) {
+      lines.splice(start, end - start);
+    }
+  }
+  dom.editor.value = lines.join("\n");
+  sync();
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function findTaskByName(name) {
