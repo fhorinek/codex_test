@@ -228,7 +228,10 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     }
   });
 
-  editor.addEventListener("keyup", () => {
+  editor.addEventListener("keyup", (event) => {
+    if (["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+      return;
+    }
     updateSuggestions();
     updateSelectedLine();
   });
