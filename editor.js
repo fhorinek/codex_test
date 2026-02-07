@@ -208,7 +208,8 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       if (!event.shiftKey && !event.ctrlKey && start === end) {
         const lineStart = editor.value.lastIndexOf("\n", start - 1) + 1;
         const column = start - lineStart;
-        const spaces = 4 - (column % 4 || 4);
+        const remainder = column % 4;
+        const spaces = remainder === 0 ? 4 : 4 - remainder;
         const insert = " ".repeat(spaces);
         editor.setRangeText(insert, start, start, "end");
         onSync();
