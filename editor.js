@@ -113,30 +113,23 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   }
 
   function getCaretCoordinates(textarea, position) {
-    const div = document.createElement("div");
     const style = window.getComputedStyle(textarea);
-    Array.from(style).forEach((prop) => {
-      div.style[prop] = style[prop];
-    });
-    div.style.position = "absolute";
-    div.style.visibility = "hidden";
-    div.style.whiteSpace = "pre";
-    div.style.wordWrap = "normal";
-    div.style.overflow = "hidden";
-    div.style.height = "auto";
-    div.style.width = `${textarea.clientWidth}px`;
-    div.textContent = textarea.value.slice(0, position);
-    const span = document.createElement("span");
-    span.textContent = textarea.value.slice(position) || ".";
-    div.appendChild(span);
-    document.body.appendChild(div);
-    const rect = span.getBoundingClientRect();
-    const textRect = textarea.getBoundingClientRect();
-    const top = rect.top - div.getBoundingClientRect().top + textRect.top - textarea.scrollTop;
-    const left = rect.left - div.getBoundingClientRect().left + textRect.left - textarea.scrollLeft;
-    const height = rect.height;
-    document.body.removeChild(div);
-    return { top, left, height };
+    const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.5;
+    const paddingTop = parseFloat(style.paddingTop) || 0;
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const value = textarea.value.slice(0, position);
+    const lines = value.split("\n");
+    const lineIndex = lines.length - 1;
+    const lineText = lines[lineIndex] || "";
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.font = `${style.fontStyle} ${style.fontVariant} ${style.fontWeight} ${style.fontSize} / ${style.lineHeight} ${style.fontFamily}`;
+    }
+    const textWidth = context ? context.measureText(lineText).width : 0;
+    const top = paddingTop + lineIndex * lineHeight - textarea.scrollTop;
+    const left = paddingLeft + textWidth - textarea.scrollLeft;
+    return { top, left, height: lineHeight };
   }
 
   function updateSelectedLine() {
