@@ -365,9 +365,22 @@ export function createCanvas({
   }
 
   let isPanning = false;
+  let isDraggingToken = false;
   let lastPoint = { x: 0, y: 0 };
 
+  graphCanvas.addEventListener("dragstart", () => {
+    isDraggingToken = true;
+    isPanning = false;
+  });
+
+  graphCanvas.addEventListener("dragend", () => {
+    isDraggingToken = false;
+  });
+
   graphCanvas.addEventListener("mousedown", (event) => {
+    if (isDraggingToken) {
+      return;
+    }
     if (event.target.closest(".task-node")) {
       return;
     }
@@ -376,7 +389,7 @@ export function createCanvas({
   });
 
   graphCanvas.addEventListener("mousemove", (event) => {
-    if (!isPanning) {
+    if (!isPanning || isDraggingToken) {
       return;
     }
     state.transform.x += event.clientX - lastPoint.x;
