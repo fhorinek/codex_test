@@ -368,12 +368,20 @@ export function createCanvas({
   let isDraggingToken = false;
   let lastPoint = { x: 0, y: 0 };
 
-  graphCanvas.addEventListener("dragstart", () => {
-    isDraggingToken = true;
-    isPanning = false;
+  graphCanvas.addEventListener("dragstart", (event) => {
+    if (event.target.closest(".pill")) {
+      isDraggingToken = true;
+      isPanning = false;
+    }
   });
 
-  graphCanvas.addEventListener("dragend", () => {
+  graphCanvas.addEventListener("dragend", (event) => {
+    if (event.target.closest(".pill")) {
+      isDraggingToken = false;
+    }
+  });
+
+  graphCanvas.addEventListener("drop", () => {
     isDraggingToken = false;
   });
 
