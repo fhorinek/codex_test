@@ -246,7 +246,7 @@ export function createCanvas({
 
   function applyTransform(animate = false) {
     const { x, y, scale } = state.transform;
-    const transitionValue = animate ? "transform 0.35s ease" : "none";
+    const transitionValue = animate ? "transform 0.5s ease" : "none";
     graphNodes.style.transition = transitionValue;
     graphLines.style.transition = transitionValue;
     graphNodes.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
