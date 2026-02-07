@@ -5,6 +5,7 @@ export function createCanvas({
   onSelectTask,
   findTaskByName,
   onUpdateTaskToken,
+  onUpdateTaskState,
   onFiltersChange,
 }) {
   const { graphNodes, graphLines, graphCanvas } = dom;
@@ -98,6 +99,19 @@ export function createCanvas({
           statePill.style.background = stateColor;
           statePill.style.borderColor = stateColor;
         }
+        statePill.draggable = true;
+        statePill.addEventListener("dragstart", (event) => {
+          event.stopPropagation();
+          event.dataTransfer.setData(
+            "application/json",
+            JSON.stringify({
+              type: "state",
+              value: task.state,
+              source: "task",
+              taskId: task.id,
+            })
+          );
+        });
         header.appendChild(statePill);
       }
 
@@ -170,6 +184,7 @@ export function createCanvas({
           }
           pill.draggable = true;
           pill.addEventListener("dragstart", (event) => {
+            event.stopPropagation();
             event.dataTransfer.setData(
               "application/json",
               JSON.stringify({
@@ -399,14 +414,26 @@ export function createCanvas({
   graphCanvas.addEventListener("drop", (event) => {
     event.preventDefault();
     const payload = event.dataTransfer.getData("application/json");
-    if (!payload || !onUpdateTaskToken) {
+    if (!payload) {
       return;
     }
     const data = JSON.parse(payload);
     if (data.source === "task" && (data.type === "tag" || data.type === "person")) {
+      if (!onUpdateTaskToken) {
+        return;
+      }
       const task = state.allTasks.find((item) => item.id === data.taskId);
       if (task) {
         onUpdateTaskToken(task, data.value, "remove");
+      }
+    }
+    if (data.source === "task" && data.type === "state") {
+      if (!onUpdateTaskState) {
+        return;
+      }
+      const task = state.allTasks.find((item) => item.id === data.taskId);
+      if (task) {
+        onUpdateTaskState(task, null);
       }
     }
   });

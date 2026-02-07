@@ -69,6 +69,7 @@ const canvasController = createCanvas({
   onSelectTask: selectTask,
   findTaskByName,
   onUpdateTaskToken: updateTaskToken,
+  onUpdateTaskState: updateTaskState,
   onFiltersChange: () => {
     buildTagPersonLists();
     buildKanban();

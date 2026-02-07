@@ -47,6 +47,7 @@ Graph
 - Kanban columns follow the header state order first, followed by any dynamically detected states.
 - The kanban board and graph are separated by a draggable horizontal divider.
 - Drag tasks from the graph or between kanban columns to update the task !state in the editor.
+- Drag a state pill out of a task to clear its !state.
 
 Tags & People
 - Legend lists all tags and people; clicking toggles highlight filters.
