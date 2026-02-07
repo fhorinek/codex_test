@@ -165,7 +165,14 @@ export function parseTasks(text) {
     if (!currentTask || trimmed === "") {
       return;
     }
-    currentTask.description.push(trimmed);
+    const cleanedDescription = trimmed
+      .replace(/(^|\s)(#[^\s#@]+)/g, " ")
+      .replace(/(^|\s)(@[^\s#@]+)/g, " ")
+      .replace(/\s{2,}/g, " ")
+      .trim();
+    if (cleanedDescription) {
+      currentTask.description.push(cleanedDescription);
+    }
     const tagMatches = trimmed.matchAll(/(^|\s)(#[^\s#@]+)/g);
     for (const match of tagMatches) {
       const tag = match[2];
