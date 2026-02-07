@@ -97,9 +97,9 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   function positionSuggestions() {
     const cursor = editor.selectionStart;
     const coords = getCaretCoordinates(editor, cursor);
-    const wrapperRect = editor.parentElement.getBoundingClientRect();
-    suggestions.style.left = `${coords.left - wrapperRect.left}px`;
-    suggestions.style.top = `${coords.top - wrapperRect.top + coords.height + 6}px`;
+    const editorRect = editor.getBoundingClientRect();
+    suggestions.style.left = `${coords.left - editorRect.left}px`;
+    suggestions.style.top = `${coords.top - editorRect.top + coords.height + 6}px`;
   }
 
   function getCaretCoordinates(textarea, position) {
@@ -153,6 +153,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
 
   editor.addEventListener("click", () => {
     updateSuggestions();
+    updateSelectedLine();
     const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
     onSelectTask(line);
   });
@@ -169,13 +170,13 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
           .split("\n")
           .map((line) => (line.startsWith("    ") ? line.slice(4) : line))
           .join("\n");
-        editor.setRangeText(updated, start, end, "end");
+        editor.setRangeText(updated, start, end, "select");
       } else {
         const updated = selected
           .split("\n")
           .map((line) => `    ${line}`)
           .join("\n");
-        editor.setRangeText(updated, start, end, "end");
+        editor.setRangeText(updated, start, end, "select");
       }
       onSync();
     }
