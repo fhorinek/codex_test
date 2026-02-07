@@ -18,6 +18,7 @@ const dom = {
   helpModal: document.getElementById("help-modal"),
   helpClose: document.getElementById("help-close"),
   kanbanBoard: document.getElementById("kanban-board"),
+  kanbanDivider: document.getElementById("kanban-divider"),
   tagList: document.getElementById("tag-list"),
   personList: document.getElementById("person-list"),
   clearFilters: document.getElementById("clear-filters"),
@@ -163,6 +164,7 @@ function buildKanban() {
   orderedStates.forEach((stateTag) => {
     const column = document.createElement("div");
     column.className = "kanban-column";
+    column.dataset.stateTag = stateTag;
     const title = document.createElement("h3");
     title.textContent =
       stateTag === "!unassigned"
@@ -177,11 +179,68 @@ function buildKanban() {
       card.className = "kanban-card";
       card.textContent = task.name;
       card.addEventListener("click", () => selectTask(task));
+      card.draggable = true;
+      card.addEventListener("dragstart", (event) => {
+        event.dataTransfer.setData("text/plain", task.id);
+      });
       list.appendChild(card);
     });
     column.appendChild(list);
+    column.addEventListener("dragover", (event) => {
+      event.preventDefault();
+    });
+    column.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const taskId = event.dataTransfer.getData("text/plain");
+      const task = state.allTasks.find((item) => item.id === taskId);
+      if (!task) {
+        return;
+      }
+      const stateTag = column.dataset.stateTag;
+      updateTaskState(task, stateTag === "!unassigned" ? null : stateTag);
+    });
     dom.kanbanBoard.appendChild(column);
   });
+}
+
+function updateTaskState(task, newState) {
+  const lines = dom.editor.value.split("\n");
+  const taskLine = lines[task.lineIndex] || "";
+  const indentMatch = taskLine.match(/^(\s*)\*/) || ["", ""];
+  const indent = indentMatch[1] || "";
+  let start = task.lineIndex + 1;
+  let end = start;
+  while (end < lines.length) {
+    const line = lines[end];
+    if (line.trim() === "" || /^\s*\*/.test(line)) {
+      break;
+    }
+    end += 1;
+  }
+  const cleanState = (line) => line.replace(/(^|\s)![^\s#@]+/g, "$1").trimEnd();
+  if (start === end) {
+    if (newState) {
+      lines.splice(start, 0, `${indent}${newState}`);
+    }
+  } else {
+    for (let i = start; i < end; i += 1) {
+      lines[i] = cleanState(lines[i]);
+    }
+    if (newState) {
+      if (lines[start].trim() === "") {
+        lines[start] = `${indent}${newState}`;
+      } else {
+        lines[start] = `${lines[start]} ${newState}`.replace(/\s{2,}/g, " ").trimEnd();
+      }
+    } else {
+      const allEmpty = lines.slice(start, end).every((line) => line.trim() === "");
+      if (allEmpty) {
+        lines.splice(start, end - start);
+      }
+    }
+  }
+  dom.editor.value = lines.join("\n");
+  sync();
 }
 
 function findTaskByName(name) {
@@ -224,14 +283,31 @@ dom.helpModal.addEventListener("click", (event) => {
 });
 
 let resizing = false;
+let resizingKanban = false;
 
 dom.divider.addEventListener("mousedown", () => {
   resizing = true;
   dom.divider.classList.add("dragging");
 });
 
+if (dom.kanbanDivider) {
+  dom.kanbanDivider.addEventListener("mousedown", () => {
+    resizingKanban = true;
+    dom.kanbanDivider.classList.add("dragging");
+  });
+}
+
 window.addEventListener("mousemove", (event) => {
   if (!resizing) {
+    if (resizingKanban) {
+      const panelRect = dom.graphCanvas.getBoundingClientRect();
+      const minHeight = 120;
+      const maxHeight = Math.max(minHeight, panelRect.height - 200);
+      const desired = event.clientY - panelRect.top;
+      const clamped = Math.min(maxHeight, Math.max(minHeight, desired));
+      document.documentElement.style.setProperty("--kanban-height", `${clamped}px`);
+      return;
+    }
     return;
   }
   const rect = document.body.getBoundingClientRect();
@@ -242,10 +318,19 @@ window.addEventListener("mousemove", (event) => {
 
 window.addEventListener("mouseup", () => {
   if (!resizing) {
+    if (resizingKanban) {
+      resizingKanban = false;
+      dom.kanbanDivider.classList.remove("dragging");
+      return;
+    }
     return;
   }
   resizing = false;
   dom.divider.classList.remove("dragging");
+  if (resizingKanban) {
+    resizingKanban = false;
+    dom.kanbanDivider.classList.remove("dragging");
+  }
 });
 
 sync();

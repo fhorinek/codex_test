@@ -85,10 +85,24 @@ export function createCanvas({
 
       const title = document.createElement("h4");
       title.textContent = task.name;
+      const header = document.createElement("div");
+      header.className = "task-header";
+      header.appendChild(title);
+      if (task.state) {
+        const statePill = document.createElement("span");
+        statePill.className = "pill state-pill";
+        statePill.textContent = task.state.replace(/^!/, "");
+        header.appendChild(statePill);
+      }
 
       const desc = document.createElement("div");
       desc.className = "description";
-      desc.innerHTML = renderMarkdown(task.description.join("\n"));
+      const descriptionText = task.description
+        .join("\n")
+        .replace(/(^|\s)![^\s#@]+/g, "$1")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      desc.innerHTML = renderMarkdown(descriptionText);
 
       const toggle = document.createElement("div");
       toggle.className = "collapse-toggle";
@@ -108,7 +122,7 @@ export function createCanvas({
         });
       }
 
-      node.appendChild(title);
+      node.appendChild(header);
       if (task.description.length) {
         node.appendChild(desc);
       }
@@ -147,6 +161,10 @@ export function createCanvas({
       }
 
       node.addEventListener("click", () => onSelectTask(task));
+      node.draggable = true;
+      node.addEventListener("dragstart", (event) => {
+        event.dataTransfer.setData("text/plain", task.id);
+      });
 
       graphNodes.appendChild(node);
     });

@@ -2,7 +2,7 @@ import { escapeHtml } from "./task.js";
 
 export function createEditor({ state, dom, onSync, onSelectTask }) {
   const { editor, highlightLayer, suggestions, lineNumbers } = dom;
-  const triggerChars = new Set(["#", "@", "{"]);
+  const triggerChars = new Set(["#", "@", "{", "!"]);
 
   function highlightText(lines) {
     updateLineNumbers(lines);
@@ -62,7 +62,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   function updateSuggestions({ forceOpen = false } = {}) {
     const cursor = editor.selectionStart;
     const before = editor.value.slice(0, cursor);
-    const triggerMatch = before.match(/([#@{])([^\s}]*)$/);
+    const triggerMatch = before.match(/([#@{!])([^\s}]*)$/);
     if (!triggerMatch || (!forceOpen && !suggestions.classList.contains("open"))) {
       suggestions.classList.add("hidden");
       suggestions.classList.remove("open");
@@ -76,6 +76,8 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       items = Array.from(state.tags);
     } else if (trigger === "@") {
       items = Array.from(state.people);
+    } else if (trigger === "!") {
+      items = Array.from(state.states);
     } else {
       items = state.allTasks.map((task) => task.name);
     }
