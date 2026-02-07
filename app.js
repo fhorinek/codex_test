@@ -319,6 +319,7 @@ function updateTaskToken(task, token, action) {
   const taskLine = lines[task.lineIndex] || "";
   const indentMatch = taskLine.match(/^(\s*)\*/) || ["", ""];
   const indent = indentMatch[1] || "";
+  const tokenLine = `${indent}${token}`;
   let start = task.lineIndex + 1;
   let end = start;
   while (end < lines.length) {
@@ -334,17 +335,18 @@ function updateTaskToken(task, token, action) {
     if (hasToken) {
       return;
     }
-    if (start === end) {
-      lines.splice(start, 0, `${indent}${token}`);
-    } else {
-      lines[start] = `${lines[start]} ${token}`.replace(/\s{2,}/g, " ").trimEnd();
-    }
+    lines.splice(start, 0, tokenLine);
   } else if (action === "remove") {
     if (start === end) {
       return;
     }
     for (let i = start; i < end; i += 1) {
-      lines[i] = lines[i].replace(tokenRegex, "$1").replace(/\s{2,}/g, " ").trim();
+      lines[i] = lines[i].replace(tokenRegex, "$1").replace(/\s{2,}/g, " ").trimEnd();
+      if (lines[i].trim() !== "") {
+        const existingIndent = lines[i].match(/^\s*/)[0];
+        const content = lines[i].trim();
+        lines[i] = `${existingIndent}${content}`;
+      }
     }
     const emptyIndexes = [];
     for (let i = start; i < end; i += 1) {
