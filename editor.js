@@ -206,9 +206,12 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       const start = editor.selectionStart;
       const end = editor.selectionEnd;
       if (!event.shiftKey && !event.ctrlKey && start === end) {
-        const nextTab = editor.value.indexOf("\t", start);
-        const target = nextTab === -1 ? start + 4 : nextTab + 1;
-        editor.setSelectionRange(target, target);
+        const lineStart = editor.value.lastIndexOf("\n", start - 1) + 1;
+        const column = start - lineStart;
+        const spaces = 4 - (column % 4 || 4);
+        const insert = " ".repeat(spaces);
+        editor.setRangeText(insert, start, start, "end");
+        onSync();
         updateSelectedLine();
         return;
       }
