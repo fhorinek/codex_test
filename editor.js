@@ -174,8 +174,8 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   });
 
   editor.addEventListener("click", () => {
-    updateSelectedLine();
     const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
+    updateSelectedLine();
     onSelectTask(line);
   });
 
@@ -250,8 +250,10 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   });
 
   editor.addEventListener("keyup", (event) => {
-    if (["ArrowDown", "ArrowUp"].includes(event.key)) {
+    if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+      const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
       updateSelectedLine();
+      onSelectTask(line);
       return;
     }
     if (!["Enter", "Tab"].includes(event.key)) {
