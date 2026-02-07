@@ -74,26 +74,6 @@ export function createCanvas({
       const title = document.createElement("h4");
       title.textContent = task.name;
 
-      const meta = document.createElement("div");
-      meta.className = "meta";
-      task.tags.forEach((tag) => {
-        meta.appendChild(
-          buildPill(tag, state.selectedTags.has(tag), (event) => {
-            event.stopPropagation();
-            toggleTag(tag);
-          })
-        );
-      });
-      task.people.forEach((person) => {
-        const label = `👤 ${person.replace(/^@/, "")}`;
-        meta.appendChild(
-          buildPill(label, state.selectedPeople.has(person), (event) => {
-            event.stopPropagation();
-            togglePerson(person);
-          })
-        );
-      });
-
       const desc = document.createElement("div");
       desc.className = "description";
       desc.innerHTML = renderMarkdown(task.description.join("\n"));
@@ -117,7 +97,6 @@ export function createCanvas({
       }
 
       node.appendChild(title);
-      node.appendChild(meta);
       if (task.description.length) {
         node.appendChild(desc);
       }
@@ -129,6 +108,18 @@ export function createCanvas({
             const target = findTaskByName(ref);
             if (target) {
               onSelectTask(target);
+            }
+          });
+        });
+        desc.querySelectorAll(".inline-pill").forEach((pill) => {
+          pill.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const type = pill.dataset.type;
+            const value = pill.dataset.value;
+            if (type === "tag") {
+              toggleTag(value);
+            } else if (type === "person") {
+              togglePerson(value);
             }
           });
         });

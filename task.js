@@ -7,10 +7,13 @@ export function escapeHtml(value) {
 
 export function applyInlineMarkdown(text) {
   let value = text;
-  value = value.replace(/(^|\s)(#[^\s#@]+)/g, "$1<span class=\"pill inline-pill\">$2</span>");
+  value = value.replace(
+    /(^|\s)(#[^\s#@]+)/g,
+    "$1<span class=\"pill inline-pill\" data-type=\"tag\" data-value=\"$2\">$2</span>"
+  );
   value = value.replace(
     /(^|\s)@([^\s#@]+)/g,
-    "$1<span class=\"pill inline-pill\">👤 $2</span>"
+    "$1<span class=\"pill inline-pill\" data-type=\"person\" data-value=\"@$2\">👤 $2</span>"
   );
   value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "<img alt=\"$1\" src=\"$2\" />");
   value = value.replace(
