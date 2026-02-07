@@ -24,6 +24,8 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       })
       .join("");
     highlightLayer.innerHTML = highlighted;
+    highlightLayer.style.width = `${Math.max(editor.scrollWidth, editor.clientWidth)}px`;
+    highlightLayer.style.height = `${Math.max(editor.scrollHeight, editor.clientHeight)}px`;
     highlightLayer.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;
     if (lineNumbers) {
       lineNumbers.style.transform = `translate(${-editor.scrollLeft}px, ${-editor.scrollTop}px)`;

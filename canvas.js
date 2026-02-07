@@ -12,13 +12,6 @@ export function createCanvas({
     graphNodes.innerHTML = "";
     graphLines.innerHTML = "";
     const canvasRect = graphCanvas.getBoundingClientRect();
-    graphLines.setAttribute(
-      "viewBox",
-      `0 0 ${Math.max(1, Math.floor(canvasRect.width))} ${Math.max(
-        1,
-        Math.floor(canvasRect.height)
-      )}`
-    );
 
     const visibleTasks = gatherVisible(state.tasks);
     const positions = new Map();
@@ -27,12 +20,23 @@ export function createCanvas({
     const nodeWidth = 220;
     const nodeHeight = 120;
 
+    let maxX = 0;
+    let maxY = 0;
     visibleTasks.forEach((task) => {
       const x = 60 + task.depth * 260;
       positions.set(task.id, { x, y });
+      maxX = Math.max(maxX, x + nodeWidth);
+      maxY = Math.max(maxY, y + nodeHeight);
       y += spacingY;
     });
     state.positions = positions;
+    graphLines.setAttribute(
+      "viewBox",
+      `0 0 ${Math.max(1, Math.floor(Math.max(canvasRect.width, maxX + 60)))} ${Math.max(
+        1,
+        Math.floor(Math.max(canvasRect.height, maxY + 60))
+      )}`
+    );
 
     const paths = [];
     visibleTasks.forEach((task) => {
