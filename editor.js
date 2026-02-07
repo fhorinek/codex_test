@@ -17,14 +17,8 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
           const className = indent.length >= 4 ? "highlight-subtask" : "highlight-task";
           return `<span class=\"${baseClass} ${className}\">${escapeHtml(indent)}* ${escapeHtml(name)}</span>`;
         }
-        if (line.trim().startsWith("#")) {
-          return `<span class=\"${baseClass} highlight-tags\">${escapeHtml(line)}</span>`;
-        }
-        if (line.trim().startsWith("@")) {
-          return `<span class=\"${baseClass} highlight-people\">${escapeHtml(line)}</span>`;
-        }
         if (line.trim() !== "") {
-          return `<span class=\"${baseClass} highlight-description\">${escapeHtml(line)}</span>`;
+          return `<span class=\"${baseClass} highlight-description\">${highlightInlineTokens(line)}</span>`;
         }
         return `<span class=\"${baseClass}\">&nbsp;</span>`;
       })
@@ -39,6 +33,13 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     lineNumbers.innerHTML = lines
       .map((_, index) => `<span>${index + 1}</span>`)
       .join("");
+  }
+
+  function highlightInlineTokens(line) {
+    const escaped = escapeHtml(line);
+    return escaped
+      .replace(/(^|\s)(#[^\s#@]+)/g, "$1<span class=\"highlight-tags\">$2</span>")
+      .replace(/(^|\s)(@[^\s#@]+)/g, "$1<span class=\"highlight-people\">$2</span>");
   }
 
   function updateSuggestions({ forceOpen = false } = {}) {

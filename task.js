@@ -165,36 +165,23 @@ export function parseTasks(text) {
     if (!currentTask || trimmed === "") {
       return;
     }
-
-    if (trimmed.startsWith("#")) {
-      const found = trimmed.split(/\s+/).filter(Boolean);
-      found.forEach((tag) => {
-        if (tag.startsWith("#") && tag.length > 1) {
-          const cleanTag = tag.trim();
-          if (cleanTag.length > 1) {
-            currentTask.tags.push(cleanTag);
-            tags.add(cleanTag);
-          }
-        }
-      });
-      return;
-    }
-
-    if (trimmed.startsWith("@")) {
-      const found = trimmed.split(/\s+/).filter(Boolean);
-      found.forEach((person) => {
-        if (person.startsWith("@") && person.length > 1) {
-          const cleanPerson = person.trim();
-          if (cleanPerson.length > 1) {
-            currentTask.people.push(cleanPerson);
-            people.add(cleanPerson);
-          }
-        }
-      });
-      return;
-    }
-
     currentTask.description.push(trimmed);
+    const tagMatches = trimmed.matchAll(/(^|\s)(#[^\s#@]+)/g);
+    for (const match of tagMatches) {
+      const tag = match[2];
+      if (tag && tag.length > 1) {
+        currentTask.tags.push(tag);
+        tags.add(tag);
+      }
+    }
+    const personMatches = trimmed.matchAll(/(^|\s)(@[^\s#@]+)/g);
+    for (const match of personMatches) {
+      const person = match[2];
+      if (person && person.length > 1) {
+        currentTask.people.push(person);
+        people.add(person);
+      }
+    }
     const matches = trimmed.matchAll(/\{([^}]+)\}/g);
     for (const match of matches) {
       currentTask.references.push(match[1]);
