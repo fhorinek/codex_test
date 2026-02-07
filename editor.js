@@ -2,6 +2,7 @@ import { escapeHtml } from "./task.js";
 
 export function createEditor({ state, dom, onSync, onSelectTask }) {
   const { editor, highlightLayer, suggestions, lineNumbers } = dom;
+  const triggerChars = new Set(["#", "@", "{"]);
 
   function highlightText(lines) {
     updateLineNumbers(lines);
@@ -40,12 +41,13 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       .join("");
   }
 
-  function updateSuggestions() {
+  function updateSuggestions({ forceOpen = false } = {}) {
     const cursor = editor.selectionStart;
     const before = editor.value.slice(0, cursor);
     const triggerMatch = before.match(/([#@{])([^\s}]*)$/);
-    if (!triggerMatch) {
+    if (!triggerMatch || (!forceOpen && !suggestions.classList.contains("open"))) {
       suggestions.classList.add("hidden");
+      suggestions.classList.remove("open");
       suggestions.innerHTML = "";
       return;
     }
@@ -62,6 +64,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     const filtered = items.filter((item) => item.toLowerCase().includes(partial));
     if (!filtered.length) {
       suggestions.classList.add("hidden");
+      suggestions.classList.remove("open");
       suggestions.innerHTML = "";
       return;
     }
@@ -73,18 +76,24 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       button.type = "button";
       button.textContent = item;
       button.addEventListener("click", () => {
-        const insert = trigger === "{" ? `${item}}` : item.slice(1);
-        const start = cursor - partial.length;
-        editor.setRangeText(insert, start, cursor, "end");
-        editor.focus();
-        suggestions.classList.add("hidden");
-        onSync();
+        applySuggestion({ item, trigger, partial, cursor });
       });
       suggestions.appendChild(button);
     });
     setActiveSuggestion();
     positionSuggestions();
     suggestions.classList.remove("hidden");
+    suggestions.classList.add("open");
+  }
+
+  function applySuggestion({ item, trigger, partial, cursor }) {
+    const insert = trigger === "{" ? `${item}}` : item.slice(1);
+    const start = cursor - partial.length;
+    editor.setRangeText(insert, start, cursor, "end");
+    editor.focus();
+    suggestions.classList.add("hidden");
+    suggestions.classList.remove("open");
+    onSync();
   }
 
   function setActiveSuggestion() {
@@ -149,10 +158,21 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   editor.addEventListener("input", () => {
     onSync();
     updateSelectedLine();
+    const cursor = editor.selectionStart;
+    const lastChar = editor.value[cursor - 1];
+    if (triggerChars.has(lastChar)) {
+      updateSuggestions({ forceOpen: true });
+      return;
+    }
+    if (suggestions.classList.contains("open")) {
+      updateSuggestions({ forceOpen: true });
+    } else {
+      suggestions.classList.add("hidden");
+      suggestions.classList.remove("open");
+    }
   });
 
   editor.addEventListener("click", () => {
-    updateSuggestions();
     updateSelectedLine();
     const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
     onSelectTask(line);
@@ -197,7 +217,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
         setActiveSuggestion();
         return;
       }
-      if (event.key === "Enter") {
+      if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
         const item = state.suggestionItems[state.suggestionIndex];
         if (item) {
@@ -206,11 +226,10 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
           const triggerMatch = before.match(/([#@{])([^\s}]*)$/);
           const trigger = triggerMatch?.[1] || "";
           const partial = triggerMatch?.[2] || "";
-          const insert = trigger === "{" ? `${item}}` : item.slice(1);
-          const start = cursor - partial.length;
-          editor.setRangeText(insert, start, cursor, "end");
+          applySuggestion({ item, trigger, partial, cursor });
+        } else {
           suggestions.classList.add("hidden");
-          onSync();
+          suggestions.classList.remove("open");
         }
         return;
       }
@@ -229,10 +248,9 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   });
 
   editor.addEventListener("keyup", (event) => {
-    if (["ArrowDown", "ArrowUp", "Enter"].includes(event.key)) {
+    if (["ArrowDown", "ArrowUp", "Enter", "Tab"].includes(event.key)) {
       return;
     }
-    updateSuggestions();
     updateSelectedLine();
   });
 
