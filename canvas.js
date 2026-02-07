@@ -97,7 +97,7 @@ export function createCanvas({
         statePill.textContent = stateMeta?.name || task.state.replace(/^!/, "");
         const stateColor = state.stateMeta?.get(task.state)?.color;
         if (stateColor) {
-          statePill.style.borderColor = stateColor;
+          statePill.style.borderColor = lightenColor(stateColor, 0.5);
         }
         statePill.draggable = true;
         statePill.addEventListener("dragstart", (event) => {
@@ -470,4 +470,18 @@ export function createCanvas({
     togglePerson,
     buildPill,
   };
+
+  function lightenColor(color, amount = 0.4) {
+    const hex = color.replace("#", "");
+    if (hex.length !== 6) {
+      return color;
+    }
+    const num = parseInt(hex, 16);
+    const r = (num >> 16) & 0xff;
+    const g = (num >> 8) & 0xff;
+    const b = num & 0xff;
+    const mix = (channel) => Math.min(255, Math.round(channel + (255 - channel) * amount));
+    const toHex = (channel) => channel.toString(16).padStart(2, "0");
+    return `#${toHex(mix(r))}${toHex(mix(g))}${toHex(mix(b))}`;
+  }
 }

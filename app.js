@@ -206,6 +206,10 @@ function buildKanban() {
     const column = document.createElement("div");
     column.className = "kanban-column";
     column.dataset.stateTag = stateTag;
+    const metaColor = state.stateMeta?.get(stateTag)?.color;
+    if (metaColor) {
+      column.style.borderColor = lightenColor(metaColor, 0.5);
+    }
     const title = document.createElement("h3");
     title.textContent =
       state.stateMeta?.get(stateTag)?.name ||
@@ -227,7 +231,8 @@ function buildKanban() {
       if (task.state) {
         const color = state.stateMeta?.get(task.state)?.color;
         if (color) {
-          card.style.borderColor = color;
+          card.style.borderColor = lightenColor(color, 0.5);
+          card.style.background = lightenColor(color, 0.9);
         }
       }
       card.addEventListener("click", () => selectTask(task));
@@ -293,6 +298,20 @@ function updateTaskState(task, newState) {
   }
   dom.editor.value = lines.join("\n");
   sync();
+}
+
+function lightenColor(color, amount = 0.4) {
+  const hex = color.replace("#", "");
+  if (hex.length !== 6) {
+    return color;
+  }
+  const num = parseInt(hex, 16);
+  const r = (num >> 16) & 0xff;
+  const g = (num >> 8) & 0xff;
+  const b = num & 0xff;
+  const mix = (channel) => Math.min(255, Math.round(channel + (255 - channel) * amount));
+  const toHex = (channel) => channel.toString(16).padStart(2, "0");
+  return `#${toHex(mix(r))}${toHex(mix(g))}${toHex(mix(b))}`;
 }
 
 function updateTaskToken(task, token, action) {
