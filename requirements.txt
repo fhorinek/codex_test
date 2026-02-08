@@ -1,96 +1,74 @@
 Project requirements
 
 Overview
-- Split-pane web app with a code editor on the left and an interactive task graph on the right.
-- The editor defines tasks using a lightweight script syntax that is parsed into graph nodes.
+- Single-page split-pane app: editor on the left, graph on the right, kanban below the graph.
+- The task script is the single source of truth; edits update graph/kanban live.
 - Keep this document updated whenever project behavior or UI changes.
-- Optional config header precedes tasks and defines board name, states, people, and tag metadata.
-- Board name from the header is shown in the left-pane title.
-- Board name from the header also updates the HTML document title.
-
-Editor
-- Fixed-width font with line numbers and syntax highlighting for tasks, subtasks, tags, people, and references.
-- Indentation with Tab (indent) and Shift+Tab (unindent); Enter maintains current indentation.
-- Undo/redo supported by the native textarea and toolbar buttons.
-- Inline context suggestions for #tags, @people, and {task references}, navigable with arrows and accepted with Enter/Tab.
-- Suggestions also appear for !state tags, matching known kanban states.
-- The editor toolbar shows the board name and buttons for undo, redo, load, save, format, and theme.
-- The toolbar includes fullscreen and theme toggle buttons.
-- Load opens a text file from disk; save downloads the current task script as a `.txt` file.
-- Format removes extra blank lines and trailing whitespace, and ensures the task state is the first token after the task name.
-
-Task syntax
-- A task starts with "* Task name" on its own line.
-- Subtasks are indented by 4 spaces and use the same "*" syntax.
-- Task descriptions follow task lines until a blank line; tags and people can appear anywhere inline in the description.
-- Tags use #tag, people use @person, and references use {Task name}.
-- Kanban state tags use !state (first !tag per task is used for the kanban column; additional !tags are invalid and shown with a wavy underline in the editor).
-- Markdown in descriptions supports bold, italic, underline, highlight, lists, tables, images, and links.
-
-Formatting syntax examples
-- Bold: **bold**
-- Italic: *italic*
-- Underline: __underline__
-- Highlight: ==highlight==
-- List item: - item
-- Checkbox: [x] checked
-- Table:
-  | Col | Val |
-  | --- | --- |
-  | A | 1 |
-- Image: ![alt](url)
-- Link: [title](https://example.com)
-- Task reference: {Task name}
-
-Graph
-- Right pane renders tasks and subtasks as a tree, connected by bezier lines.
-- Nodes display the task title and render description markdown with inline pills for tags/people.
-- Checkboxes in descriptions can be toggled directly on the graph and update the editor text.
-- Nodes can be collapsed/expanded; focus centers the selected task with animation.
-- Pan and zoom supported on the graph canvas.
-- A kanban board appears below the graph showing tasks grouped by their !state tags (states are generated dynamically).
-- Kanban columns follow the header state order first, followed by any dynamically detected states.
-- The kanban board and graph are separated by a draggable horizontal divider.
-- Drag tasks from the graph or between kanban columns to update the task !state in the editor.
-- Drag a kanban card onto the graph to clear its !state.
-- When a task !state is updated via drag, write it at the start of the first description line under the task without adding a new line if one exists.
-- Drag a state pill out of a task to clear its !state.
-- State pills use their configured state colors.
-- States get automatic colors when no color is provided in the header.
-- Kanban columns and cards use a lightened version of the state color for borders/backgrounds.
-- Kanban cards show the first assigned person and task tags as pills.
-
-Tags & People
-- Legend lists all tags and people; clicking toggles highlight filters.
-- Clicking a tag/person pill in a node toggles the corresponding legend filter.
-- When filters are active, non-matching tasks are dimmed and matching inline pills highlight.
-- Drag legend tags/people onto task cards to add them, and drag pills out of a task to remove them (updates the code).
-- Dragging tags/people onto tasks inserts them at the start of the first description line under the task while preserving indentation.
-
-Search
-- Search input filters/highlights tasks by name, description, tags, or people with toggleable scope options.
-- Search highlights matching tasks in the kanban board.
 
 Config header
-- Header format (before first task):
-  Board name:
-      states:
-          todo
-          inprogress:
-              name: In progress
-              color: gray
-      people:
-          bob:
-              name: Bob Dilan
-              color: #FF00BB
-          jesica
-          fero
-- Header-defined states/people/tags keep their order in the legend/kanban and define pill colors.
-- Dynamically detected states/people/tags are appended after the header-defined order so new items still appear.
-- Pills display the configured display name when provided in the header.
-- Tags and people get automatic colors when no color is provided in the header.
-- When the header omits a states section, default states are `todo` (TODO), `inprogress` (In progress), and `done` (Done).
+- Optional header appears before the first task line.
+- Board name in the header sets the left-pane title and the HTML document title.
+- Header sections: `states`, `people`, `tags`.
+- Each entry can define `name` and `color`.
+- If `states` are omitted, defaults are `todo`, `inprogress`, `done`.
+- Header order is preserved in legends/kanban; newly discovered items append after.
+- Tags/people/states get automatic colors when no color is provided.
+
+Task script syntax
+- Task line: `% Task name`.
+- Subtasks are indented by 4 spaces per level.
+- Task description follows until a blank line or the next task line.
+- Preferred token line is directly under the task line: `!state @person #tag #tag`.
+- Tags: `#tag`, people: `@person`, references: `{Task name}`.
+- State tokens use `!state`; the first state per task is used, extra states are invalid and highlighted.
+- Checkbox syntax: `[ ]` or `[x]` (no leading `-`).
+- Markdown in descriptions supports bold, italic, underline, highlight, lists, tables, images, and links.
+
+Editor
+- Monospace editor with line numbers and syntax highlighting.
+- Tab/Shift+Tab indent and unindent; Enter keeps indentation and repeats list/checkbox markers.
+- Suggestions for `#`, `@`, `!`, `{}` tokens; navigable with arrows, accept with Enter/Tab.
+- Undo/redo supported via textarea history and toolbar buttons.
+
+Formatting
+- Format removes extra blank lines and trailing whitespace.
+- Format moves the first `!state` token to the first description line and makes it the first token on that line.
+- Formatting must preserve indentation and not reorder non-state tokens.
+
+Toolbar & files
+- Toolbar shows board name plus undo, redo, load, save, format, theme, fullscreen.
+- Load opens a `.txt` file from disk; save downloads the current script as `.txt`.
+
+Graph view
+- Tasks render as cards connected by curved lines.
+- Layout uses measured node sizes to avoid overlaps; first child aligns with parent, siblings stack with gaps.
+- Pan and zoom supported; focus centers the selected task with animation.
+- Nodes render title, state pill (border + text color only), description markdown, and inline pills.
+- Checkboxes can be toggled directly on the graph and update the editor text.
+- Subtasks can be collapsed/expanded with a right-aligned toggle showing `+`/`–` and a count.
+- A minimap in the top-right shows the full graph and the current viewport.
+- Drag a task onto another task to reparent it as a subtask (append after existing children).
+
+Kanban view
+- Kanban board sits below the graph.
+- Columns are ordered by header states, then any dynamically detected states.
+- Cards show task name, first person, and tags.
+- Drag cards across columns to change `!state` in the editor.
+- Drag a kanban card onto the graph to clear its `!state`.
+
+Drag and drop tokens
+- Drag tag/person pills from the legend or other tasks onto a task to add them.
+- Drag pills out of a task to remove them.
+- Drag a state pill out of a task to clear its `!state`.
+- When adding tokens via drag, insert into the first description line under the task (reuse the line if present).
+- State must remain the first token on the first description line.
+
+Filters & search
+- Legend toggles tag/people filters; non-matching tasks are dimmed.
+- When filters are active, connecting lines also dim if either endpoint does not match.
+- Search filters/highlights tasks by name, description, tags, or people with toggleable scope.
+- Search highlights matching tasks in the kanban board.
 
 Misc
-- Clear Highlights resets all tag/person filters and search input.
-- Clicking a task node focuses the corresponding editor line; moving the cursor in the editor updates focus in the graph.
+- Clear Highlights resets tag/person filters and search input.
+- Selecting a task in the graph focuses the corresponding editor line, and editor selection updates graph focus.

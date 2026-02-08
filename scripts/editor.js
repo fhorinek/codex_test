@@ -2,7 +2,6 @@ import { escapeHtml } from "./task.js";
 
 export function createEditor({ state, dom, onSync, onSelectTask }) {
   const { editor, highlightLayer, suggestions, lineNumbers } = dom;
-  const triggerChars = new Set(["#", "@", "{", "!"]);
 
   function closeSuggestions() {
     suggestions.classList.add("hidden");

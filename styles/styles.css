@@ -456,6 +456,50 @@ body {
   overflow: hidden;
 }
 
+.graph-minimap {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 180px;
+  height: 120px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid #d6d9e6;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.1);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.minimap-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.minimap-line {
+  stroke: #b9c0ff;
+  stroke-width: 5;
+  fill: none;
+  opacity: 0.55;
+}
+
+.minimap-node {
+  fill: rgba(143, 164, 255, 0.18);
+  stroke: #8fa4ff;
+  stroke-width: 4;
+}
+
+.minimap-node.dimmed {
+  opacity: 0.35;
+}
+
+.minimap-viewport {
+  fill: rgba(255, 176, 32, 0.12);
+  stroke: #ffb020;
+  stroke-width: 6;
+}
+
 #graph-lines {
   position: absolute;
   inset: 0;
@@ -564,6 +608,26 @@ html[data-theme="dark"] .graph-panel {
 
 html[data-theme="dark"] .graph-canvas {
   background: #0f111a;
+}
+
+html[data-theme="dark"] .graph-minimap {
+  border-color: #2a3354;
+  background: rgba(15, 17, 26, 0.92);
+  box-shadow: 0 8px 18px rgba(5, 8, 18, 0.5);
+}
+
+html[data-theme="dark"] .minimap-node {
+  fill: rgba(143, 164, 255, 0.12);
+  stroke: #6b7dff;
+}
+
+html[data-theme="dark"] .minimap-line {
+  stroke: #5b6bf0;
+}
+
+html[data-theme="dark"] .minimap-viewport {
+  fill: rgba(255, 176, 32, 0.1);
+  stroke: #ffb020;
 }
 
 html[data-theme="dark"] .kanban-board {

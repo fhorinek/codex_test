@@ -12,7 +12,7 @@ export function createCanvas({
   onToggleCheckbox,
   onFiltersChange,
 }) {
-  const { graphNodes, graphLines, graphCanvas } = dom;
+  const { graphNodes, graphLines, graphCanvas, graphMinimap, minimapSvg } = dom;
 
   function renderGraph() {
     graphNodes.innerHTML = "";
@@ -31,6 +31,7 @@ export function createCanvas({
     const heightsById = new Map();
     const widthsById = new Map();
 
+    // First pass: build nodes to measure real sizes before layout.
     visibleTasks.forEach((task) => {
       const node = document.createElement("div");
       node.className = "task-node";
@@ -285,6 +286,7 @@ export function createCanvas({
     });
     const spacingX = maxNodeWidth + 40;
 
+    // Second pass: compute positions using measured heights to avoid overlaps.
     const placeTask = (task, yPos) => {
       if (!nodesById.has(task.id)) {
         return yPos;
@@ -322,6 +324,7 @@ export function createCanvas({
     state.positions = positions;
     const viewWidth = Math.max(1, Math.floor(Math.max(canvasRect.width, maxX + 60)));
     const viewHeight = Math.max(1, Math.floor(Math.max(canvasRect.height, maxY + 60)));
+    state.graphBounds = { width: viewWidth, height: viewHeight };
     graphLines.setAttribute("width", `${viewWidth}`);
     graphLines.setAttribute("height", `${viewHeight}`);
     graphLines.style.width = `${viewWidth}px`;
@@ -336,6 +339,16 @@ export function createCanvas({
       node.style.left = `${pos.x}px`;
       node.style.top = `${pos.y}px`;
       node.style.visibility = "";
+    });
+
+    updateMinimap({
+      visibleTasks,
+      positions,
+      nodeWidthFor,
+      nodeHeightFor,
+      viewWidth,
+      viewHeight,
+      canvasRect,
     });
 
     const paths = [];
@@ -506,6 +519,7 @@ export function createCanvas({
     graphLines.style.transition = transitionValue;
     graphNodes.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     graphLines.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    updateMinimapViewport();
   }
 
   let isPanning = false;
@@ -624,17 +638,92 @@ export function createCanvas({
     buildPill,
   };
 
-  function lightenColor(color, amount = 0.4) {
-    const hex = color.replace("#", "");
-    if (hex.length !== 6) {
-      return color;
+  function updateMinimap({
+    visibleTasks,
+    positions,
+    nodeWidthFor,
+    nodeHeightFor,
+    viewWidth,
+    viewHeight,
+    canvasRect,
+  }) {
+    if (!minimapSvg || !graphMinimap) {
+      return;
     }
-    const num = parseInt(hex, 16);
-    const r = (num >> 16) & 0xff;
-    const g = (num >> 8) & 0xff;
-    const b = num & 0xff;
-    const mix = (channel) => Math.min(255, Math.round(channel + (255 - channel) * amount));
-    const toHex = (channel) => channel.toString(16).padStart(2, "0");
-    return `#${toHex(mix(r))}${toHex(mix(g))}${toHex(mix(b))}`;
+    if (!visibleTasks.length) {
+      graphMinimap.hidden = true;
+      return;
+    }
+    graphMinimap.hidden = false;
+    minimapSvg.setAttribute("viewBox", `0 0 ${viewWidth} ${viewHeight}`);
+    const lines = [];
+    const nodes = [];
+    visibleTasks.forEach((task) => {
+      const pos = positions.get(task.id);
+      if (!pos) {
+        return;
+      }
+      const width = nodeWidthFor(task.id);
+      const height = nodeHeightFor(task.id);
+      const dimmed = !matchesFiltersTask(task);
+      nodes.push(
+        `<rect class="minimap-node${dimmed ? " dimmed" : ""}" x="${pos.x}" y="${pos.y}" width="${width}" height="${height}" rx="8" ry="8" />`
+      );
+      task.children
+        .filter((child) => positions.has(child.id))
+        .forEach((child) => {
+          const childPos = positions.get(child.id);
+          const childHeight = nodeHeightFor(child.id);
+          const startX = pos.x + width;
+          const startY = pos.y + height / 2;
+          const endX = childPos.x;
+          const endY = childPos.y + childHeight / 2;
+          const midX = (startX + endX) / 2;
+          lines.push(
+            `<path class="minimap-line" d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" />`
+          );
+        });
+    });
+    const { viewportX, viewportY, viewportWidth, viewportHeight } = getViewportRect(
+      canvasRect,
+      viewWidth,
+      viewHeight
+    );
+    minimapSvg.innerHTML = `<g>${nodes.join("")}</g><g>${lines.join("")}</g><rect class="minimap-viewport" x="${viewportX}" y="${viewportY}" width="${viewportWidth}" height="${viewportHeight}" />`;
+  }
+
+  function updateMinimapViewport() {
+    if (!minimapSvg || !state.graphBounds) {
+      return;
+    }
+    const viewport = minimapSvg.querySelector(".minimap-viewport");
+    if (!viewport) {
+      return;
+    }
+    const canvasRect = graphCanvas.getBoundingClientRect();
+    const { viewportX, viewportY, viewportWidth, viewportHeight } = getViewportRect(
+      canvasRect,
+      state.graphBounds.width,
+      state.graphBounds.height
+    );
+    viewport.setAttribute("x", `${viewportX}`);
+    viewport.setAttribute("y", `${viewportY}`);
+    viewport.setAttribute("width", `${viewportWidth}`);
+    viewport.setAttribute("height", `${viewportHeight}`);
+  }
+
+  function getViewportRect(canvasRect, boundsWidth, boundsHeight) {
+    const scale = state.transform.scale || 1;
+    const rawWidth = canvasRect.width / scale;
+    const rawHeight = canvasRect.height / scale;
+    const viewportWidth = Math.min(boundsWidth, rawWidth);
+    const viewportHeight = Math.min(boundsHeight, rawHeight);
+    const rawX = (-state.transform.x) / scale;
+    const rawY = (-state.transform.y) / scale;
+    const maxX = Math.max(0, boundsWidth - viewportWidth);
+    const maxY = Math.max(0, boundsHeight - viewportHeight);
+    const viewportX = Math.min(maxX, Math.max(0, rawX));
+    const viewportY = Math.min(maxY, Math.max(0, rawY));
+    return { viewportX, viewportY, viewportWidth, viewportHeight };
   }
 }

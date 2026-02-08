@@ -80,7 +80,6 @@ export function renderMarkdown(text, options = {}) {
   let html = "";
   let inList = false;
   let inTable = false;
-  let tableHeader = [];
 
   const closeList = () => {
     if (inList) {
@@ -93,7 +92,6 @@ export function renderMarkdown(text, options = {}) {
     if (inTable) {
       html += "</tbody></table>";
       inTable = false;
-      tableHeader = [];
     }
   };
 
@@ -111,9 +109,8 @@ export function renderMarkdown(text, options = {}) {
     if (trimmed.includes("|") && isTableSeparator && !inTable) {
       closeList();
       inTable = true;
-      tableHeader = toCells(line);
       html += "<table><thead><tr>";
-      tableHeader.forEach((cell) => {
+      toCells(line).forEach((cell) => {
         html += `<th>${applyInlineMarkdown(cell)}</th>`;
       });
       html += "</tr></thead><tbody>";
@@ -124,6 +121,7 @@ export function renderMarkdown(text, options = {}) {
       if (!trimmed.includes("|") || trimmed === "") {
         closeTable();
       } else {
+        // Skip the separator row inside table bodies.
         if (/^\|?\s*[-:]+/.test(trimmed)) {
           return;
         }

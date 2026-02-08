@@ -14,6 +14,8 @@ const dom = {
   suggestions: document.getElementById("suggestions"),
   graphNodes: document.getElementById("graph-nodes"),
   graphLines: document.getElementById("graph-lines"),
+  graphMinimap: document.getElementById("graph-minimap"),
+  minimapSvg: document.getElementById("minimap-svg"),
   lineNumbers: document.getElementById("line-numbers"),
   searchInput: document.getElementById("search-input"),
   searchName: document.getElementById("search-name"),
@@ -87,6 +89,7 @@ const canvasController = createCanvas({
   onFiltersChange: () => {
     buildTagPersonLists();
     buildKanban();
+    updateClearFiltersVisibility();
   },
 });
 
@@ -100,6 +103,7 @@ function applyEditorValue(nextValue) {
   if (currentValue === nextValue) {
     return;
   }
+  // Apply a minimal text diff to preserve undo history and selection.
   let prefix = 0;
   const maxPrefix = Math.min(currentValue.length, nextValue.length);
   while (prefix < maxPrefix && currentValue[prefix] === nextValue[prefix]) {
@@ -255,6 +259,7 @@ function sync() {
   buildKanban();
   canvasController.renderGraph();
   editorController.updateSuggestions();
+  updateClearFiltersVisibility();
 }
 
 function buildKanban() {
@@ -294,6 +299,7 @@ function moveTaskAsSubtask(sourceTask, targetTask) {
   if (!sourceBlock || !targetBlock) {
     return;
   }
+  // Move the entire source block and re-indent it under the target task.
   const indentDelta = (targetBlock.depth + 1 - sourceBlock.depth) * 4;
   const blockLines = lines.slice(sourceBlock.start, sourceBlock.end);
   lines.splice(sourceBlock.start, sourceBlock.end - sourceBlock.start);
@@ -403,6 +409,15 @@ function filtersActive() {
   return state.selectedTags.size || state.selectedPeople.size;
 }
 
+function updateClearFiltersVisibility() {
+  if (!dom.clearFilters) {
+    return;
+  }
+  const hasFilters = filtersActive();
+  const hasSearch = Boolean(state.searchQuery && state.searchQuery.trim());
+  dom.clearFilters.hidden = !(hasFilters || hasSearch);
+}
+
 function matchesFilters(task) {
   if (!filtersActive()) {
     return true;
@@ -505,12 +520,14 @@ dom.searchInput.addEventListener("input", () => {
   state.searchQuery = dom.searchInput.value;
   canvasController.renderGraph();
   buildKanban();
+  updateClearFiltersVisibility();
 });
 
 [dom.searchName, dom.searchDescription, dom.searchTag, dom.searchPerson].forEach((checkbox) => {
   checkbox.addEventListener("change", () => {
     canvasController.renderGraph();
     buildKanban();
+    updateClearFiltersVisibility();
   });
 });
 
@@ -522,6 +539,7 @@ dom.clearFilters.addEventListener("click", () => {
   canvasController.renderGraph();
   buildTagPersonLists();
   buildKanban();
+  updateClearFiltersVisibility();
 });
 
 let resizing = false;
@@ -532,6 +550,7 @@ function scheduleGraphRender() {
   if (pendingGraphRender) {
     return;
   }
+  // Batch graph reflows to one per frame while dragging resizers.
   pendingGraphRender = requestAnimationFrame(() => {
     pendingGraphRender = null;
     canvasController.renderGraph();
