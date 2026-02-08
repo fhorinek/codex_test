@@ -8,6 +8,77 @@ import {
 } from "./kanban.js";
 import { formatTaskScript } from "./formatter.js";
 
+const REMOTE_BASE = window.location.origin;
+const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
+const AUTH_TOKEN = "devtoken";
+const COLLAB_LIBS = {
+  yjs: "yjs",
+  ywebsocket: "y-websocket",
+  ytextarea: "y-textarea",
+};
+const COLLAB_COLORS = [
+  { r: 45, g: 80, b: 237 },
+  { r: 232, g: 93, b: 73 },
+  { r: 54, g: 170, b: 119 },
+  { r: 176, g: 98, b: 216 },
+  { r: 240, g: 173, b: 78 },
+  { r: 66, g: 153, b: 225 },
+  { r: 236, g: 112, b: 99 },
+];
+const IDLE_TIMEOUT_MS = 60000;
+const IDLE_CHECK_MS = 5000;
+const STATUS_LABELS = {
+  connected: "connected",
+  connecting: "reconnecting",
+  disconnected: "error/failed",
+  syncing: "syncing",
+  "auth-failed": "auth failed",
+  "read-only": "read-only",
+  offline: "offline",
+  idle: "idle",
+};
+
+function getCollabIdentity(preferredName) {
+  try {
+    const cached = localStorage.getItem("collabIdentity");
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (
+        parsed &&
+        typeof parsed.name === "string" &&
+        parsed.color &&
+        Number.isFinite(parsed.color.r) &&
+        Number.isFinite(parsed.color.g) &&
+        Number.isFinite(parsed.color.b)
+      ) {
+        const nextIdentity = {
+          name: preferredName || parsed.name,
+          color: parsed.color,
+        };
+        if (preferredName && preferredName !== parsed.name) {
+          try {
+            localStorage.setItem("collabIdentity", JSON.stringify(nextIdentity));
+          } catch {
+            // Ignore storage failures.
+          }
+        }
+        return nextIdentity;
+      }
+    }
+  } catch {
+    // Ignore cached identity errors.
+  }
+  const name = preferredName || `User ${Math.floor(100 + Math.random() * 900)}`;
+  const color = COLLAB_COLORS[Math.floor(Math.random() * COLLAB_COLORS.length)];
+  const identity = { name, color };
+  try {
+    localStorage.setItem("collabIdentity", JSON.stringify(identity));
+  } catch {
+    // Ignore storage failures.
+  }
+  return identity;
+}
+
 const dom = {
   editor: document.getElementById("task-editor"),
   highlightLayer: document.getElementById("highlight-layer"),
@@ -23,14 +94,29 @@ const dom = {
   searchTag: document.getElementById("search-tag"),
   searchPerson: document.getElementById("search-person"),
   boardTitle: document.getElementById("board-title"),
+  boardConnection: document.getElementById("board-connection"),
   undoButton: document.getElementById("undo-button"),
   redoButton: document.getElementById("redo-button"),
   loadButton: document.getElementById("load-button"),
   saveButton: document.getElementById("save-button"),
   formatButton: document.getElementById("format-button"),
+  connectButton: document.getElementById("connect-button"),
   themeButton: document.getElementById("theme-button"),
   fullscreenButton: document.getElementById("fullscreen-button"),
   fileInput: document.getElementById("file-input"),
+  loginModal: document.getElementById("login-modal"),
+  loginModalClose: document.getElementById("login-modal-close"),
+  loginUsername: document.getElementById("login-username"),
+  loginDisplayName: document.getElementById("login-displayname"),
+  loginPassword: document.getElementById("login-password"),
+  loginSubmit: document.getElementById("login-submit"),
+  loginError: document.getElementById("login-error"),
+  spacesModal: document.getElementById("spaces-modal"),
+  spacesModalClose: document.getElementById("spaces-modal-close"),
+  logoutButton: document.getElementById("logout-button"),
+  spaceNew: document.getElementById("space-new"),
+  spaceCreate: document.getElementById("space-create"),
+  spaceList: document.getElementById("space-list"),
   kanbanBoard: document.getElementById("kanban-board"),
   kanbanDivider: document.getElementById("kanban-divider"),
   graphPanel: document.querySelector(".graph-panel"),
@@ -40,6 +126,20 @@ const dom = {
   graphCanvas: document.getElementById("graph-canvas"),
   divider: document.getElementById("divider"),
 };
+
+function setButtonIcon(button, icon) {
+  if (!button) {
+    return;
+  }
+  let iconEl = button.querySelector("i");
+  if (!iconEl) {
+    iconEl = document.createElement("i");
+    iconEl.setAttribute("aria-hidden", "true");
+    button.textContent = "";
+    button.appendChild(iconEl);
+  }
+  iconEl.className = `fa-solid ${icon}`;
+}
 
 const state = {
   tasks: [],
@@ -64,6 +164,188 @@ const state = {
   suggestionIndex: 0,
   suggestionItems: [],
 };
+
+const collab = {
+  spaceId: null,
+  provider: null,
+  ydoc: null,
+  ytext: null,
+  binding: null,
+  bindingOptions: null,
+  saveTimer: null,
+  presenceTimer: null,
+  spacePoller: null,
+  lastSpaceSnapshot: "",
+  idleTimer: null,
+  lastActivityAt: 0,
+  synced: false,
+  syncScheduled: false,
+  modules: null,
+  identity: getCollabIdentity(),
+  username: "",
+  displayName: "",
+  authToken: AUTH_TOKEN,
+  isAuthenticated: false,
+  connectionStatus: "disconnected",
+};
+
+function getStoredAuth() {
+  try {
+    const cached = localStorage.getItem("collabAuth");
+    if (!cached) {
+      return null;
+    }
+    const parsed = JSON.parse(cached);
+    if (parsed && typeof parsed === "object") {
+      return {
+        username: typeof parsed.username === "string" ? parsed.username : "",
+        displayName: typeof parsed.displayName === "string" ? parsed.displayName : "",
+        authToken: typeof parsed.authToken === "string" ? parsed.authToken : AUTH_TOKEN,
+      };
+    }
+  } catch {
+    // Ignore cached auth errors.
+  }
+  return null;
+}
+
+function persistAuth(auth) {
+  try {
+    localStorage.setItem("collabAuth", JSON.stringify(auth));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function readAuthInputs() {
+  const username = dom.loginUsername?.value?.trim() || "";
+  const displayName = dom.loginDisplayName?.value?.trim() || "";
+  const authToken = dom.loginPassword?.value || AUTH_TOKEN;
+  return { username, displayName, authToken };
+}
+
+function applyAuthFromInputs({ store = true, markDirty = true } = {}) {
+  const { username, displayName, authToken } = readAuthInputs();
+  const safeUsername = username || "user";
+  const displayLabel = displayName || safeUsername;
+  collab.username = safeUsername;
+  collab.displayName = displayName;
+  collab.authToken = authToken || AUTH_TOKEN;
+  collab.identity = getCollabIdentity(displayLabel);
+  if (markDirty) {
+    collab.isAuthenticated = false;
+  }
+  if (collab.bindingOptions) {
+    collab.bindingOptions.clientName = collab.identity.name;
+    collab.bindingOptions.color = collab.identity.color;
+    if (collab.provider?.awareness && dom.editor?.id) {
+      collab.provider.awareness.setLocalStateField(dom.editor.id, {
+        user: collab.provider.awareness.clientID,
+        selection: false,
+        name: collab.identity.name,
+        color: collab.identity.color,
+      });
+    }
+  }
+  updateBoardConnectionLabel();
+  if (collab.spaceId) {
+    startPresenceHeartbeat(collab.spaceId);
+  }
+  if (store) {
+    persistAuth({
+      username: safeUsername,
+      displayName,
+      authToken: collab.authToken,
+    });
+  }
+}
+
+function initializeAuthInputs() {
+  const stored = getStoredAuth();
+  if (dom.loginUsername) {
+    dom.loginUsername.value = stored?.username || dom.loginUsername.value || "user";
+  }
+  if (dom.loginDisplayName) {
+    dom.loginDisplayName.value =
+      stored?.displayName || dom.loginDisplayName.value || "";
+  }
+  if (dom.loginPassword) {
+    dom.loginPassword.value = stored?.authToken || dom.loginPassword.value || AUTH_TOKEN;
+  }
+  applyAuthFromInputs({ store: false, markDirty: false });
+}
+
+function getServerLabel() {
+  try {
+    return new URL(REMOTE_BASE).host;
+  } catch {
+    return REMOTE_BASE.replace(/^https?:\/\//, "");
+  }
+}
+
+function setConnectionStatus(status) {
+  if (collab.connectionStatus === status) {
+    return;
+  }
+  collab.connectionStatus = status;
+  updateBoardConnectionLabel();
+}
+
+function markActivity() {
+  collab.lastActivityAt = Date.now();
+  if (collab.connectionStatus === "idle" && collab.synced) {
+    setConnectionStatus("connected");
+  }
+}
+
+function startIdleWatch() {
+  collab.lastActivityAt = Date.now();
+  if (collab.idleTimer) {
+    clearInterval(collab.idleTimer);
+  }
+  collab.idleTimer = setInterval(() => {
+    if (!collab.spaceId || !collab.synced) {
+      return;
+    }
+    if (["offline", "auth-failed", "read-only"].includes(collab.connectionStatus)) {
+      return;
+    }
+    if (Date.now() - collab.lastActivityAt > IDLE_TIMEOUT_MS) {
+      setConnectionStatus("idle");
+    }
+  }, IDLE_CHECK_MS);
+}
+
+function stopIdleWatch() {
+  if (collab.idleTimer) {
+    clearInterval(collab.idleTimer);
+    collab.idleTimer = null;
+  }
+}
+
+function updateBoardConnectionLabel() {
+  if (!dom.boardConnection) {
+    return;
+  }
+  if (collab.spaceId) {
+    const status = collab.connectionStatus || "disconnected";
+    const statusLabel = STATUS_LABELS[status] || STATUS_LABELS.disconnected;
+    dom.boardConnection.textContent = "";
+    const text = document.createElement("span");
+    text.textContent = `${collab.username}@${getServerLabel()}/${collab.spaceId}`;
+    const pill = document.createElement("span");
+    pill.className = `connection-status ${status}`;
+    pill.textContent = statusLabel;
+    dom.boardConnection.append(text, pill);
+    dom.boardConnection.classList.remove("hidden");
+  } else {
+    dom.boardConnection.textContent = "";
+    const text = document.createElement("span");
+    text.textContent = "offline mode";
+    dom.boardConnection.append(text);
+    dom.boardConnection.classList.remove("hidden");
+  }
+}
 
 const sample = `Atlas board:\n    people:\n        maya:\n            name: Maya Rivera\n        luis:\n            name: Luis Ortega\n        sam:\n            name: Sam Patel\n        nina:\n            name: Nina Lopez\n        zara:\n            name: Zara Chen\n    tags:\n        planning\n        backend\n        ux\n        research\n\n% Kickoff sprint\n!todo @maya #planning #ux\n**Goal:** Align scope, risks, and owners. {Architecture}\n- Define success metrics\n- Draft roadmap milestones\n[ ] Share notes with stakeholders\n[ ] Lock sprint goals\n\n    % Collect requirements\n    !inprogress @sam #research\n    Interview 5 users and summarize themes.\n    [ ] Write interview guide\n    [x] Schedule sessions\n\n        % Summarize insights\n        !todo @nina #research #planning\n        Capture themes and map to product risks.\n\n    % Create UX flow\n    !todo @maya #ux\n    Map onboarding screens and happy path.\n    - Wireframe key screens\n    - Validate navigation\n\n% Architecture\n!inprogress @luis #backend\nDefine data contracts and core services.\n| Area | Owner | Status |\n| --- | --- | --- |\n| API | Luis | Draft |\n| Data | Maya | Review |\n\n    % Build service skeleton\n    !todo @luis #backend\n    [ ] Set up repo and CI\n    [ ] Define API endpoints\n\n    % Integrate auth\n    !todo @sam #backend\n    Connect OAuth provider and session storage.\n\n        % Validate permissions\n        !todo @zara #backend #research\n        Check scopes and error handling.\n\n% Release prep\n!todo @maya #planning\nFinalize checklist and release timeline.\n{Kickoff sprint}\n`;
 
@@ -418,6 +700,549 @@ function updateClearFiltersVisibility() {
   dom.clearFilters.hidden = !(hasFilters || hasSearch);
 }
 
+async function loadCollabModules() {
+  if (collab.modules) {
+    return collab.modules;
+  }
+  const [Y, websocket, textarea] = await Promise.all([
+    import(COLLAB_LIBS.yjs),
+    import(COLLAB_LIBS.ywebsocket),
+    import(COLLAB_LIBS.ytextarea),
+  ]);
+  collab.modules = {
+    Y,
+    WebsocketProvider: websocket.WebsocketProvider,
+    TextAreaBinding: textarea.TextAreaBinding || textarea.TextareaBinding,
+  };
+  return collab.modules;
+}
+
+function authHeaders() {
+  const user = collab.username || "user";
+  const pass = collab.authToken || AUTH_TOKEN;
+  const token = btoa(`${user}:${pass}`);
+  return {
+    Authorization: `Basic ${token}`,
+  };
+}
+
+async function fetchSpaces() {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/spaces`, {
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (response.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    throw new Error("Unable to fetch spaces.");
+  }
+  const data = await response.json();
+  if (!Array.isArray(data.spaces)) {
+    return [];
+  }
+  return data.spaces
+    .map((space) => {
+      if (typeof space === "string") {
+        return { id: space, users: [] };
+      }
+      if (space && typeof space === "object") {
+        const id = space.id || space.name || space.space || "";
+        const users = Array.isArray(space.users) ? space.users : [];
+        return { id, users };
+      }
+      return { id: "", users: [] };
+    })
+    .filter((space) => space.id);
+}
+
+function renderSpaceList(spaces) {
+  if (!dom.spaceList) {
+    return;
+  }
+  dom.spaceList.innerHTML = "";
+  if (!spaces.length) {
+    const empty = document.createElement("div");
+    empty.className = "modal-help";
+    empty.textContent = "No spaces found. Add a .txt file to backend/spaces.";
+    dom.spaceList.appendChild(empty);
+    return;
+  }
+  spaces.forEach((space) => {
+    const row = document.createElement("div");
+    row.className = "space-item";
+    const header = document.createElement("div");
+    header.className = "space-row";
+
+    const label = document.createElement("span");
+    label.textContent = space.id;
+
+    const actions = document.createElement("div");
+    actions.className = "space-actions";
+
+    const connectButton = document.createElement("button");
+    connectButton.type = "button";
+    connectButton.className = "toolbar-button";
+    connectButton.textContent = collab.spaceId === space.id ? "Active" : "Connect";
+    connectButton.disabled = collab.spaceId === space.id;
+    connectButton.addEventListener("click", () => {
+      connectToSpace(space.id);
+    });
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "toolbar-button danger";
+    remove.textContent = "Delete";
+    remove.disabled = collab.spaceId === space.id;
+    remove.addEventListener("click", () => {
+      deleteSpace(space.id);
+    });
+
+    actions.appendChild(connectButton);
+    actions.appendChild(remove);
+    header.appendChild(label);
+    header.appendChild(actions);
+
+    const users = document.createElement("div");
+    users.className = "space-users";
+    if (space.users.length) {
+      space.users.forEach((user) => {
+        const pill = document.createElement("span");
+        pill.className = "space-user-pill";
+        pill.textContent = user;
+        users.appendChild(pill);
+      });
+    } else {
+      const empty = document.createElement("span");
+      empty.className = "space-users-empty";
+      empty.textContent = "No users connected";
+      users.appendChild(empty);
+    }
+
+    row.appendChild(header);
+    row.appendChild(users);
+    dom.spaceList.appendChild(row);
+  });
+}
+
+async function loadSpaceList({ showLoading = true } = {}) {
+  if (!dom.spaceList) {
+    return;
+  }
+  if (showLoading) {
+    dom.spaceList.innerHTML = "";
+    const loading = document.createElement("div");
+    loading.className = "modal-help";
+    loading.textContent = "Loading spaces…";
+    dom.spaceList.appendChild(loading);
+  }
+  try {
+    const spaces = await fetchSpaces();
+    const snapshot = JSON.stringify(
+      spaces.map((space) => ({ id: space.id, users: [...space.users].sort() }))
+    );
+    if (snapshot === collab.lastSpaceSnapshot) {
+      return;
+    }
+    collab.lastSpaceSnapshot = snapshot;
+    renderSpaceList(spaces);
+  } catch (error) {
+    if (showLoading) {
+      dom.spaceList.innerHTML = "";
+      const message = document.createElement("div");
+      message.className = "modal-help error";
+      message.textContent = "Unable to reach the backend.";
+      dom.spaceList.appendChild(message);
+    }
+    collab.isAuthenticated = false;
+    updateConnectButtonLabel();
+  }
+}
+
+async function loadSpaceText(spaceId) {
+  const trimmed = spaceId.trim();
+  if (!trimmed) {
+    return;
+  }
+  try {
+    applyAuthFromInputs({ markDirty: false });
+    disconnectSpace();
+    const response = await fetch(
+      `${REMOTE_BASE}/api/spaces/${encodeURIComponent(trimmed)}`,
+      { headers: authHeaders() }
+    );
+    if (!response.ok) {
+      throw new Error("Unable to load space.");
+    }
+    const text = await response.text();
+    applyEditorValue(text);
+    syncEditorState();
+    closeSpacesModal();
+  } catch {
+    alert("Unable to load space. Check the credentials.");
+  }
+}
+
+async function attemptLogin() {
+  applyAuthFromInputs({ markDirty: false });
+  if (dom.loginError) {
+    dom.loginError.classList.add("hidden");
+  }
+  try {
+    await fetchSpaces();
+    collab.isAuthenticated = true;
+    updateConnectButtonLabel();
+    closeLoginModal();
+    openSpacesModal();
+  } catch (error) {
+    collab.isAuthenticated = false;
+    updateConnectButtonLabel();
+    if (dom.loginError) {
+      const message =
+        error instanceof Error && error.message === "Unable to reach the backend."
+          ? "Backend is not running."
+          : "Invalid credentials.";
+      dom.loginError.textContent = message;
+      dom.loginError.classList.remove("hidden");
+    }
+  }
+}
+
+function logout() {
+  disconnectSpace();
+  collab.isAuthenticated = false;
+  collab.username = "";
+  collab.displayName = "";
+  collab.authToken = AUTH_TOKEN;
+  collab.identity = getCollabIdentity("user");
+  try {
+    localStorage.removeItem("collabAuth");
+  } catch {
+    // Ignore storage failures.
+  }
+  updateConnectButtonLabel();
+  closeSpacesModal();
+  openLoginModal();
+}
+
+async function createSpace(name) {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return;
+  }
+  const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(trimmed)}`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error("Unable to create space.");
+  }
+}
+
+async function deleteSpace(name) {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return;
+  }
+  applyAuthFromInputs({ markDirty: false });
+  if (!confirm(`Remove space "${trimmed}"?`)) {
+    return;
+  }
+  const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(trimmed)}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error("Unable to remove space.");
+  }
+  await loadSpaceList({ showLoading: false });
+}
+
+async function reportPresence(spaceId, remove = false) {
+  if (!spaceId) {
+    return;
+  }
+  const method = remove ? "DELETE" : "POST";
+  fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/presence`, {
+    method,
+    headers: authHeaders(),
+  }).catch(() => {});
+}
+
+function startPresenceHeartbeat(spaceId) {
+  if (collab.presenceTimer) {
+    clearInterval(collab.presenceTimer);
+  }
+  reportPresence(spaceId);
+  collab.presenceTimer = setInterval(() => {
+    reportPresence(spaceId);
+  }, 15000);
+}
+
+function stopPresenceHeartbeat(spaceId) {
+  if (collab.presenceTimer) {
+    clearInterval(collab.presenceTimer);
+    collab.presenceTimer = null;
+  }
+  if (spaceId) {
+    reportPresence(spaceId, true);
+  }
+}
+
+function openLoginModal() {
+  if (!dom.loginModal) {
+    return;
+  }
+  if (dom.loginError) {
+    dom.loginError.classList.add("hidden");
+  }
+  initializeAuthInputs();
+  dom.loginModal.classList.remove("hidden");
+}
+
+function closeLoginModal() {
+  if (!dom.loginModal) {
+    return;
+  }
+  dom.loginModal.classList.add("hidden");
+}
+
+function openSpacesModal() {
+  if (!dom.spacesModal) {
+    return;
+  }
+  if (!collab.isAuthenticated) {
+    openLoginModal();
+    return;
+  }
+  closeLoginModal();
+  dom.spacesModal.classList.remove("hidden");
+  applyAuthFromInputs({ markDirty: false });
+  collab.lastSpaceSnapshot = "";
+  loadSpaceList({ showLoading: true });
+  if (collab.spacePoller) {
+    clearInterval(collab.spacePoller);
+  }
+  collab.spacePoller = setInterval(() => {
+    loadSpaceList({ showLoading: false });
+  }, 8000);
+}
+
+function closeSpacesModal() {
+  if (!dom.spacesModal) {
+    return;
+  }
+  dom.spacesModal.classList.add("hidden");
+  if (collab.spacePoller) {
+    clearInterval(collab.spacePoller);
+    collab.spacePoller = null;
+  }
+}
+
+function updateConnectButtonLabel() {
+  if (!dom.connectButton) {
+    return;
+  }
+  if (collab.spaceId || collab.isAuthenticated) {
+    setButtonIcon(dom.connectButton, "fa-right-left");
+    dom.connectButton.title = "Switch space";
+    dom.connectButton.setAttribute("aria-label", "Switch space");
+  } else {
+    setButtonIcon(dom.connectButton, "fa-plug");
+    dom.connectButton.title = "Connect";
+    dom.connectButton.setAttribute("aria-label", "Connect");
+  }
+  updateBoardConnectionLabel();
+}
+
+function disconnectSpace() {
+  stopPresenceHeartbeat(collab.spaceId);
+  stopIdleWatch();
+  if (collab.binding?.destroy) {
+    collab.binding.destroy();
+  }
+  if (collab.provider) {
+    collab.provider.destroy();
+  }
+  if (collab.ydoc) {
+    collab.ydoc.destroy();
+  }
+  if (collab.saveTimer) {
+    clearTimeout(collab.saveTimer);
+  }
+  collab.spaceId = null;
+  collab.provider = null;
+  collab.ydoc = null;
+  collab.ytext = null;
+  collab.binding = null;
+  collab.bindingOptions = null;
+  collab.saveTimer = null;
+  collab.presenceTimer = null;
+  collab.synced = false;
+  collab.lastActivityAt = 0;
+  collab.connectionStatus = "disconnected";
+  updateConnectButtonLabel();
+  updateBoardConnectionLabel();
+}
+
+async function hydrateFromRemote(spaceId, ytext) {
+  try {
+    const response = await fetch(`${REMOTE_BASE}/api/spaces/${spaceId}`, {
+      headers: authHeaders(),
+    });
+    if (!response.ok) {
+      return;
+    }
+    const content = await response.text();
+    const current = ytext.toString();
+    if (!current && content) {
+      ytext.insert(0, content);
+      return;
+    }
+    if (current && current !== content) {
+      scheduleRemoteSave();
+    }
+  } catch {
+    // Ignore hydration errors.
+  }
+}
+
+function scheduleRemoteSave() {
+  if (!collab.spaceId) {
+    return;
+  }
+  if (collab.saveTimer) {
+    clearTimeout(collab.saveTimer);
+  }
+  collab.saveTimer = setTimeout(() => {
+    const body = dom.editor.value;
+    fetch(`${REMOTE_BASE}/api/spaces/${collab.spaceId}`, {
+      method: "PUT",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "text/plain",
+      },
+      body,
+    })
+      .then((response) => {
+        if (response.ok) {
+          return;
+        }
+        if (response.status === 401) {
+          setConnectionStatus("auth-failed");
+        } else if (response.status === 403) {
+          setConnectionStatus("read-only");
+        } else {
+          setConnectionStatus("disconnected");
+        }
+      })
+      .catch(() => {
+        if (!navigator.onLine) {
+          setConnectionStatus("offline");
+        } else {
+          setConnectionStatus("disconnected");
+        }
+      });
+  }, 600);
+}
+
+function scheduleCollabSync() {
+  if (collab.syncScheduled) {
+    return;
+  }
+  collab.syncScheduled = true;
+  requestAnimationFrame(() => {
+    collab.syncScheduled = false;
+    syncEditorState();
+  });
+}
+
+async function connectToSpace(spaceId) {
+  if (!spaceId || !dom.editor) {
+    return;
+  }
+  applyAuthFromInputs({ markDirty: false });
+  closeSpacesModal();
+  const { Y, WebsocketProvider, TextAreaBinding } = await loadCollabModules();
+  if (!TextAreaBinding) {
+    return;
+  }
+  disconnectSpace();
+
+  const ydoc = new Y.Doc();
+  collab.synced = false;
+  setConnectionStatus("connecting");
+  startIdleWatch();
+  const provider = new WebsocketProvider(WS_BASE, spaceId, ydoc, {
+    params: { user: collab.username || "user", pass: collab.authToken || AUTH_TOKEN },
+  });
+  const identity =
+    collab.identity ||
+    getCollabIdentity(collab.displayName || collab.username || "user");
+  const ytext = ydoc.getText("content");
+  const bindingOptions = {
+    awareness: provider.awareness,
+    clientName: identity.name,
+    color: identity.color,
+  };
+  const binding = new TextAreaBinding(ytext, dom.editor, bindingOptions);
+  provider.awareness.setLocalStateField(dom.editor.id, {
+    user: provider.awareness.clientID,
+    selection: false,
+    name: identity.name,
+    color: identity.color,
+  });
+
+  collab.spaceId = spaceId;
+  collab.provider = provider;
+  collab.ydoc = ydoc;
+  collab.ytext = ytext;
+  collab.binding = binding;
+  collab.bindingOptions = bindingOptions;
+  updateConnectButtonLabel();
+  updateBoardConnectionLabel();
+  startPresenceHeartbeat(spaceId);
+
+  provider.on("status", ({ status }) => {
+    if (!navigator.onLine) {
+      setConnectionStatus("offline");
+      return;
+    }
+    if (status === "connected") {
+      setConnectionStatus(collab.synced ? "connected" : "syncing");
+    } else if (status === "connecting") {
+      setConnectionStatus("connecting");
+    } else {
+      setConnectionStatus("disconnected");
+    }
+  });
+
+  provider.on("sync", (synced) => {
+    collab.synced = synced;
+    if (synced) {
+      markActivity();
+      if (!["offline", "auth-failed", "read-only"].includes(collab.connectionStatus)) {
+        setConnectionStatus("connected");
+      }
+    } else if (collab.connectionStatus === "connecting") {
+      setConnectionStatus("syncing");
+    }
+    if (synced) {
+      hydrateFromRemote(spaceId, ytext);
+    }
+  });
+
+  ytext.observe(() => {
+    markActivity();
+    scheduleRemoteSave();
+    scheduleCollabSync();
+  });
+}
+
 function matchesFilters(task) {
   if (!filtersActive()) {
     return true;
@@ -492,7 +1317,7 @@ function setTheme(theme) {
   document.documentElement.dataset.theme = resolved;
   localStorage.setItem("theme", resolved);
   if (dom.themeButton) {
-    dom.themeButton.textContent = resolved === "dark" ? "☀" : "☾";
+    setButtonIcon(dom.themeButton, resolved === "dark" ? "fa-sun" : "fa-moon");
   }
 }
 
@@ -513,6 +1338,134 @@ if (dom.fullscreenButton) {
       return;
     }
     await document.documentElement.requestFullscreen();
+  });
+}
+
+if (dom.connectButton) {
+  dom.connectButton.addEventListener("click", () => {
+    if (collab.isAuthenticated) {
+      openSpacesModal();
+    } else {
+      openLoginModal();
+    }
+  });
+}
+
+if (dom.loginSubmit) {
+  dom.loginSubmit.addEventListener("click", () => {
+    attemptLogin();
+  });
+}
+
+if (dom.logoutButton) {
+  dom.logoutButton.addEventListener("click", () => {
+    logout();
+  });
+}
+
+if (dom.loginModalClose) {
+  dom.loginModalClose.addEventListener("click", () => {
+    closeLoginModal();
+  });
+}
+
+if (dom.spacesModalClose) {
+  dom.spacesModalClose.addEventListener("click", () => {
+    closeSpacesModal();
+  });
+}
+
+if (dom.loginModal) {
+  dom.loginModal.addEventListener("click", (event) => {
+    if (event.target === dom.loginModal) {
+      closeLoginModal();
+    }
+  });
+  dom.loginModal.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      attemptLogin();
+    }
+  });
+}
+
+if (dom.spacesModal) {
+  dom.spacesModal.addEventListener("click", (event) => {
+    if (event.target === dom.spacesModal) {
+      closeSpacesModal();
+    }
+  });
+}
+
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeLoginModal();
+    closeSpacesModal();
+  }
+});
+
+window.addEventListener("offline", () => {
+  if (collab.spaceId) {
+    setConnectionStatus("offline");
+  }
+});
+
+window.addEventListener("online", () => {
+  if (collab.spaceId) {
+    setConnectionStatus(collab.synced ? "connected" : "connecting");
+  }
+});
+
+window.addEventListener("beforeunload", () => {
+  if (collab.spaceId) {
+    reportPresence(collab.spaceId, true);
+  }
+});
+
+if (dom.spaceCreate && dom.spaceNew) {
+  dom.spaceCreate.addEventListener("click", async () => {
+    try {
+      applyAuthFromInputs({ markDirty: false });
+      await createSpace(dom.spaceNew.value);
+      dom.spaceNew.value = "";
+      await loadSpaceList({ showLoading: false });
+    } catch (error) {
+      alert("Unable to create space. Check the name and credentials.");
+    }
+  });
+  dom.spaceNew.addEventListener("keydown", async (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      try {
+        applyAuthFromInputs({ markDirty: false });
+        await createSpace(dom.spaceNew.value);
+        dom.spaceNew.value = "";
+        await loadSpaceList({ showLoading: false });
+      } catch (error) {
+        alert("Unable to create space. Check the name and credentials.");
+      }
+    }
+  });
+}
+
+if (dom.loginUsername) {
+  dom.loginUsername.addEventListener("input", () => {
+    applyAuthFromInputs();
+    dom.loginError?.classList.add("hidden");
+  });
+}
+
+if (dom.loginDisplayName) {
+  dom.loginDisplayName.addEventListener("input", () => {
+    applyAuthFromInputs();
+    dom.loginError?.classList.add("hidden");
+  });
+}
+
+if (dom.loginPassword) {
+  dom.loginPassword.addEventListener("input", () => {
+    applyAuthFromInputs();
+    dom.loginError?.classList.add("hidden");
   });
 }
 
@@ -613,4 +1566,5 @@ window.addEventListener("mouseup", () => {
 
 window.addEventListener("resize", scheduleGraphRender);
 
+updateConnectButtonLabel();
 sync();

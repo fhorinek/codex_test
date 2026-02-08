@@ -53,9 +53,113 @@ body {
   padding: 16px;
 }
 
+.board-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
 .editor-toolbar h1 {
   margin: 0;
   font-size: 1.3rem;
+}
+
+.board-connection {
+  font-size: 12px;
+  color: #6a6f8c;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.board-connection.hidden {
+  display: none;
+}
+
+.connection-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.connection-status::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.connection-status.connected {
+  color: #1c8b55;
+  background: rgba(28, 139, 85, 0.12);
+  border-color: rgba(28, 139, 85, 0.35);
+}
+
+.connection-status.connecting {
+  color: #b7791f;
+  background: rgba(183, 121, 31, 0.12);
+  border-color: rgba(183, 121, 31, 0.35);
+  animation: status-pulse 1.4s ease-in-out infinite;
+}
+
+.connection-status.disconnected {
+  color: #c53030;
+  background: rgba(197, 48, 48, 0.12);
+  border-color: rgba(197, 48, 48, 0.35);
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+
+.connection-status.syncing {
+  color: #2563eb;
+  background: rgba(37, 99, 235, 0.12);
+  border-color: rgba(37, 99, 235, 0.35);
+  animation: status-pulse 1.4s ease-in-out infinite;
+}
+
+.connection-status.auth-failed {
+  color: #b4232d;
+  background: rgba(180, 35, 45, 0.12);
+  border-color: rgba(180, 35, 45, 0.35);
+  animation: status-pulse 1.2s ease-in-out infinite;
+}
+
+.connection-status.read-only {
+  color: #6b4ea3;
+  background: rgba(107, 78, 163, 0.12);
+  border-color: rgba(107, 78, 163, 0.35);
+}
+
+.connection-status.offline {
+  color: #6b7280;
+  background: rgba(107, 114, 128, 0.12);
+  border-color: rgba(107, 114, 128, 0.35);
+  animation: status-pulse 1.4s ease-in-out infinite;
+}
+
+.connection-status.idle {
+  color: #64748b;
+  background: rgba(100, 116, 139, 0.12);
+  border-color: rgba(100, 116, 139, 0.35);
+}
+
+@keyframes status-pulse {
+  0% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.65;
+  }
 }
 
 .toolbar-actions {
@@ -93,6 +197,16 @@ body {
 .toolbar-icon:hover {
   border-color: #8fa4ff;
   background: #f6f7ff;
+}
+
+.nameTag {
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  line-height: 1.2;
+  color: #ffffff;
+  white-space: nowrap;
+  box-shadow: 0 6px 14px rgba(17, 24, 39, 0.18);
 }
 
 .editor-wrapper {
@@ -351,6 +465,182 @@ body {
 
 .toolbar-button {
   margin-left: 0;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 14, 26, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+}
+
+.modal.hidden {
+  display: none;
+}
+
+.modal-card {
+  width: min(420px, calc(100% - 32px));
+  background: #ffffff;
+  border-radius: 16px;
+  border: 1px solid #d6d9e6;
+  box-shadow: 0 20px 40px rgba(17, 24, 39, 0.2);
+  padding: 16px;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 16px;
+  color: #2f3355;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal-help {
+  font-size: 12px;
+  color: #6a6f8c;
+}
+
+.modal-error {
+  font-size: 12px;
+  color: #b4232d;
+}
+
+.modal-error.hidden {
+  display: none;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.modal-help.error {
+  color: #b4232d;
+}
+
+.modal-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #2f3355;
+}
+
+.modal-field input {
+  border-radius: 10px;
+  border: 1px solid #d6d9e6;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #f7f8ff;
+  color: #2f3355;
+}
+
+.space-create {
+  display: flex;
+  gap: 8px;
+}
+
+.space-create input {
+  flex: 1;
+  border-radius: 10px;
+  border: 1px solid #d6d9e6;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #f7f8ff;
+  color: #2f3355;
+}
+
+.space-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.space-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid #d6d9e6;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #f7f8ff;
+  font-size: 13px;
+}
+
+.space-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.space-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.space-users {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.space-user-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid #d6d9e6;
+  background: #ffffff;
+  font-size: 12px;
+  color: #2f3355;
+}
+
+.space-users-empty {
+  font-size: 12px;
+  color: #6a6f8c;
+}
+
+.space-actions button {
+  margin: 0;
+}
+
+.space-actions .danger {
+  border-color: #f0b4b4;
+  color: #9b2631;
+}
+
+.space-actions .danger:hover {
+  border-color: #e88787;
+  background: #ffecec;
 }
 
 .legend-header {
@@ -628,6 +918,123 @@ html[data-theme="dark"] .minimap-line {
 html[data-theme="dark"] .minimap-viewport {
   fill: rgba(255, 176, 32, 0.1);
   stroke: #ffb020;
+}
+
+html[data-theme="dark"] .modal-card {
+  background: #151a2a;
+  border-color: #2a2e3f;
+  box-shadow: 0 20px 40px rgba(3, 6, 20, 0.6);
+}
+
+html[data-theme="dark"] .modal-header h2 {
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .modal-help {
+  color: #9aa2c8;
+}
+
+html[data-theme="dark"] .modal-error {
+  color: #ffb3b8;
+}
+
+html[data-theme="dark"] .modal-help.error {
+  color: #ffb3b8;
+}
+
+html[data-theme="dark"] .board-connection {
+  color: #9aa2c8;
+}
+
+html[data-theme="dark"] .connection-status.connected {
+  color: #6fe3a5;
+  background: rgba(16, 86, 58, 0.35);
+  border-color: rgba(32, 123, 85, 0.6);
+}
+
+html[data-theme="dark"] .connection-status.connecting {
+  color: #f6c163;
+  background: rgba(96, 68, 20, 0.35);
+  border-color: rgba(144, 104, 32, 0.6);
+}
+
+html[data-theme="dark"] .connection-status.disconnected {
+  color: #ff9a9a;
+  background: rgba(108, 32, 40, 0.35);
+  border-color: rgba(165, 60, 70, 0.6);
+}
+
+html[data-theme="dark"] .connection-status.syncing {
+  color: #8cb4ff;
+  background: rgba(26, 52, 112, 0.35);
+  border-color: rgba(54, 88, 168, 0.6);
+}
+
+html[data-theme="dark"] .connection-status.auth-failed {
+  color: #ff9aa6;
+  background: rgba(122, 32, 46, 0.35);
+  border-color: rgba(180, 60, 84, 0.6);
+}
+
+html[data-theme="dark"] .connection-status.read-only {
+  color: #c8a6ff;
+  background: rgba(70, 46, 120, 0.35);
+  border-color: rgba(105, 70, 170, 0.6);
+}
+
+html[data-theme="dark"] .connection-status.offline {
+  color: #b6bcc8;
+  background: rgba(60, 66, 80, 0.35);
+  border-color: rgba(90, 98, 120, 0.6);
+}
+
+html[data-theme="dark"] .connection-status.idle {
+  color: #a4b0c4;
+  background: rgba(54, 62, 78, 0.35);
+  border-color: rgba(90, 102, 128, 0.6);
+}
+
+html[data-theme="dark"] .modal-field {
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .modal-field input {
+  background: #1b2236;
+  border-color: #2a2e3f;
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .space-create input {
+  background: #1b2236;
+  border-color: #2a2e3f;
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .space-item {
+  border-color: #2a2e3f;
+  background: #101624;
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .space-users {
+  color: #9aa2c8;
+}
+
+html[data-theme="dark"] .space-user-pill {
+  border-color: #2a2e3f;
+  background: #151a2a;
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .space-actions .danger {
+  border-color: #5a2a32;
+  color: #f1a3a3;
+  background: #1b1418;
+}
+
+html[data-theme="dark"] .space-actions .danger:hover {
+  border-color: #7d3945;
+  background: #27181f;
 }
 
 html[data-theme="dark"] .kanban-board {

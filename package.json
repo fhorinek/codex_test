@@ -1,0 +1,19 @@
+{
+  "name": "codex_test",
+  "version": "1.0.0",
+  "description": "Task Script Board turns a simple text script into an interactive graph and kanban board. Edit the text on the left and watch the board update live on the right.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.1.0",
+    "y-quill": "^1.0.0",
+    "y-textarea": "^1.0.2",
+    "y-websocket": "^3.0.0",
+    "yjs": "^13.6.29"
+  }
+}

@@ -38,6 +38,7 @@ Formatting
 Toolbar & files
 - Toolbar shows board name plus undo, redo, load, save, format, theme, fullscreen.
 - Load opens a `.txt` file from disk; save downloads the current script as `.txt`.
+- Connect button opens a modal listing remote spaces to join.
 
 Graph view
 - Tasks render as cards connected by curved lines.
@@ -68,6 +69,12 @@ Filters & search
 - When filters are active, connecting lines also dim if either endpoint does not match.
 - Search filters/highlights tasks by name, description, tags, or people with toggleable scope.
 - Search highlights matching tasks in the kanban board.
+
+Collaboration
+- Uses Yjs with a websocket server mounted at `/ws`.
+- REST backend at `/api` lists available spaces and saves text content.
+- Authentication is Basic auth using credentials in `backend/users.txt`.
+- Each space maps to a single `.txt` document on the backend.
 
 Misc
 - Clear Highlights resets tag/person filters and search input.

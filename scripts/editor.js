@@ -2,6 +2,7 @@ import { escapeHtml } from "./task.js";
 
 export function createEditor({ state, dom, onSync, onSelectTask }) {
   const { editor, highlightLayer, suggestions, lineNumbers } = dom;
+  const triggerChars = new Set(["#", "@", "{", "!"]);
 
   function closeSuggestions() {
     suggestions.classList.add("hidden");
@@ -119,9 +120,9 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
         : tokenValue;
     const start = canAppend ? cursor : cursor - partial.length;
     editor.setRangeText(insert, start, cursor, "end");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
     editor.focus();
     closeSuggestions();
-    onSync();
   }
 
   function setActiveSuggestion() {
