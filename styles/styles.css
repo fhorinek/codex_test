@@ -1,5 +1,5 @@
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
   font-family: "Inter", system-ui, sans-serif;
   background: #f5f6fb;
   color: #1d1f2b;
@@ -11,6 +11,8 @@
 
 body {
   margin: 0;
+  background: #f5f6fb;
+  color: #1d1f2b;
 }
 
 .app {
@@ -23,7 +25,7 @@ body {
   display: flex;
   flex-direction: column;
   border-right: 1px solid #d6d9e6;
-  padding: 24px;
+  padding: 0;
   background: #ffffff;
   overflow: hidden;
 }
@@ -39,21 +41,65 @@ body {
   background: #b9c0ff;
 }
 
-.editor-panel header h1 {
-  margin: 0 0 6px;
-  font-size: 1.5rem;
+.editor-panel header {
+  border-bottom: 1px solid #edf0fb;
 }
 
-.editor-panel header p {
-  margin: 0 0 16px;
-  color: #505675;
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px;
+}
+
+.editor-toolbar h1 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.toolbar-icon {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0;
+  border: 1px solid #d6d9e6;
+  margin-left: -1px;
+  background: #ffffff;
+  color: #2f3355;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.toolbar-actions .toolbar-icon:first-of-type {
+  margin-left: 0;
+  border-top-left-radius: 10px;
+  border-bottom-left-radius: 10px;
+}
+
+.toolbar-actions .toolbar-icon:last-of-type {
+  border-top-right-radius: 10px;
+  border-bottom-right-radius: 10px;
+}
+
+.toolbar-icon:hover {
+  border-color: #8fa4ff;
+  background: #f6f7ff;
 }
 
 .editor-wrapper {
   position: relative;
   flex: 1;
   border: 1px solid #d6d9e6;
-  border-radius: 12px;
+  border-radius: 0;
   background: #fdfdff;
   overflow: hidden;
 }
@@ -139,15 +185,6 @@ body {
   background: #fff3c4;
 }
 
-.editor-actions {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  margin-top: 12px;
-  gap: 12px;
-}
-
-.editor-actions button,
 .toolbar-button {
   background: #1d1f2b;
   color: #ffffff;
@@ -155,11 +192,6 @@ body {
   padding: 8px 14px;
   border-radius: 8px;
   cursor: pointer;
-}
-
-.editor-actions .hint {
-  font-size: 12px;
-  color: #6a708a;
 }
 
 .suggestions {
@@ -214,7 +246,7 @@ body {
   grid-auto-columns: minmax(180px, 1fr);
   gap: 12px;
   padding: 16px;
-  border-bottom: 1px solid #d6d9e6;
+  border-top: 1px solid #d6d9e6;
   background: #ffffff;
   overflow-x: auto;
   height: var(--kanban-height, 180px);
@@ -238,6 +270,13 @@ body {
   flex-direction: column;
   gap: 8px;
   min-width: 180px;
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kanban-column.drag-over {
+  background: rgba(47, 84, 235, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(47, 84, 235, 0.35);
+  border-radius: 12px;
 }
 
 .kanban-column h3 {
@@ -262,9 +301,38 @@ body {
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: transform 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.kanban-card-title {
+  font-weight: 600;
+  color: #2f3355;
+}
+
+.kanban-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.kanban-card .pill {
+  cursor: default;
 }
 
 .kanban-card:hover {
+  border-color: #8fa4ff;
+}
+
+.kanban-card.dragging {
+  opacity: 0;
+  box-shadow: none;
+}
+
+.kanban-card.drag-ghost {
+  box-shadow: 0 10px 18px rgba(17, 24, 39, 0.2);
   border-color: #8fa4ff;
 }
 
@@ -279,23 +347,6 @@ body {
 
 .editor-panel header {
   position: relative;
-}
-
-.editor-info {
-  position: absolute;
-  top: 0;
-  right: 0;
-}
-
-.info-button {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  border: 1px solid #c9cce0;
-  background: #ffffff;
-  color: #2f54eb;
-  font-size: 16px;
-  cursor: pointer;
 }
 
 .toolbar-button {
@@ -328,15 +379,31 @@ body {
   padding: 8px 10px;
   border-radius: 10px;
   border: 1px solid #c9cce0;
+  background: #ffffff;
+  color: #1d1f2b;
 }
 
 .search-options {
+  width: 100%;
   display: flex;
   gap: 12px;
   justify-content: center;
-  margin-top: 8px;
+  margin-top: 0;
   font-size: 12px;
   color: #4c526c;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transform: translateY(-6px);
+  transform-origin: top;
+  transition: max-height 0.2s ease, opacity 0.2s ease, transform 0.2s ease, margin-top 0.2s ease;
+}
+
+.graph-search:focus-within .search-options {
+  max-height: 40px;
+  opacity: 1;
+  transform: translateY(0);
+  margin-top: 8px;
 }
 
 .graph-footer {
@@ -357,7 +424,7 @@ body {
   z-index: 2;
 }
 
-.legend > div {
+.legend>div {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
@@ -371,51 +438,6 @@ body {
   width: 100%;
 }
 
-.help-modal {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  justify-content: flex-end;
-  align-items: flex-start;
-  padding: 24px;
-  background: rgba(29, 31, 43, 0.2);
-  z-index: 4;
-}
-
-.help-modal.hidden {
-  display: none;
-}
-
-.help-card {
-  background: #ffffff;
-  border-radius: 12px;
-  padding: 16px;
-  width: 320px;
-  box-shadow: 0 16px 32px rgba(17, 24, 39, 0.2);
-}
-
-.help-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.help-close {
-  border: none;
-  background: transparent;
-  font-size: 20px;
-  cursor: pointer;
-}
-
-.help-example {
-  background: #f6f7ff;
-  border-radius: 8px;
-  padding: 8px;
-  font-size: 12px;
-  white-space: pre-wrap;
-  margin: 12px 0 0;
-}
 
 .graph-toolbar input[type="text"] {
   flex: 1;
@@ -451,7 +473,7 @@ body {
 
 .task-node {
   position: absolute;
-  width: 220px;
+  width: 308px;
   padding: 12px;
   border-radius: 12px;
   background: #f3f4ff;
@@ -461,9 +483,7 @@ body {
   transition:
     transform 0.2s ease,
     opacity 0.2s ease,
-    filter 0.2s ease,
-    left 0.25s ease,
-    top 0.25s ease;
+    filter 0.2s ease;
 }
 
 .task-node.dimmed {
@@ -493,6 +513,8 @@ body {
   color: #2f54eb;
   border-color: #2f54eb;
   font-weight: 600;
+  font-size: 12px;
+  padding: 3px 12px;
 }
 
 .task-node .meta {
@@ -510,6 +532,182 @@ body {
   padding: 2px 8px;
   font-size: 11px;
   cursor: pointer;
+  margin: 2px 0;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html[data-theme="dark"] body {
+  background: #0f111a;
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .editor-panel {
+  background: #121524;
+  border-right-color: #2a2e3f;
+}
+
+html[data-theme="dark"] .editor-panel header {
+  border-bottom-color: #22283a;
+}
+
+html[data-theme="dark"] .editor-wrapper {
+  background: #0f1320;
+  border-color: #2a2e3f;
+}
+
+html[data-theme="dark"] .graph-panel {
+  background: #0f111a;
+}
+
+html[data-theme="dark"] .graph-canvas {
+  background: #0f111a;
+}
+
+html[data-theme="dark"] .kanban-board {
+  background: #101420;
+  border-top-color: #2a2e3f;
+}
+
+html[data-theme="dark"] .kanban-card {
+  background: #151a2a;
+  border-color: #2a2e3f;
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .kanban-card-title {
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .kanban-card.dragging {
+  opacity: 0;
+  box-shadow: none;
+}
+
+html[data-theme="dark"] .kanban-card.drag-ghost {
+  border-color: #3b425a;
+  box-shadow: 0 12px 22px rgba(3, 6, 20, 0.5);
+}
+
+html[data-theme="dark"] .kanban-column.drag-over {
+  background: rgba(143, 164, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(143, 164, 255, 0.3);
+}
+
+html[data-theme="dark"] .task-node {
+  background: #151a2a;
+  border-color: #2a2e3f;
+  box-shadow: 0 12px 24px rgba(3, 6, 20, 0.4);
+}
+
+html[data-theme="dark"] .task-node.selected {
+  border-color: #8fa4ff;
+}
+
+html[data-theme="dark"] .graph-search {
+  background: #151a2a;
+  border-color: #2a2e3f;
+  box-shadow: 0 10px 24px rgba(3, 6, 20, 0.5);
+}
+
+html[data-theme="dark"] .graph-search input[type="text"] {
+  background: #0f1320;
+  border-color: #2a2e3f;
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] #task-editor {
+  caret-color: #e6e8f2;
+}
+
+html[data-theme="dark"] .toolbar-icon {
+  background: #151a2a;
+  border-color: #2a2e3f;
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .toolbar-icon:hover {
+  background: #1b2234;
+  border-color: #3b425a;
+}
+
+html[data-theme="dark"] .pill {
+  background: #0f1320;
+  border-color: #2a2e3f;
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .pill.active,
+html[data-theme="dark"] .legend .pill.active {
+  background: #8fa4ff;
+  color: #0f1320;
+  border-color: #8fa4ff;
+}
+
+html[data-theme="dark"] .suggestions {
+  background: #151a2a;
+  border-color: #2a2e3f;
+}
+
+html[data-theme="dark"] .suggestions button:hover {
+  background: #1b2234;
+}
+
+html[data-theme="dark"] .suggestions button.active {
+  background: #263153;
+}
+
+html[data-theme="dark"] .divider,
+html[data-theme="dark"] .kanban-divider {
+  background: #1b2234;
+}
+
+html[data-theme="dark"] .divider:hover,
+html[data-theme="dark"] .divider.dragging,
+html[data-theme="dark"] .kanban-divider:hover,
+html[data-theme="dark"] .kanban-divider.dragging {
+  background: #2a3352;
+}
+
+html[data-theme="dark"] .line-numbers {
+  color: #6b738f;
+  border-right-color: #2a2e3f;
+  background: #0f1320;
+}
+
+html[data-theme="dark"] .highlight-task {
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .highlight-subtask {
+  color: #c7d2ff;
+}
+
+html[data-theme="dark"] .highlight-tags {
+  color: #c89bff;
+}
+
+html[data-theme="dark"] .highlight-people {
+  color: #6fe3b6;
+}
+
+html[data-theme="dark"] .highlight-state {
+  color: #9bb2ff;
+}
+
+html[data-theme="dark"] .highlight-invalid-state {
+  color: #ff7a7a;
+  text-decoration-color: #ff7a7a;
+}
+
+html[data-theme="dark"] .highlight-description {
+  color: #b6bdd6;
+}
+
+html[data-theme="dark"] .highlight-line.active {
+  background: #1d2437;
 }
 
 .pill.inline-pill {
@@ -548,6 +746,61 @@ body {
   padding-left: 16px;
 }
 
+.task-node .description .checkbox-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+}
+
+.task-node .description input[type="checkbox"] {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid #c9cce0;
+  border-radius: 4px;
+  background: #ffffff;
+  display: inline-grid;
+  place-content: center;
+}
+
+.task-node .description input[type="checkbox"]::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: #2f54eb;
+  transform: scale(0);
+  transition: transform 0.12s ease;
+}
+
+.task-node .description input[type="checkbox"]:checked::before {
+  transform: scale(1);
+}
+
+html[data-theme="dark"] .task-node .description input[type="checkbox"] {
+  border-color: #3b425a;
+  background: #0f1320;
+}
+
+html[data-theme="dark"] .task-node .description input[type="checkbox"]::before {
+  background: #8fa4ff;
+}
+
+html[data-theme="dark"] .task-node .description th,
+html[data-theme="dark"] .task-node .description td {
+  border-color: #2b3552;
+}
+
+html[data-theme="dark"] .task-node .description thead th {
+  background: #1b2340;
+  color: #dbe3ff;
+}
+
+html[data-theme="dark"] .task-node .description tbody tr:nth-child(odd) td {
+  background: #13192b;
+}
+
 .task-node .description table {
   width: 100%;
   border-collapse: collapse;
@@ -560,6 +813,17 @@ body {
   border: 1px solid #cfd5f0;
   padding: 2px 4px;
   text-align: left;
+}
+
+.task-node .description thead th {
+  background: #e7ebff;
+  color: #2b335a;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+
+.task-node .description tbody tr:nth-child(odd) td {
+  background: #f7f9ff;
 }
 
 .task-node .description img {
@@ -583,10 +847,24 @@ body {
 
 .collapse-toggle {
   display: inline-flex;
+  justify-content: flex-end;
+  width: 100%;
   margin-top: 6px;
   font-size: 11px;
   color: #2f54eb;
   cursor: pointer;
+  text-align: right;
+  gap: 6px;
+}
+
+.collapse-toggle::before {
+  content: "+";
+  font-size: 12px;
+  line-height: 1;
+}
+
+.task-node.collapsed .collapse-toggle::before {
+  content: "–";
 }
 
 
@@ -604,6 +882,7 @@ body {
 .search-highlight {
   outline: 2px solid #ffb020;
 }
+
 .line-numbers {
   position: absolute;
   top: 0;

@@ -5,6 +5,48 @@ export function escapeHtml(value) {
     .replace(/>/g, "&gt;");
 }
 
+export function colorFromString(value) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) | 0;
+  }
+  const hue = Math.abs(hash) % 360;
+  return hslToHex(hue, 60, 52);
+}
+
+function hslToHex(hue, saturation, lightness) {
+  const s = saturation / 100;
+  const l = lightness / 100;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const h = hue / 60;
+  const x = c * (1 - Math.abs((h % 2) - 1));
+  let r = 0;
+  let g = 0;
+  let b = 0;
+  if (h >= 0 && h < 1) {
+    r = c;
+    g = x;
+  } else if (h < 2) {
+    r = x;
+    g = c;
+  } else if (h < 3) {
+    g = c;
+    b = x;
+  } else if (h < 4) {
+    g = x;
+    b = c;
+  } else if (h < 5) {
+    r = x;
+    b = c;
+  } else {
+    r = c;
+    b = x;
+  }
+  const m = l - c / 2;
+  const toHex = (channel) => Math.round((channel + m) * 255).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
 export function applyInlineMarkdown(text) {
   let value = text;
   value = value.replace(
@@ -32,8 +74,9 @@ export function applyInlineMarkdown(text) {
   return value;
 }
 
-export function renderMarkdown(text) {
+export function renderMarkdown(text, options = {}) {
   const lines = escapeHtml(text).split("\n");
+  const lineIndexes = Array.isArray(options.lineIndexes) ? options.lineIndexes : [];
   let html = "";
   let inList = false;
   let inTable = false;
@@ -81,6 +124,9 @@ export function renderMarkdown(text) {
       if (!trimmed.includes("|") || trimmed === "") {
         closeTable();
       } else {
+        if (/^\|?\s*[-:]+/.test(trimmed)) {
+          return;
+        }
         const cells = toCells(line);
         if (cells.length) {
           html += "<tr>";
@@ -93,19 +139,23 @@ export function renderMarkdown(text) {
       }
     }
 
-    const checkboxMatch = trimmed.match(/^[-*]\s+\[([ xX])\]\s+(.*)/);
+    const checkboxMatch = trimmed.match(/^\[([ xX])\]\s+(.*)/);
     const listMatch = trimmed.match(/^[-*]\s+(.*)/);
 
     if (checkboxMatch || listMatch) {
       closeTable();
-      if (!inList) {
-        html += "<ul>";
-        inList = true;
-      }
       if (checkboxMatch) {
+        closeList();
         const checked = checkboxMatch[1].toLowerCase() === "x";
-        html += `<li><input type="checkbox" disabled ${checked ? "checked" : ""} /> ${applyInlineMarkdown(checkboxMatch[2])}</li>`;
+        const lineIndex = Number.isFinite(lineIndexes[index])
+          ? ` data-line="${lineIndexes[index]}"`
+          : "";
+        html += `<div class="checkbox-line" data-line="${lineIndexes[index] ?? ""}"><input type="checkbox"${lineIndex} ${checked ? "checked" : ""} /> ${applyInlineMarkdown(checkboxMatch[2])}</div>`;
       } else if (listMatch) {
+        if (!inList) {
+          html += "<ul>";
+          inList = true;
+        }
         html += `<li>${applyInlineMarkdown(listMatch[1])}</li>`;
       }
       return;
@@ -129,13 +179,18 @@ export function renderMarkdown(text) {
 function parseConfig(lines) {
   const config = {
     boardName: "Task Script",
-    states: [],
+    states: [
+      { key: "todo", name: "TODO", color: "" },
+      { key: "inprogress", name: "In progress", color: "" },
+      { key: "done", name: "Done", color: "" },
+    ],
     people: [],
     tags: [],
   };
   let index = 0;
   const headerLine = lines[index]?.trim();
-  if (headerLine && !headerLine.startsWith("*") && headerLine.endsWith(":")) {
+  let statesOverridden = false;
+  if (headerLine && !headerLine.startsWith("%") && headerLine.endsWith(":")) {
     config.boardName = headerLine.slice(0, -1).trim() || config.boardName;
     index += 1;
   }
@@ -146,20 +201,30 @@ function parseConfig(lines) {
     if (raw.trim() === "") {
       continue;
     }
-    if (/^\s*\*/.test(raw)) {
+    if (/^\s*%/.test(raw)) {
       break;
     }
     const indent = raw.match(/^\s*/)[0].length;
     const trimmed = raw.trim();
     if (indent === 4 && trimmed.endsWith(":")) {
       currentSection = trimmed.slice(0, -1).toLowerCase();
+      if (currentSection === "states" && !statesOverridden) {
+        config.states = [];
+        statesOverridden = true;
+      }
       currentEntry = null;
       continue;
     }
     if (indent === 8 && currentSection) {
       const match = trimmed.match(/^([^\s:]+)\s*:\s*(.*)?$/);
       const key = match ? match[1] : trimmed;
-      const entry = { key, name: key, color: "" };
+      const autoColor =
+        currentSection === "tags" ||
+        currentSection === "people" ||
+        currentSection === "states"
+          ? colorFromString(key)
+          : "";
+      const entry = { key, name: key, color: autoColor };
       if (match && match[2]) {
         entry.name = match[2].trim() || entry.name;
       }
@@ -206,17 +271,17 @@ export function parseTasks(text) {
   config.tags.forEach((tag) => {
     const value = `#${tag.key}`;
     tags.add(value);
-    tagMeta.set(value, tag);
+    tagMeta.set(value, { ...tag, color: tag.color || colorFromString(tag.key) });
   });
   config.people.forEach((person) => {
     const value = `@${person.key}`;
     people.add(value);
-    peopleMeta.set(value, person);
+    peopleMeta.set(value, { ...person, color: person.color || colorFromString(person.key) });
   });
   config.states.forEach((state) => {
     const value = `!${state.key}`;
     states.add(value);
-    stateMeta.set(value, state);
+    stateMeta.set(value, { ...state, color: state.color || colorFromString(state.key) });
   });
 
   lines.forEach((line, index) => {
@@ -225,7 +290,7 @@ export function parseTasks(text) {
     }
     const raw = line;
     const trimmed = raw.trim();
-    const taskMatch = raw.match(/^(\s*)\*\s+(.*)$/);
+    const taskMatch = raw.match(/^(\s*)%\s+(.*)$/);
     if (taskMatch) {
       const indent = taskMatch[1].length;
       const depth = Math.floor(indent / 4);
@@ -239,6 +304,7 @@ export function parseTasks(text) {
         people: [],
         state: null,
         description: [],
+        descriptionLineIndexes: [],
         references: [],
         children: [],
         lineIndex: index,
@@ -263,6 +329,7 @@ export function parseTasks(text) {
       return;
     }
     currentTask.description.push(trimmed);
+    currentTask.descriptionLineIndexes.push(index);
     const tagMatches = trimmed.matchAll(/(^|\s)(#[^\s#@]+)/g);
     for (const match of tagMatches) {
       const tag = match[2];
@@ -270,7 +337,8 @@ export function parseTasks(text) {
         currentTask.tags.push(tag);
         tags.add(tag);
         if (!tagMeta.has(tag)) {
-          tagMeta.set(tag, { key: tag.slice(1), name: tag.slice(1), color: "" });
+          const key = tag.slice(1);
+          tagMeta.set(tag, { key, name: key, color: colorFromString(key) });
         }
       }
     }
@@ -281,7 +349,8 @@ export function parseTasks(text) {
         currentTask.people.push(person);
         people.add(person);
         if (!peopleMeta.has(person)) {
-          peopleMeta.set(person, { key: person.slice(1), name: person.slice(1), color: "" });
+          const key = person.slice(1);
+          peopleMeta.set(person, { key, name: key, color: colorFromString(key) });
         }
       }
     }
@@ -299,7 +368,8 @@ export function parseTasks(text) {
         currentTask.state = stateTag;
         states.add(stateTag);
         if (!stateMeta.has(stateTag)) {
-          stateMeta.set(stateTag, { key: stateTag.slice(1), name: stateTag.slice(1), color: "" });
+          const key = stateTag.slice(1);
+          stateMeta.set(stateTag, { key, name: key, color: colorFromString(key) });
         }
       } else {
         const lineInvalid = invalidStateTags.get(index) || [];

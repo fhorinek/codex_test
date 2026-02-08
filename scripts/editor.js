@@ -4,18 +4,24 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   const { editor, highlightLayer, suggestions, lineNumbers } = dom;
   const triggerChars = new Set(["#", "@", "{", "!"]);
 
+  function closeSuggestions() {
+    suggestions.classList.add("hidden");
+    suggestions.classList.remove("open");
+    suggestions.innerHTML = "";
+  }
+
   function highlightText(lines) {
     updateLineNumbers(lines);
     const highlighted = lines
       .map((line, index) => {
-        const taskMatch = line.match(/^(\s*)\*\s+(.*)$/);
+        const taskMatch = line.match(/^(\s*)%\s+(.*)$/);
         const isActive = state.selectedLine === index;
         const baseClass = isActive ? "highlight-line active" : "highlight-line";
         if (taskMatch) {
           const indent = taskMatch[1];
           const name = taskMatch[2];
           const className = indent.length >= 4 ? "highlight-subtask" : "highlight-task";
-          return `<span class=\"${baseClass} ${className}\">${escapeHtml(indent)}* ${escapeHtml(name)}</span>`;
+          return `<span class=\"${baseClass} ${className}\">${escapeHtml(indent)}% ${escapeHtml(name)}</span>`;
         }
         if (line.trim() !== "") {
           return `<span class=\"${baseClass} highlight-description\">${highlightInlineTokens(
@@ -64,9 +70,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     const before = editor.value.slice(0, cursor);
     const triggerMatch = before.match(/([#@{!])([^\s}]*)$/);
     if (!triggerMatch || (!forceOpen && !suggestions.classList.contains("open"))) {
-      suggestions.classList.add("hidden");
-      suggestions.classList.remove("open");
-      suggestions.innerHTML = "";
+      closeSuggestions();
       return;
     }
     const trigger = triggerMatch[1];
@@ -83,9 +87,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     }
     const filtered = items.filter((item) => item.toLowerCase().includes(partial));
     if (!filtered.length) {
-      suggestions.classList.add("hidden");
-      suggestions.classList.remove("open");
-      suggestions.innerHTML = "";
+      closeSuggestions();
       return;
     }
     suggestions.innerHTML = "";
@@ -107,12 +109,19 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   }
 
   function applySuggestion({ item, trigger, partial, cursor }) {
-    const insert = trigger === "{" ? `${item}}` : item.slice(1);
-    const start = cursor - partial.length;
+    const tokenValue = trigger === "{" ? item : item.slice(1);
+    const lowerToken = tokenValue.toLowerCase();
+    const lowerPartial = partial.toLowerCase();
+    const canAppend = lowerToken.startsWith(lowerPartial);
+    const insert = trigger === "{"
+      ? `${canAppend ? tokenValue.slice(partial.length) : tokenValue}}`
+      : canAppend
+        ? tokenValue.slice(partial.length)
+        : tokenValue;
+    const start = canAppend ? cursor : cursor - partial.length;
     editor.setRangeText(insert, start, cursor, "end");
     editor.focus();
-    suggestions.classList.add("hidden");
-    suggestions.classList.remove("open");
+    closeSuggestions();
     onSync();
   }
 
@@ -126,7 +135,6 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   function positionSuggestions() {
     const cursor = editor.selectionStart;
     const coords = getCaretCoordinates(editor, cursor);
-    const editorRect = editor.getBoundingClientRect();
     const wrapperRect = editor.parentElement.getBoundingClientRect();
     suggestions.style.left = `${coords.left - wrapperRect.left}px`;
     suggestions.style.top = `${coords.top - wrapperRect.top + coords.height + 6}px`;
@@ -153,9 +161,8 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     div.scrollTop = textarea.scrollTop;
     div.scrollLeft = textarea.scrollLeft;
     const rect = span.getBoundingClientRect();
-    const divRect = div.getBoundingClientRect();
-    const top = rect.top - divRect.top + textarea.offsetTop;
-    const left = rect.left - divRect.left + textarea.offsetLeft;
+    const top = rect.top;
+    const left = rect.left;
     const height = rect.height;
     document.body.removeChild(div);
     return { top, left, height };
@@ -165,6 +172,38 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
     state.selectedLine = line;
     highlightText(editor.value.split("\n"));
+    ensureCaretVisible();
+  }
+
+  function ensureCaretVisible() {
+    const cursor = editor.selectionStart;
+    const coords = getCaretCoordinates(editor, cursor);
+    const rect = editor.getBoundingClientRect();
+    const style = window.getComputedStyle(editor);
+    const lineHeight = Number.parseFloat(style.lineHeight) || 18;
+    const padding = Math.max(8, Math.floor(lineHeight * 0.6));
+    const caretTop = coords.top - rect.top;
+    const caretBottom = caretTop + coords.height;
+    let nextScrollTop = editor.scrollTop;
+    if (caretTop < padding) {
+      nextScrollTop = Math.max(0, nextScrollTop - (padding - caretTop));
+    } else if (caretBottom > editor.clientHeight - padding) {
+      nextScrollTop += caretBottom - (editor.clientHeight - padding);
+    }
+    const caretLeft = coords.left - rect.left;
+    const caretRight = caretLeft + 6;
+    let nextScrollLeft = editor.scrollLeft;
+    if (caretLeft < padding) {
+      nextScrollLeft = Math.max(0, nextScrollLeft - (padding - caretLeft));
+    } else if (caretRight > editor.clientWidth - padding) {
+      nextScrollLeft += caretRight - (editor.clientWidth - padding);
+    }
+    if (nextScrollTop !== editor.scrollTop) {
+      editor.scrollTop = nextScrollTop;
+    }
+    if (nextScrollLeft !== editor.scrollLeft) {
+      editor.scrollLeft = nextScrollLeft;
+    }
   }
 
   editor.addEventListener("scroll", () => {
@@ -189,8 +228,7 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     if (suggestions.classList.contains("open")) {
       updateSuggestions({ forceOpen: true });
     } else {
-      suggestions.classList.add("hidden");
-      suggestions.classList.remove("open");
+      closeSuggestions();
     }
   });
 
@@ -198,9 +236,50 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
     updateSelectedLine();
     onSelectTask(line);
+    if (suggestions.classList.contains("open")) {
+      updateSuggestions({ forceOpen: true });
+    }
   });
 
   editor.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && suggestions.classList.contains("open")) {
+      event.preventDefault();
+      closeSuggestions();
+      return;
+    }
+    if (!suggestions.classList.contains("hidden")) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        state.suggestionIndex = Math.min(
+          state.suggestionIndex + 1,
+          state.suggestionItems.length - 1
+        );
+        setActiveSuggestion();
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        state.suggestionIndex = Math.max(state.suggestionIndex - 1, 0);
+        setActiveSuggestion();
+        return;
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault();
+        const cursor = editor.selectionStart;
+        const before = editor.value.slice(0, cursor);
+        const triggerMatch = before.match(/([#@{!])([^\s}]*)$/);
+        const trigger = triggerMatch?.[1] || "";
+        const partial = triggerMatch?.[2] || "";
+        const item = state.suggestionItems[state.suggestionIndex];
+        if (item) {
+          applySuggestion({ item, trigger, partial, cursor });
+        } else {
+          closeSuggestions();
+        }
+        return;
+      }
+    }
+
     if (event.key === "Tab") {
       event.preventDefault();
       const start = editor.selectionStart;
@@ -244,40 +323,6 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       onSync();
     }
 
-    if (!suggestions.classList.contains("hidden")) {
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        state.suggestionIndex = Math.min(
-          state.suggestionIndex + 1,
-          state.suggestionItems.length - 1
-        );
-        setActiveSuggestion();
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        state.suggestionIndex = Math.max(state.suggestionIndex - 1, 0);
-        setActiveSuggestion();
-        return;
-      }
-      if (event.key === "Enter" || event.key === "Tab") {
-        event.preventDefault();
-        const item = state.suggestionItems[state.suggestionIndex];
-        if (item) {
-          const cursor = editor.selectionStart;
-          const before = editor.value.slice(0, cursor);
-          const triggerMatch = before.match(/([#@{])([^\s}]*)$/);
-          const trigger = triggerMatch?.[1] || "";
-          const partial = triggerMatch?.[2] || "";
-          applySuggestion({ item, trigger, partial, cursor });
-        } else {
-          suggestions.classList.add("hidden");
-          suggestions.classList.remove("open");
-        }
-        return;
-      }
-    }
-
     if (event.key === "Enter") {
       event.preventDefault();
       const start = editor.selectionStart;
@@ -285,13 +330,28 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       const lineStart = value.lastIndexOf("\n", start - 1) + 1;
       const currentLine = value.slice(lineStart, start);
       const indent = currentLine.match(/^\s*/)[0];
-      editor.setRangeText(`\n${indent}`, start, start, "end");
+      const checkboxMatch = currentLine.match(/^(\s*)\[([ xX])\]\s+/);
+      const listMatch = currentLine.match(/^(\s*)([*-])\s+/);
+      if (checkboxMatch) {
+        editor.setRangeText(`\n${indent}[ ] `, start, start, "end");
+      } else if (listMatch) {
+        const marker = listMatch[2];
+        editor.setRangeText(`\n${indent}${marker} `, start, start, "end");
+      } else {
+        editor.setRangeText(`\n${indent}`, start, start, "end");
+      }
       onSync();
       updateSelectedLine();
     }
   });
 
   editor.addEventListener("keyup", (event) => {
+    if (
+      suggestions.classList.contains("open") &&
+      (event.key === "ArrowDown" || event.key === "ArrowUp")
+    ) {
+      return;
+    }
     if (["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight"].includes(event.key)) {
       const line = editor.value.slice(0, editor.selectionStart).split("\n").length - 1;
       updateSelectedLine();
@@ -300,6 +360,24 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     }
     if (!["Enter", "Tab"].includes(event.key)) {
       updateSelectedLine();
+    }
+  });
+
+  editor.addEventListener("blur", () => {
+    closeSuggestions();
+  });
+
+  suggestions.addEventListener("mousedown", (event) => {
+    event.preventDefault();
+  });
+
+  document.addEventListener("mousedown", (event) => {
+    if (
+      suggestions.classList.contains("open") &&
+      !suggestions.contains(event.target) &&
+      event.target !== editor
+    ) {
+      closeSuggestions();
     }
   });
 

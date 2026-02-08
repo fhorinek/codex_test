@@ -1,3 +1,5 @@
+import { colorFromString } from "./task.js";
+
 export function createCanvas({
   state,
   dom,
@@ -6,6 +8,8 @@ export function createCanvas({
   findTaskByName,
   onUpdateTaskToken,
   onUpdateTaskState,
+  onMakeSubtask,
+  onToggleCheckbox,
   onFiltersChange,
 }) {
   const { graphNodes, graphLines, graphCanvas } = dom;
@@ -15,70 +19,34 @@ export function createCanvas({
     graphLines.innerHTML = "";
     const canvasRect = graphCanvas.getBoundingClientRect();
 
-    const visibleTasks = gatherVisible(state.tasks);
     const positions = new Map();
-    let y = 40;
-    const spacingY = 170;
-    const nodeWidth = 220;
-    const nodeHeight = 120;
+    const nodeWidth = 308;
+    const startX = 60;
+    const gapY = 40;
 
     let maxX = 0;
     let maxY = 0;
-    visibleTasks.forEach((task) => {
-      const x = 60 + task.depth * 260;
-      positions.set(task.id, { x, y });
-      maxX = Math.max(maxX, x + nodeWidth);
-      maxY = Math.max(maxY, y + nodeHeight);
-      y += spacingY;
-    });
-    state.positions = positions;
-    graphLines.setAttribute(
-      "viewBox",
-      `0 0 ${Math.max(1, Math.floor(Math.max(canvasRect.width, maxX + 60)))} ${Math.max(
-        1,
-        Math.floor(Math.max(canvasRect.height, maxY + 60))
-      )}`
-    );
-
-    const paths = [];
-    visibleTasks.forEach((task) => {
-      const pos = positions.get(task.id);
-      task.children
-        .filter((child) => positions.has(child.id))
-        .forEach((child) => {
-          const childPos = positions.get(child.id);
-          const startX = pos.x + nodeWidth;
-          const startY = pos.y + nodeHeight / 2;
-          const endX = childPos.x;
-          const endY = childPos.y + nodeHeight / 2;
-          const midX = (startX + endX) / 2;
-          const midY = (startY + endY) / 2;
-          paths.push(
-            `<path d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="5" fill="none" />`
-          );
-        });
-    });
-    graphLines.innerHTML = `<g>${paths.join("")}</g>`;
+    const visibleTasks = gatherVisible(state.tasks);
+    const nodesById = new Map();
+    const heightsById = new Map();
+    const widthsById = new Map();
 
     visibleTasks.forEach((task) => {
-      const pos = positions.get(task.id);
       const node = document.createElement("div");
       node.className = "task-node";
-      node.style.left = `${pos.x}px`;
-      node.style.top = `${pos.y}px`;
+      node.style.left = `${startX + task.depth * (nodeWidth + 40)}px`;
+      node.style.top = "0px";
+      node.style.visibility = "hidden";
 
       if (state.selectedTaskId === task.id) {
         node.classList.add("selected");
       }
+      if (state.collapsed.has(task.id)) {
+        node.classList.add("collapsed");
+      }
 
-      const hasFilters = state.selectedTags.size || state.selectedPeople.size;
-      if (hasFilters) {
-        const matches =
-          task.tags.some((tag) => state.selectedTags.has(tag)) ||
-          task.people.some((person) => state.selectedPeople.has(person));
-        if (!matches) {
-          node.classList.add("dimmed");
-        }
+      if (!matchesFiltersTask(task)) {
+        node.classList.add("dimmed");
       }
 
       if (matchesSearch(task)) {
@@ -97,7 +65,8 @@ export function createCanvas({
         statePill.textContent = stateMeta?.name || task.state.replace(/^!/, "");
         const stateColor = state.stateMeta?.get(task.state)?.color;
         if (stateColor) {
-          statePill.style.borderColor = lightenColor(stateColor, 0.5);
+          statePill.style.borderColor = stateColor;
+          statePill.style.color = stateColor;
         }
         statePill.draggable = true;
         statePill.addEventListener("dragstart", (event) => {
@@ -118,19 +87,23 @@ export function createCanvas({
       const desc = document.createElement("div");
       desc.className = "description";
       const descriptionText = task.description
-        .join("\n")
-        .replace(/(^|\s)![^\s#@]+/g, "$1")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-      desc.innerHTML = renderMarkdown(descriptionText);
+        .map((line) =>
+          line
+            .replace(/(^|\s)![^\s#@]+/g, "$1")
+            .replace(/\s{2,}/g, " ")
+            .trim()
+        )
+        .join("\n");
+      desc.innerHTML = renderMarkdown(descriptionText, {
+        lineIndexes: task.descriptionLineIndexes,
+      });
 
       const toggle = document.createElement("div");
       toggle.className = "collapse-toggle";
       if (task.children.length) {
-        const label = state.collapsed.has(task.id)
-          ? `${task.children.length} Subtasks show`
-          : `${task.children.length} Subtasks hide`;
-        toggle.textContent = label;
+        const count = task.children.length;
+        const countLabel = count === 1 ? "1 Subtask" : `${count} Subtasks`;
+        toggle.textContent = countLabel;
         toggle.addEventListener("click", (event) => {
           event.stopPropagation();
           if (state.collapsed.has(task.id)) {
@@ -171,8 +144,8 @@ export function createCanvas({
             if (color) {
               pill.style.borderColor = color;
             }
-            const label = state.tagMeta?.get(value)?.name || value;
-            pill.textContent = label;
+            const label = state.tagMeta?.get(value)?.name || value.replace("#", "");
+            pill.textContent = `#${label}`;
           }
           if (type === "person") {
             const color = state.peopleMeta?.get(value)?.color;
@@ -204,6 +177,25 @@ export function createCanvas({
             }
           });
         });
+        desc.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+          const lineIndex = Number.parseInt(
+            checkbox.dataset.line || checkbox.closest(".checkbox-line")?.dataset.line,
+            10
+          );
+          if (!Number.isFinite(lineIndex)) {
+            checkbox.disabled = true;
+            return;
+          }
+          checkbox.addEventListener("mousedown", (event) => {
+            event.stopPropagation();
+          });
+          checkbox.addEventListener("click", (event) => {
+            event.stopPropagation();
+            if (onToggleCheckbox) {
+              onToggleCheckbox(lineIndex, checkbox.checked);
+            }
+          });
+        });
       }
       if (task.children.length) {
         node.appendChild(toggle);
@@ -213,6 +205,34 @@ export function createCanvas({
       node.draggable = true;
       node.addEventListener("dragstart", (event) => {
         event.dataTransfer.setData("text/plain", task.id);
+        const rect = node.getBoundingClientRect();
+        const ghost = node.cloneNode(true);
+        const scale = state.transform?.scale || 1;
+        ghost.classList.add("drag-ghost");
+        ghost.style.position = "absolute";
+        ghost.style.top = "-9999px";
+        ghost.style.left = "-9999px";
+        ghost.style.margin = "0";
+        ghost.style.width = `${rect.width / scale}px`;
+        ghost.style.height = `${rect.height / scale}px`;
+        if ("zoom" in ghost.style) {
+          ghost.style.zoom = scale;
+        } else {
+          ghost.style.transformOrigin = "top left";
+          ghost.style.transform = `scale(${scale})`;
+        }
+        ghost.style.pointerEvents = "none";
+        document.body.appendChild(ghost);
+        const offsetX = event.clientX - rect.left;
+        const offsetY = event.clientY - rect.top;
+        event.dataTransfer.setDragImage(ghost, offsetX, offsetY);
+        node._dragGhost = ghost;
+      });
+      node.addEventListener("dragend", () => {
+        if (node._dragGhost) {
+          node._dragGhost.remove();
+          node._dragGhost = null;
+        }
       });
       node.addEventListener("dragover", (event) => {
         event.preventDefault();
@@ -221,18 +241,125 @@ export function createCanvas({
         event.preventDefault();
         event.stopPropagation();
         const payload = event.dataTransfer.getData("application/json");
-        if (!payload) {
-          return;
+        if (payload) {
+          const data = JSON.parse(payload);
+          if (data.type === "tag" || data.type === "person") {
+            if (!onUpdateTaskToken) {
+              return;
+            }
+            onUpdateTaskToken(task, data.value, "add");
+            return;
+          }
+          if (data.type === "task" && onMakeSubtask) {
+            const sourceTask = state.allTasks.find((item) => item.id === data.taskId);
+            if (sourceTask) {
+              onMakeSubtask(sourceTask, task);
+            }
+            return;
+          }
         }
-        const data = JSON.parse(payload);
-        if (!onUpdateTaskToken || (data.type !== "tag" && data.type !== "person")) {
-          return;
+        const taskId = event.dataTransfer.getData("text/plain");
+        if (taskId && onMakeSubtask) {
+          const sourceTask = state.allTasks.find((item) => item.id === taskId);
+          if (sourceTask) {
+            onMakeSubtask(sourceTask, task);
+          }
         }
-        onUpdateTaskToken(task, data.value, "add");
       });
 
       graphNodes.appendChild(node);
+      nodesById.set(task.id, node);
+      const rect = node.getBoundingClientRect();
+      const scale = state.transform?.scale || 1;
+      const measuredHeight = Math.ceil(rect.height / scale);
+      const measuredWidth = Math.ceil(rect.width / scale);
+      heightsById.set(task.id, measuredHeight || node.offsetHeight || 0);
+      widthsById.set(task.id, measuredWidth || node.offsetWidth || nodeWidth);
     });
+
+    const nodeHeightFor = (taskId) => heightsById.get(taskId) || 120;
+    const nodeWidthFor = (taskId) => widthsById.get(taskId) || nodeWidth;
+    let maxNodeWidth = nodeWidth;
+    widthsById.forEach((width) => {
+      maxNodeWidth = Math.max(maxNodeWidth, width);
+    });
+    const spacingX = maxNodeWidth + 40;
+
+    const placeTask = (task, yPos) => {
+      if (!nodesById.has(task.id)) {
+        return yPos;
+      }
+      const x = startX + task.depth * spacingX;
+      const height = nodeHeightFor(task.id);
+      const width = nodeWidthFor(task.id);
+      positions.set(task.id, { x, y: yPos });
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, yPos + height);
+      if (state.collapsed.has(task.id) || !task.children.length) {
+        return yPos + height;
+      }
+      let currentBottom = yPos + height;
+      task.children.forEach((child, index) => {
+        if (!nodesById.has(child.id)) {
+          return;
+        }
+        const childY = index === 0 ? yPos : currentBottom + gapY;
+        const childBottom = placeTask(child, childY);
+        currentBottom = Math.max(currentBottom, childBottom);
+      });
+      return currentBottom;
+    };
+
+    let currentY = 40;
+    state.tasks.forEach((task) => {
+      if (!nodesById.has(task.id)) {
+        return;
+      }
+      const bottomY = placeTask(task, currentY);
+      currentY = bottomY + gapY;
+    });
+
+    state.positions = positions;
+    const viewWidth = Math.max(1, Math.floor(Math.max(canvasRect.width, maxX + 60)));
+    const viewHeight = Math.max(1, Math.floor(Math.max(canvasRect.height, maxY + 60)));
+    graphLines.setAttribute("width", `${viewWidth}`);
+    graphLines.setAttribute("height", `${viewHeight}`);
+    graphLines.style.width = `${viewWidth}px`;
+    graphLines.style.height = `${viewHeight}px`;
+    graphLines.setAttribute("viewBox", `0 0 ${viewWidth} ${viewHeight}`);
+
+    nodesById.forEach((node, taskId) => {
+      const pos = positions.get(taskId);
+      if (!pos) {
+        return;
+      }
+      node.style.left = `${pos.x}px`;
+      node.style.top = `${pos.y}px`;
+      node.style.visibility = "";
+    });
+
+    const paths = [];
+    visibleTasks.forEach((task) => {
+      const node = nodesById.get(task.id);
+      if (!node) {
+        return;
+      }
+      const startX = node.offsetLeft + node.offsetWidth;
+      const startY = node.offsetTop + node.offsetHeight / 2;
+      task.children
+        .filter((child) => nodesById.has(child.id))
+        .forEach((child) => {
+          const childNode = nodesById.get(child.id);
+          const endX = childNode.offsetLeft;
+          const endY = childNode.offsetTop + childNode.offsetHeight / 2;
+          const midX = (startX + endX) / 2;
+          const muted = !matchesFiltersTask(task) || !matchesFiltersTask(child);
+          paths.push(
+            `<path d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="5" fill="none" stroke-opacity="${muted ? 0.15 : 1}" />`
+          );
+        });
+    });
+    graphLines.innerHTML = `<g>${paths.join("")}</g>`;
 
     applyTransform(state.animateTransform);
     state.animateTransform = false;
@@ -252,7 +379,14 @@ export function createCanvas({
     const pill = document.createElement("button");
     pill.type = "button";
     pill.className = `pill ${active ? "active" : ""}`;
-    const label = meta?.name || text;
+    let label = meta?.name || text;
+    if (text.startsWith("#")) {
+      const tagLabel = meta?.name || text.replace("#", "");
+      label = `#${tagLabel}`;
+    } else if (text.startsWith("@")) {
+      const personLabel = meta?.name || text.replace("@", "");
+      label = `👤 ${personLabel}`;
+    }
     pill.textContent = label;
     if (meta?.color) {
       pill.style.borderColor = meta.color;
@@ -316,6 +450,16 @@ export function createCanvas({
       return matches || childMatch;
     };
     state.tasks.forEach((task) => ensureExpanded(task, []));
+  }
+
+  function matchesFiltersTask(task) {
+    if (!state.selectedTags.size && !state.selectedPeople.size) {
+      return true;
+    }
+    return (
+      task.tags.some((tag) => state.selectedTags.has(tag)) ||
+      task.people.some((person) => state.selectedPeople.has(person))
+    );
   }
 
   function matchesSearch(task) {
@@ -452,6 +596,15 @@ export function createCanvas({
       }
     }
     if (data.source === "task" && data.type === "state") {
+      if (!onUpdateTaskState) {
+        return;
+      }
+      const task = state.allTasks.find((item) => item.id === data.taskId);
+      if (task) {
+        onUpdateTaskState(task, null);
+      }
+    }
+    if (data.source === "kanban" && data.type === "task") {
       if (!onUpdateTaskState) {
         return;
       }
