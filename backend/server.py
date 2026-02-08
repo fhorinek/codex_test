@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from urllib.parse import parse_qs
 
+from typing import Any, Dict, List, Optional, Tuple
+
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -22,7 +24,7 @@ if not USERS_FILE.exists():
     USERS_FILE.write_text("user:devtoken\n", encoding="utf-8")
 
 PRESENCE_TTL = 40
-presence: dict[str, dict[str, float]] = {}
+presence: Dict[str, Dict[str, float]] = {}
 
 
 def sanitize_space(space_id: str) -> str:
@@ -31,8 +33,8 @@ def sanitize_space(space_id: str) -> str:
     return space_id
 
 
-def load_users() -> dict[str, str]:
-    users: dict[str, str] = {}
+def load_users() -> Dict[str, str]:
+    users: Dict[str, str] = {}
     if not USERS_FILE.exists():
         return users
     for line in USERS_FILE.read_text(encoding="utf-8").splitlines():
@@ -54,7 +56,7 @@ def verify_user(username: str, password: str) -> bool:
     return users.get(username) == password
 
 
-def parse_basic_auth(authorization: str | None) -> tuple[str, str] | None:
+def parse_basic_auth(authorization: Optional[str]) -> Optional[Tuple[str, str]]:
     if not authorization or not authorization.startswith("Basic "):
         return None
     token = authorization.split(" ", 1)[1]
@@ -69,9 +71,9 @@ def parse_basic_auth(authorization: str | None) -> tuple[str, str] | None:
 
 
 def require_auth(
-    authorization: str | None = Header(default=None),
-    user: str | None = Query(default=None),
-    password: str | None = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+    user: Optional[str] = Query(default=None),
+    password: Optional[str] = Query(default=None),
 ) -> str:
     basic = parse_basic_auth(authorization)
     if basic:
@@ -99,7 +101,7 @@ app.add_middleware(
 
 
 @app.get("/api/spaces")
-def list_spaces(user: str = Depends(require_auth)) -> dict:
+def list_spaces(user: str = Depends(require_auth)) -> Dict[str, Any]:
     spaces = sorted(path.stem for path in SPACES_DIR.glob("*.txt"))
     data = [
         {"id": space_id, "users": users_for_space(space_id)}
@@ -121,14 +123,14 @@ def write_space(
     space_id: str,
     content: str = Body(default="", media_type="text/plain"),
     user: str = Depends(require_auth),
-) -> dict:
+) -> Dict[str, Any]:
     path = space_path(space_id)
     path.write_text(content, encoding="utf-8")
     return {"ok": True}
 
 
 @app.post("/api/spaces/{space_id}")
-def create_space(space_id: str, user: str = Depends(require_auth)) -> dict:
+def create_space(space_id: str, user: str = Depends(require_auth)) -> Dict[str, Any]:
     path = space_path(space_id)
     if path.exists():
         return {"ok": True}
@@ -137,7 +139,7 @@ def create_space(space_id: str, user: str = Depends(require_auth)) -> dict:
 
 
 @app.delete("/api/spaces/{space_id}")
-def delete_space(space_id: str, user: str = Depends(require_auth)) -> dict:
+def delete_space(space_id: str, user: str = Depends(require_auth)) -> Dict[str, Any]:
     path = space_path(space_id)
     if path.exists():
         path.unlink()
@@ -146,14 +148,14 @@ def delete_space(space_id: str, user: str = Depends(require_auth)) -> dict:
 
 
 @app.post("/api/spaces/{space_id}/presence")
-def update_presence(space_id: str, user: str = Depends(require_auth)) -> dict:
+def update_presence(space_id: str, user: str = Depends(require_auth)) -> Dict[str, Any]:
     space_path(space_id)
     mark_presence(space_id, user)
     return {"ok": True}
 
 
 @app.delete("/api/spaces/{space_id}/presence")
-def clear_presence(space_id: str, user: str = Depends(require_auth)) -> dict:
+def clear_presence(space_id: str, user: str = Depends(require_auth)) -> Dict[str, Any]:
     space_path(space_id)
     remove_presence(space_id, user)
     return {"ok": True}
@@ -184,13 +186,13 @@ def remove_presence(space_id: str, username: str) -> None:
         presence.pop(space_id, None)
 
 
-def users_for_space(space_id: str) -> list[str]:
+def users_for_space(space_id: str) -> List[str]:
     cleanup_presence()
     users = presence.get(space_id, {})
     return sorted(users.keys())
 
 
-def space_from_path(path: str) -> str | None:
+def space_from_path(path: str) -> Optional[str]:
     if "/ws/" not in path:
         return None
     tail = path.split("/ws/", 1)[1]
@@ -203,14 +205,14 @@ def space_from_path(path: str) -> str | None:
         return None
 
 
-def ws_credentials(scope: dict) -> tuple[str | None, str | None]:
+def ws_credentials(scope: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     query = parse_qs(scope.get("query_string", b"").decode())
     user = query.get("user", [None])[0] or query.get("username", [None])[0]
     password = query.get("pass", [None])[0] or query.get("password", [None])[0]
     return user, password
 
 
-async def on_connect(_message: dict, scope: dict) -> bool:
+async def on_connect(_message: Dict[str, Any], scope: Dict[str, Any]) -> bool:
     user, password = ws_credentials(scope)
     if not user or not password or not verify_user(user, password):
         return True
