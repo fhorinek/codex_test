@@ -241,6 +241,7 @@ export function createCanvas({
       node.addEventListener("drop", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        isDraggingToken = false;
         const payload = event.dataTransfer.getData("application/json");
         if (payload) {
           const data = JSON.parse(payload);
@@ -475,6 +476,26 @@ export function createCanvas({
     );
   }
 
+  function tokenMatchesQuery(token, metaMap, query) {
+    if (token.toLowerCase().includes(query)) {
+      return true;
+    }
+    if (!metaMap) {
+      return false;
+    }
+    const meta = metaMap.get(token);
+    if (!meta) {
+      return false;
+    }
+    const name = typeof meta.name === "string" ? meta.name.toLowerCase() : "";
+    const key = typeof meta.key === "string" ? meta.key.toLowerCase() : "";
+    return (name && name.includes(query)) || (key && key.includes(query));
+  }
+
+  function tokensMatchQuery(tokens, metaMap, query) {
+    return tokens.some((token) => tokenMatchesQuery(token, metaMap, query));
+  }
+
   function matchesSearch(task) {
     if (!state.searchQuery) {
       return false;
@@ -489,10 +510,10 @@ export function createCanvas({
     ) {
       return true;
     }
-    if (dom.searchTag.checked && task.tags.join(" ").toLowerCase().includes(query)) {
+    if (dom.searchTag.checked && tokensMatchQuery(task.tags, state.tagMeta, query)) {
       return true;
     }
-    if (dom.searchPerson.checked && task.people.join(" ").toLowerCase().includes(query)) {
+    if (dom.searchPerson.checked && tokensMatchQuery(task.people, state.peopleMeta, query)) {
       return true;
     }
     return false;
@@ -537,6 +558,14 @@ export function createCanvas({
     if (event.target.closest(".pill")) {
       isDraggingToken = false;
     }
+  });
+
+  window.addEventListener("dragend", () => {
+    isDraggingToken = false;
+  });
+
+  window.addEventListener("drop", () => {
+    isDraggingToken = false;
   });
 
   graphCanvas.addEventListener("drop", () => {

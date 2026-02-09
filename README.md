@@ -4,18 +4,29 @@ Task Script Board turns a simple text script into an interactive graph and kanba
 
 ## Quick Start (TL;DR)
 ```bash
-bash backend/run.sh
+bash setup.sh
+bash run.sh
 ```
+
+## Requirements
+- Node.js + npm (for frontend dependencies).
+- Python 3.8+ (backend).
 
 ## Quick Start
-1. Run the server (creates a venv, installs dependencies, and starts FastAPI):
+1. Install frontend dependencies:
 
 ```bash
-bash backend/run.sh
+bash setup.sh
 ```
 
-2. Open the server URL shown in the terminal output.
-3. Edit the script in the left pane.
+2. Run the server (creates a venv, installs dependencies, and starts FastAPI):
+
+```bash
+bash run.sh
+```
+
+3. Open the server URL shown in the terminal output.
+4. Edit the script in the left pane.
 
 ## Collaboration
 The app connects to shared spaces via Yjs on the same server.
@@ -64,7 +75,6 @@ Atlas board:
 If `states` are omitted, defaults are `todo`, `inprogress`, `done`.
 
 ## Project Structure
-- `index.html` main entry.
-- `scripts/` JavaScript modules.
-- `styles/` CSS.
-- `backend/` collaboration server (optional).
+- `frontend/` static app (HTML/CSS/JS + `node_modules`).
+- `backend/` FastAPI server and collaboration backend.
+- `setup.sh` installs frontend dependencies.

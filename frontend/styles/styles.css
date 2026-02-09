@@ -300,12 +300,17 @@ body {
 }
 
 .toolbar-button {
-  background: #1d1f2b;
-  color: #ffffff;
-  border: none;
+  background: #ffffff;
+  color: #2f3355;
+  border: 1px solid #d6d9e6;
   padding: 8px 14px;
   border-radius: 8px;
   cursor: pointer;
+}
+
+.toolbar-button:hover {
+  border-color: #8fa4ff;
+  background: #f6f7ff;
 }
 
 .suggestions {
@@ -533,6 +538,23 @@ body {
 .modal-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
+}
+
+.modal-actions .danger {
+  background: #b4232d;
+}
+
+.modal-actions .danger:hover {
+  background: #9b1c25;
+}
+
+.modal-actions .success {
+  background: #16a34a;
+}
+
+.modal-actions .success:hover {
+  background: #15803d;
 }
 
 .modal-help.error {
@@ -601,6 +623,50 @@ body {
   gap: 12px;
 }
 
+.space-label {
+  font-weight: 600;
+}
+
+.space-input {
+  display: none;
+  flex: 1;
+  border-radius: 10px;
+  border: 1px solid #d6d9e6;
+  background: #ffffff;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #2f3355;
+}
+
+.space-item.editing .space-label {
+  display: none;
+}
+
+.space-item.editing .space-input {
+  display: block;
+}
+
+.space-item.editing .space-actions .space-edit {
+  display: none;
+}
+
+.space-item.editing .space-actions .space-connect {
+  display: none;
+}
+
+.space-item.editing .space-actions .space-connect.space-active {
+  display: inline-flex;
+}
+
+.space-item.editing .space-actions .danger {
+  display: none;
+}
+
+.space-item:not(.editing) .space-actions .space-save,
+.space-item:not(.editing) .space-actions .space-cancel {
+  display: none;
+}
+
 .space-actions {
   display: flex;
   align-items: center;
@@ -641,6 +707,28 @@ body {
 .space-actions .danger:hover {
   border-color: #e88787;
   background: #ffecec;
+}
+
+.space-actions .space-save {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #ffffff;
+}
+
+.space-actions .space-save:hover {
+  background: #15803d;
+  border-color: #15803d;
+}
+
+.space-actions .space-cancel {
+  background: #b4232d;
+  border-color: #b4232d;
+  color: #ffffff;
+}
+
+.space-actions .space-cancel:hover {
+  background: #9b1c25;
+  border-color: #9b1c25;
 }
 
 .legend-header {
@@ -1016,6 +1104,12 @@ html[data-theme="dark"] .space-item {
   color: #e6e8f2;
 }
 
+html[data-theme="dark"] .space-input {
+  background: #1b2236;
+  border-color: #2a2e3f;
+  color: #e6e8f2;
+}
+
 html[data-theme="dark"] .space-users {
   color: #9aa2c8;
 }
@@ -1035,6 +1129,55 @@ html[data-theme="dark"] .space-actions .danger {
 html[data-theme="dark"] .space-actions .danger:hover {
   border-color: #7d3945;
   background: #27181f;
+}
+
+html[data-theme="dark"] .space-actions .space-save {
+  background: #16a34a;
+  border-color: #16a34a;
+  color: #ffffff;
+}
+
+html[data-theme="dark"] .space-actions .space-save:hover {
+  background: #15803d;
+  border-color: #15803d;
+}
+
+html[data-theme="dark"] .space-actions .space-cancel {
+  background: #b4232d;
+  border-color: #b4232d;
+  color: #ffffff;
+}
+
+html[data-theme="dark"] .space-actions .space-cancel:hover {
+  background: #9b1c25;
+  border-color: #9b1c25;
+}
+
+html[data-theme="dark"] .toolbar-button {
+  background: #1d1f2b;
+  border-color: #2a2e3f;
+  color: #f1f5f9;
+}
+
+html[data-theme="dark"] .toolbar-button:hover {
+  border-color: #3a4055;
+  background: #232a40;
+}
+
+html[data-theme="dark"] .modal-actions .danger {
+  background: #b4232d;
+}
+
+html[data-theme="dark"] .modal-actions .danger:hover {
+  background: #9b1c25;
+}
+
+html[data-theme="dark"] .modal-actions .success {
+  background: #16a34a;
+}
+
+html[data-theme="dark"] .modal-actions .success:hover {
+  background: #15803d;
 }
 
 html[data-theme="dark"] .kanban-board {

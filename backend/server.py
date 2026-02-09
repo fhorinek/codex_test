@@ -16,6 +16,7 @@ from ypy_websocket.asgi_server import ASGIServer
 import uvicorn
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
+FRONTEND_DIR = ROOT_DIR / "frontend"
 SPACES_DIR = Path(__file__).resolve().parent / "spaces"
 SPACES_DIR.mkdir(parents=True, exist_ok=True)
 USERS_FILE = Path(__file__).resolve().parent / "users.txt"
@@ -133,7 +134,7 @@ def write_space(
 def create_space(space_id: str, user: str = Depends(require_auth)) -> Dict[str, Any]:
     path = space_path(space_id)
     if path.exists():
-        return {"ok": True}
+        raise HTTPException(status_code=409, detail="Space already exists.")
     path.write_text("", encoding="utf-8")
     return {"ok": True}
 
@@ -145,6 +146,32 @@ def delete_space(space_id: str, user: str = Depends(require_auth)) -> Dict[str, 
         path.unlink()
     presence.pop(space_id, None)
     return {"ok": True}
+
+
+@app.post("/api/spaces/{space_id}/rename")
+def rename_space(
+    space_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+    user: str = Depends(require_auth),
+) -> Dict[str, Any]:
+    source = space_path(space_id)
+    if not source.exists():
+        raise HTTPException(status_code=404, detail="Space not found.")
+    new_name = ""
+    if isinstance(payload, dict):
+        candidate = payload.get("name") or payload.get("id") or payload.get("space")
+        if isinstance(candidate, str):
+            new_name = candidate.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Invalid space id.")
+    target_id = sanitize_space(new_name)
+    target = space_path(target_id)
+    if target.exists():
+        raise HTTPException(status_code=409, detail="Space already exists.")
+    source.rename(target)
+    if space_id in presence:
+        presence[target_id] = presence.pop(space_id)
+    return {"ok": True, "id": target_id}
 
 
 @app.post("/api/spaces/{space_id}/presence")
@@ -224,7 +251,7 @@ async def on_connect(_message: Dict[str, Any], scope: Dict[str, Any]) -> bool:
 
 websocket_server = WebsocketServer()
 app.mount("/ws", ASGIServer(websocket_server, on_connect=on_connect))
-app.mount("/", StaticFiles(directory=ROOT_DIR, html=True), name="static")
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 
 
 async def main() -> None:

@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,6 +8,7 @@
   <link rel="stylesheet" href="styles/styles.css" />
   <link rel="stylesheet" href="node_modules/@fortawesome/fontawesome-free/css/all.min.css" />
 </head>
+
 <body>
   <div class="app">
     <section class="editor-panel">
@@ -23,22 +25,23 @@
             <button id="redo-button" class="toolbar-icon" type="button" aria-label="Redo" title="Redo">
               <i class="fa-solid fa-rotate-right" aria-hidden="true"></i>
             </button>
-            <button id="load-button" class="toolbar-icon" type="button" aria-label="Load" title="Load">
+            <button id="load-button" class="toolbar-icon" type="button" aria-label="Load from disk" title="Load from disk">
               <i class="fa-solid fa-upload" aria-hidden="true"></i>
             </button>
-            <button id="save-button" class="toolbar-icon" type="button" aria-label="Save" title="Save">
+            <button id="save-button" class="toolbar-icon" type="button" aria-label="Download" title="Download">
               <i class="fa-solid fa-download" aria-hidden="true"></i>
             </button>
-            <button id="format-button" class="toolbar-icon" type="button" aria-label="Format" title="Format">
+            <button id="format-button" class="toolbar-icon" type="button" aria-label="Run autoformat" title="Run autoformat">
               <i class="fa-solid fa-wand-magic-sparkles" aria-hidden="true"></i>
             </button>
-            <button id="connect-button" class="toolbar-icon" type="button" aria-label="Connect" title="Connect">
+            <button id="connect-button" class="toolbar-icon" type="button" aria-label="Login" title="Login">
               <i class="fa-solid fa-plug" aria-hidden="true"></i>
             </button>
-            <button id="theme-button" class="toolbar-icon" type="button" aria-label="Toggle theme" title="Toggle theme">
+            <button id="theme-button" class="toolbar-icon" type="button" aria-label="Toggle light/dark mode" title="Toggle light/dark mode">
               <i class="fa-solid fa-moon" aria-hidden="true"></i>
             </button>
-            <button id="fullscreen-button" class="toolbar-icon" type="button" aria-label="Fullscreen" title="Fullscreen">
+            <button id="fullscreen-button" class="toolbar-icon" type="button" aria-label="Toggle fullscreen"
+              title="Toggle fullscreen">
               <i class="fa-solid fa-expand" aria-hidden="true"></i>
             </button>
             <input id="file-input" type="file" accept=".txt,text/plain" hidden />
@@ -93,7 +96,7 @@
   <div id="login-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="login-modal-title">
     <div class="modal-card">
       <div class="modal-header">
-        <h2 id="login-modal-title">Login</h2>
+        <h2 id="login-modal-title">User Login</h2>
         <button id="login-modal-close" class="toolbar-icon" type="button" aria-label="Close">
           <i class="fa-solid fa-xmark" aria-hidden="true"></i>
         </button>
@@ -139,7 +142,23 @@
           <input id="space-new" type="text" placeholder="New space name" />
           <button id="space-create" class="toolbar-button" type="button">Add space</button>
         </div>
+        <div id="space-error" class="modal-error hidden"></div>
         <div id="space-list" class="space-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="delete-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="delete-modal-title">Delete Space</h2>
+      </div>
+      <div class="modal-body">
+        <div id="delete-modal-message" class="modal-help"></div>
+        <div class="modal-actions">
+          <button id="delete-cancel" class="toolbar-button success" type="button">Cancel</button>
+          <button id="delete-confirm" class="toolbar-button danger" type="button">Delete</button>
+        </div>
       </div>
     </div>
   </div>
@@ -180,4 +199,5 @@
   </script>
   <script type="module" src="scripts/app.js"></script>
 </body>
+
 </html>

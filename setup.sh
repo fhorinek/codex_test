@@ -2,8 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+FRONTEND_DIR="${ROOT_DIR}/frontend"
 
-cd "$ROOT_DIR"
+cd "$FRONTEND_DIR"
 
 if [[ ! -f package.json ]]; then
   npm init -y

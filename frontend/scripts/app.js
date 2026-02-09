@@ -28,7 +28,7 @@ const COLLAB_COLORS = [
 const IDLE_TIMEOUT_MS = 60000;
 const IDLE_CHECK_MS = 5000;
 const STATUS_LABELS = {
-  connected: "connected",
+  connected: "live",
   connecting: "reconnecting",
   disconnected: "error/failed",
   syncing: "syncing",
@@ -116,7 +116,12 @@ const dom = {
   logoutButton: document.getElementById("logout-button"),
   spaceNew: document.getElementById("space-new"),
   spaceCreate: document.getElementById("space-create"),
+  spaceError: document.getElementById("space-error"),
   spaceList: document.getElementById("space-list"),
+  deleteModal: document.getElementById("delete-modal"),
+  deleteModalMessage: document.getElementById("delete-modal-message"),
+  deleteConfirm: document.getElementById("delete-confirm"),
+  deleteCancel: document.getElementById("delete-cancel"),
   kanbanBoard: document.getElementById("kanban-board"),
   kanbanDivider: document.getElementById("kanban-divider"),
   graphPanel: document.querySelector(".graph-panel"),
@@ -188,6 +193,8 @@ const collab = {
   isAuthenticated: false,
   connectionStatus: "disconnected",
 };
+
+let pendingDeleteSpace = null;
 
 function getStoredAuth() {
   try {
@@ -277,9 +284,9 @@ function initializeAuthInputs() {
 
 function getServerLabel() {
   try {
-    return new URL(REMOTE_BASE).host;
+    return new URL(REMOTE_BASE).hostname;
   } catch {
-    return REMOTE_BASE.replace(/^https?:\/\//, "");
+    return REMOTE_BASE.replace(/^https?:\/\//, "").split(":")[0];
   }
 }
 
@@ -347,7 +354,7 @@ function updateBoardConnectionLabel() {
   }
 }
 
-const sample = `Atlas board:\n    people:\n        maya:\n            name: Maya Rivera\n        luis:\n            name: Luis Ortega\n        sam:\n            name: Sam Patel\n        nina:\n            name: Nina Lopez\n        zara:\n            name: Zara Chen\n    tags:\n        planning\n        backend\n        ux\n        research\n\n% Kickoff sprint\n!todo @maya #planning #ux\n**Goal:** Align scope, risks, and owners. {Architecture}\n- Define success metrics\n- Draft roadmap milestones\n[ ] Share notes with stakeholders\n[ ] Lock sprint goals\n\n    % Collect requirements\n    !inprogress @sam #research\n    Interview 5 users and summarize themes.\n    [ ] Write interview guide\n    [x] Schedule sessions\n\n        % Summarize insights\n        !todo @nina #research #planning\n        Capture themes and map to product risks.\n\n    % Create UX flow\n    !todo @maya #ux\n    Map onboarding screens and happy path.\n    - Wireframe key screens\n    - Validate navigation\n\n% Architecture\n!inprogress @luis #backend\nDefine data contracts and core services.\n| Area | Owner | Status |\n| --- | --- | --- |\n| API | Luis | Draft |\n| Data | Maya | Review |\n\n    % Build service skeleton\n    !todo @luis #backend\n    [ ] Set up repo and CI\n    [ ] Define API endpoints\n\n    % Integrate auth\n    !todo @sam #backend\n    Connect OAuth provider and session storage.\n\n        % Validate permissions\n        !todo @zara #backend #research\n        Check scopes and error handling.\n\n% Release prep\n!todo @maya #planning\nFinalize checklist and release timeline.\n{Kickoff sprint}\n`;
+const sample = `Example board:\n    people:\n        maya:\n            name: Maya Rivera\n        luis:\n            name: Luis Ortega\n        sam:\n            name: Sam Patel\n        nina:\n            name: Nina Lopez\n        zara:\n            name: Zara Chen\n    tags:\n        planning\n        backend\n        ux\n        research\n\n% Kickoff sprint\n!todo @maya #planning #ux\n**Goal:** Align scope, risks, and owners. {Architecture}\n- Define success metrics\n- Draft roadmap milestones\n[ ] Share notes with stakeholders\n[ ] Lock sprint goals\n\n    % Collect requirements\n    !inprogress @sam #research\n    Interview 5 users and summarize themes.\n    [ ] Write interview guide\n    [x] Schedule sessions\n\n        % Summarize insights\n        !todo @nina #research #planning\n        Capture themes and map to product risks.\n\n    % Create UX flow\n    !todo @maya #ux\n    Map onboarding screens and happy path.\n    - Wireframe key screens\n    - Validate navigation\n\n% Architecture\n!inprogress @luis #backend\nDefine data contracts and core services.\n| Area | Owner | Status |\n| --- | --- | --- |\n| API | Luis | Draft |\n| Data | Maya | Review |\n\n    % Build service skeleton\n    !todo @luis #backend\n    [ ] Set up repo and CI\n    [ ] Define API endpoints\n\n    % Integrate auth\n    !todo @sam #backend\n    Connect OAuth provider and session storage.\n\n        % Validate permissions\n        !todo @zara #backend #research\n        Check scopes and error handling.\n\n% Release prep\n!todo @maya #planning\nFinalize checklist and release timeline.\n{Kickoff sprint}\n`;
 
 dom.editor.value = sample;
 
@@ -399,7 +406,7 @@ function applyEditorValue(nextValue) {
   while (
     suffix < maxSuffix &&
     currentValue[currentValue.length - 1 - suffix] ===
-      nextValue[nextValue.length - 1 - suffix]
+    nextValue[nextValue.length - 1 - suffix]
   ) {
     suffix += 1;
   }
@@ -432,6 +439,19 @@ function applyEditorValue(nextValue) {
   editor.setSelectionRange(clampedStart, clampedEnd);
   editor.scrollTop = scrollTop;
   editor.scrollLeft = scrollLeft;
+}
+
+function dispatchEditorInput() {
+  if (!dom.editor) {
+    return;
+  }
+  dom.editor.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function forceEditorRefresh(value) {
+  applyEditorValue(value);
+  syncEditorState();
+  dispatchEditorInput();
 }
 
 function handleEditorSelection(line) {
@@ -667,6 +687,26 @@ function toSafeFilename(value) {
   return cleaned || "tasks";
 }
 
+function tokenMatchesQuery(token, metaMap, query) {
+  if (token.toLowerCase().includes(query)) {
+    return true;
+  }
+  if (!metaMap) {
+    return false;
+  }
+  const meta = metaMap.get(token);
+  if (!meta) {
+    return false;
+  }
+  const name = typeof meta.name === "string" ? meta.name.toLowerCase() : "";
+  const key = typeof meta.key === "string" ? meta.key.toLowerCase() : "";
+  return (name && name.includes(query)) || (key && key.includes(query));
+}
+
+function tokensMatchQuery(tokens, metaMap, query) {
+  return tokens.some((token) => tokenMatchesQuery(token, metaMap, query));
+}
+
 function matchesSearchTask(task) {
   if (!state.searchQuery) {
     return false;
@@ -678,10 +718,10 @@ function matchesSearchTask(task) {
   if (dom.searchDescription.checked && task.description.join(" ").toLowerCase().includes(query)) {
     return true;
   }
-  if (dom.searchTag.checked && task.tags.join(" ").toLowerCase().includes(query)) {
+  if (dom.searchTag.checked && tokensMatchQuery(task.tags, state.tagMeta, query)) {
     return true;
   }
-  if (dom.searchPerson.checked && task.people.join(" ").toLowerCase().includes(query)) {
+  if (dom.searchPerson.checked && tokensMatchQuery(task.people, state.peopleMeta, query)) {
     return true;
   }
   return false;
@@ -768,7 +808,7 @@ function renderSpaceList(spaces) {
   if (!spaces.length) {
     const empty = document.createElement("div");
     empty.className = "modal-help";
-    empty.textContent = "No spaces found. Add a .txt file to backend/spaces.";
+    empty.textContent = "No spaces yet. Create one above.";
     dom.spaceList.appendChild(empty);
     return;
   }
@@ -779,32 +819,107 @@ function renderSpaceList(spaces) {
     header.className = "space-row";
 
     const label = document.createElement("span");
+    label.className = "space-label";
     label.textContent = space.id;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "space-input";
+    input.value = space.id;
 
     const actions = document.createElement("div");
     actions.className = "space-actions";
 
     const connectButton = document.createElement("button");
     connectButton.type = "button";
-    connectButton.className = "toolbar-button";
+    connectButton.className = "toolbar-button space-connect";
     connectButton.textContent = collab.spaceId === space.id ? "Active" : "Connect";
     connectButton.disabled = collab.spaceId === space.id;
+    if (collab.spaceId === space.id) {
+      connectButton.classList.add("space-active");
+    }
     connectButton.addEventListener("click", () => {
       connectToSpace(space.id);
+    });
+
+    const rename = document.createElement("button");
+    rename.type = "button";
+    rename.className = "toolbar-button space-edit";
+    rename.innerHTML = '<i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>';
+    rename.title = "Rename";
+    rename.setAttribute("aria-label", "Rename");
+    rename.addEventListener("click", () => {
+      row.classList.add("editing");
+      input.value = space.id;
+      input.focus();
+      input.select();
+    });
+
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "toolbar-button space-save";
+    save.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i>';
+    save.title = "Save";
+    save.setAttribute("aria-label", "Save");
+    const commitRename = async () => {
+      const trimmed = input.value.trim();
+      if (!trimmed || trimmed === space.id) {
+        row.classList.remove("editing");
+        return;
+      }
+      try {
+        await renameSpace(space.id, trimmed);
+        clearSpaceError();
+        row.classList.remove("editing");
+        await loadSpaceList({ showLoading: false });
+        if (collab.spaceId === space.id) {
+          connectToSpace(trimmed);
+        }
+      } catch (error) {
+        setSpaceError(formatSpaceError(error, "Unable to rename space."));
+      }
+    };
+    save.addEventListener("click", commitRename);
+
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "toolbar-button space-cancel";
+    cancel.innerHTML = '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
+    cancel.title = "Cancel";
+    cancel.setAttribute("aria-label", "Cancel");
+    cancel.addEventListener("click", () => {
+      row.classList.remove("editing");
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitRename();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        row.classList.remove("editing");
+      }
+    });
+    input.addEventListener("input", () => {
+      clearSpaceError();
     });
 
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "toolbar-button danger";
-    remove.textContent = "Delete";
-    remove.disabled = collab.spaceId === space.id;
-    remove.addEventListener("click", () => {
-      deleteSpace(space.id);
+    remove.innerHTML = '<i class="fa-solid fa-trash" aria-hidden="true"></i>';
+    remove.title = "Delete";
+    remove.setAttribute("aria-label", "Delete");
+    remove.addEventListener("click", async () => {
+      openDeleteModal(space.id);
     });
 
     actions.appendChild(connectButton);
+    actions.appendChild(rename);
+    actions.appendChild(save);
+    actions.appendChild(cancel);
     actions.appendChild(remove);
     header.appendChild(label);
+    header.appendChild(input);
     header.appendChild(actions);
 
     const users = document.createElement("div");
@@ -861,6 +976,57 @@ async function loadSpaceList({ showLoading = true } = {}) {
     collab.isAuthenticated = false;
     updateConnectButtonLabel();
   }
+}
+
+function setSpaceError(message) {
+  if (!dom.spaceError) {
+    return;
+  }
+  dom.spaceError.textContent = message;
+  dom.spaceError.classList.remove("hidden");
+}
+
+function clearSpaceError() {
+  if (!dom.spaceError) {
+    return;
+  }
+  dom.spaceError.textContent = "";
+  dom.spaceError.classList.add("hidden");
+}
+
+function updateCreateSpaceButton() {
+  if (!dom.spaceCreate || !dom.spaceNew) {
+    return;
+  }
+  const hasName = Boolean(dom.spaceNew.value.trim());
+  dom.spaceCreate.disabled = !hasName;
+}
+
+function openDeleteModal(spaceId) {
+  if (!dom.deleteModal || !dom.deleteModalMessage) {
+    return;
+  }
+  pendingDeleteSpace = spaceId;
+  dom.deleteModalMessage.textContent = `Delete space "${spaceId}"? This cannot be undone.`;
+  dom.deleteModal.classList.remove("hidden");
+}
+
+function closeDeleteModal() {
+  if (!dom.deleteModal) {
+    return;
+  }
+  dom.deleteModal.classList.add("hidden");
+  pendingDeleteSpace = null;
+}
+
+function formatSpaceError(error, fallback) {
+  if (error instanceof Error && error.message) {
+    if (error.message === "Failed to fetch") {
+      return "Unable to reach the backend.";
+    }
+    return error.message;
+  }
+  return fallback;
 }
 
 async function loadSpaceText(spaceId) {
@@ -929,6 +1095,28 @@ function logout() {
   openLoginModal();
 }
 
+function spaceResponseError(response, fallback) {
+  if (!response) {
+    return fallback;
+  }
+  if (response.status === 400) {
+    return "Invalid space name.";
+  }
+  if (response.status === 401) {
+    return "Invalid credentials.";
+  }
+  if (response.status === 403) {
+    return "Not allowed.";
+  }
+  if (response.status === 404) {
+    return "Space not found.";
+  }
+  if (response.status === 409) {
+    return "Space name already exists.";
+  }
+  return fallback;
+}
+
 async function createSpace(name) {
   const trimmed = name.trim();
   if (!trimmed) {
@@ -939,7 +1127,7 @@ async function createSpace(name) {
     headers: authHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Unable to create space.");
+    throw new Error(spaceResponseError(response, "Unable to create space."));
   }
 }
 
@@ -949,17 +1137,40 @@ async function deleteSpace(name) {
     return;
   }
   applyAuthFromInputs({ markDirty: false });
-  if (!confirm(`Remove space "${trimmed}"?`)) {
-    return;
-  }
   const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(trimmed)}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
   if (!response.ok) {
-    throw new Error("Unable to remove space.");
+    throw new Error(spaceResponseError(response, "Unable to remove space."));
+  }
+  if (collab.spaceId === trimmed) {
+    disconnectSpace();
   }
   await loadSpaceList({ showLoading: false });
+}
+
+async function renameSpace(oldName, newName) {
+  const source = oldName.trim();
+  const target = newName.trim();
+  if (!source || !target || source === target) {
+    return;
+  }
+  applyAuthFromInputs({ markDirty: false });
+  const response = await fetch(
+    `${REMOTE_BASE}/api/spaces/${encodeURIComponent(source)}/rename`,
+    {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name: target }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(spaceResponseError(response, "Unable to rename space."));
+  }
 }
 
 async function reportPresence(spaceId, remove = false) {
@@ -970,7 +1181,7 @@ async function reportPresence(spaceId, remove = false) {
   fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/presence`, {
     method,
     headers: authHeaders(),
-  }).catch(() => {});
+  }).catch(() => { });
 }
 
 function startPresenceHeartbeat(spaceId) {
@@ -1020,8 +1231,11 @@ function openSpacesModal() {
     return;
   }
   closeLoginModal();
+  closeDeleteModal();
   dom.spacesModal.classList.remove("hidden");
   applyAuthFromInputs({ markDirty: false });
+  clearSpaceError();
+  updateCreateSpaceButton();
   collab.lastSpaceSnapshot = "";
   loadSpaceList({ showLoading: true });
   if (collab.spacePoller) {
@@ -1052,9 +1266,9 @@ function updateConnectButtonLabel() {
     dom.connectButton.title = "Switch space";
     dom.connectButton.setAttribute("aria-label", "Switch space");
   } else {
-    setButtonIcon(dom.connectButton, "fa-plug");
-    dom.connectButton.title = "Connect";
-    dom.connectButton.setAttribute("aria-label", "Connect");
+    setButtonIcon(dom.connectButton, "fa-cloud");
+    dom.connectButton.title = "Login";
+    dom.connectButton.setAttribute("aria-label", "Login");
   }
   updateBoardConnectionLabel();
 }
@@ -1099,8 +1313,16 @@ async function hydrateFromRemote(spaceId, ytext) {
     }
     const content = await response.text();
     const current = ytext.toString();
+    if (!content) {
+      if (current) {
+        ytext.delete(0, ytext.length);
+      }
+      forceEditorRefresh("");
+      return;
+    }
     if (!current && content) {
       ytext.insert(0, content);
+      forceEditorRefresh(content);
       return;
     }
     if (current && current !== content) {
@@ -1206,6 +1428,7 @@ async function connectToSpace(spaceId) {
   updateConnectButtonLabel();
   updateBoardConnectionLabel();
   startPresenceHeartbeat(spaceId);
+  hydrateFromRemote(spaceId, ytext);
 
   provider.on("status", ({ status }) => {
     if (!navigator.onLine) {
@@ -1317,7 +1540,9 @@ function setTheme(theme) {
   document.documentElement.dataset.theme = resolved;
   localStorage.setItem("theme", resolved);
   if (dom.themeButton) {
-    setButtonIcon(dom.themeButton, resolved === "dark" ? "fa-sun" : "fa-moon");
+    setButtonIcon(dom.themeButton, resolved === "dark" ? "fa-moon" : "fa-sun");
+    dom.themeButton.title = "Toggle light/dark mode";
+    dom.themeButton.setAttribute("aria-label", "Toggle light/dark mode");
   }
 }
 
@@ -1397,10 +1622,19 @@ if (dom.spacesModal) {
   });
 }
 
+if (dom.deleteModal) {
+  dom.deleteModal.addEventListener("click", (event) => {
+    if (event.target === dom.deleteModal) {
+      closeDeleteModal();
+    }
+  });
+}
+
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeLoginModal();
     closeSpacesModal();
+    closeDeleteModal();
   }
 });
 
@@ -1428,9 +1662,11 @@ if (dom.spaceCreate && dom.spaceNew) {
       applyAuthFromInputs({ markDirty: false });
       await createSpace(dom.spaceNew.value);
       dom.spaceNew.value = "";
+      clearSpaceError();
+      updateCreateSpaceButton();
       await loadSpaceList({ showLoading: false });
     } catch (error) {
-      alert("Unable to create space. Check the name and credentials.");
+      setSpaceError(formatSpaceError(error, "Unable to create space."));
     }
   });
   dom.spaceNew.addEventListener("keydown", async (event) => {
@@ -1440,11 +1676,41 @@ if (dom.spaceCreate && dom.spaceNew) {
         applyAuthFromInputs({ markDirty: false });
         await createSpace(dom.spaceNew.value);
         dom.spaceNew.value = "";
+        clearSpaceError();
+        updateCreateSpaceButton();
         await loadSpaceList({ showLoading: false });
       } catch (error) {
-        alert("Unable to create space. Check the name and credentials.");
+        setSpaceError(formatSpaceError(error, "Unable to create space."));
       }
     }
+  });
+  dom.spaceNew.addEventListener("input", () => {
+    clearSpaceError();
+    updateCreateSpaceButton();
+  });
+  updateCreateSpaceButton();
+}
+
+if (dom.deleteCancel) {
+  dom.deleteCancel.addEventListener("click", () => {
+    closeDeleteModal();
+  });
+}
+
+if (dom.deleteConfirm) {
+  dom.deleteConfirm.addEventListener("click", async () => {
+    if (!pendingDeleteSpace) {
+      closeDeleteModal();
+      return;
+    }
+    const target = pendingDeleteSpace;
+    try {
+      await deleteSpace(target);
+      clearSpaceError();
+    } catch (error) {
+      setSpaceError(formatSpaceError(error, "Unable to remove space."));
+    }
+    closeDeleteModal();
   });
 }
 

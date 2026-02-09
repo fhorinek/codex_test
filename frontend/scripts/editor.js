@@ -68,13 +68,13 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   function updateSuggestions({ forceOpen = false } = {}) {
     const cursor = editor.selectionStart;
     const before = editor.value.slice(0, cursor);
-    const triggerMatch = before.match(/([#@{!])([^\s}]*)$/);
+    const triggerMatch = before.match(/(^|\s)([#@{!])([^\s}]*)$/);
     if (!triggerMatch || (!forceOpen && !suggestions.classList.contains("open"))) {
       closeSuggestions();
       return;
     }
-    const trigger = triggerMatch[1];
-    const partial = triggerMatch[2].toLowerCase();
+    const trigger = triggerMatch[2];
+    const partial = triggerMatch[3].toLowerCase();
     let items = [];
     if (trigger === "#") {
       items = Array.from(state.tags);
@@ -135,9 +135,12 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   function positionSuggestions() {
     const cursor = editor.selectionStart;
     const coords = getCaretCoordinates(editor, cursor);
+    const editorRect = editor.getBoundingClientRect();
     const wrapperRect = editor.parentElement.getBoundingClientRect();
-    suggestions.style.left = `${coords.left - wrapperRect.left}px`;
-    suggestions.style.top = `${coords.top - wrapperRect.top + coords.height + 6}px`;
+    const offsetLeft = editorRect.left - wrapperRect.left;
+    const offsetTop = editorRect.top - wrapperRect.top;
+    suggestions.style.left = `${offsetLeft + coords.left}px`;
+    suggestions.style.top = `${offsetTop + coords.top + coords.height + 6}px`;
   }
 
   function getCaretCoordinates(textarea, position) {
@@ -148,22 +151,22 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     });
     div.style.position = "absolute";
     div.style.visibility = "hidden";
-    div.style.whiteSpace = "pre";
-    div.style.wordWrap = "normal";
+    div.style.whiteSpace = "pre-wrap";
+    div.style.wordWrap = "break-word";
+    div.style.overflowWrap = "break-word";
     div.style.overflow = "auto";
     div.style.height = `${textarea.clientHeight}px`;
     div.style.width = `${textarea.clientWidth}px`;
     div.textContent = textarea.value.slice(0, position);
     const span = document.createElement("span");
-    span.textContent = textarea.value.slice(position) || ".";
+    span.textContent = ".";
     div.appendChild(span);
     document.body.appendChild(div);
     div.scrollTop = textarea.scrollTop;
     div.scrollLeft = textarea.scrollLeft;
-    const rect = span.getBoundingClientRect();
-    const top = rect.top;
-    const left = rect.left;
-    const height = rect.height;
+    const top = span.offsetTop - div.scrollTop;
+    const left = span.offsetLeft - div.scrollLeft;
+    const height = span.offsetHeight;
     document.body.removeChild(div);
     return { top, left, height };
   }
@@ -178,25 +181,24 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
   function ensureCaretVisible() {
     const cursor = editor.selectionStart;
     const coords = getCaretCoordinates(editor, cursor);
-    const rect = editor.getBoundingClientRect();
     const style = window.getComputedStyle(editor);
     const lineHeight = Number.parseFloat(style.lineHeight) || 18;
-    const padding = Math.max(8, Math.floor(lineHeight * 0.6));
-    const caretTop = coords.top - rect.top;
-    const caretBottom = caretTop + coords.height;
+    const margin = lineHeight * 2;
+    const minTop = margin;
+    const maxBottom = editor.clientHeight - margin;
     let nextScrollTop = editor.scrollTop;
-    if (caretTop < padding) {
-      nextScrollTop = Math.max(0, nextScrollTop - (padding - caretTop));
-    } else if (caretBottom > editor.clientHeight - padding) {
-      nextScrollTop += caretBottom - (editor.clientHeight - padding);
+    if (coords.top < minTop) {
+      nextScrollTop = Math.max(0, nextScrollTop - (minTop - coords.top));
+    } else if (coords.top + coords.height > maxBottom) {
+      nextScrollTop += coords.top + coords.height - maxBottom;
     }
-    const caretLeft = coords.left - rect.left;
-    const caretRight = caretLeft + 6;
+    const minLeft = margin;
+    const maxRight = editor.clientWidth - margin;
     let nextScrollLeft = editor.scrollLeft;
-    if (caretLeft < padding) {
-      nextScrollLeft = Math.max(0, nextScrollLeft - (padding - caretLeft));
-    } else if (caretRight > editor.clientWidth - padding) {
-      nextScrollLeft += caretRight - (editor.clientWidth - padding);
+    if (coords.left < minLeft) {
+      nextScrollLeft = Math.max(0, nextScrollLeft - (minLeft - coords.left));
+    } else if (coords.left > maxRight) {
+      nextScrollLeft += coords.left - maxRight;
     }
     if (nextScrollTop !== editor.scrollTop) {
       editor.scrollTop = nextScrollTop;
@@ -222,7 +224,12 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
     const cursor = editor.selectionStart;
     const lastChar = editor.value[cursor - 1];
     if (triggerChars.has(lastChar)) {
-      updateSuggestions({ forceOpen: true });
+      const beforeTrigger = editor.value[cursor - 2] || "";
+      if (cursor - 1 === 0 || /\s/.test(beforeTrigger)) {
+        updateSuggestions({ forceOpen: true });
+      } else {
+        closeSuggestions();
+      }
       return;
     }
     if (suggestions.classList.contains("open")) {
@@ -328,18 +335,41 @@ export function createEditor({ state, dom, onSync, onSelectTask }) {
       const start = editor.selectionStart;
       const value = editor.value;
       const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+      const lineEnd = value.indexOf("\n", lineStart);
+      const resolvedLineEnd = lineEnd === -1 ? value.length : lineEnd;
+      const fullLine = value.slice(lineStart, resolvedLineEnd);
       const currentLine = value.slice(lineStart, start);
-      const indent = currentLine.match(/^\s*/)[0];
-      const checkboxMatch = currentLine.match(/^(\s*)\[([ xX])\]\s+/);
-      const listMatch = currentLine.match(/^(\s*)([*-])\s+/);
+      const indent = fullLine.match(/^\s*/)[0];
+      const checkboxMatch = fullLine.match(/^(\s*)\[([ xX])\](?:\s+|$)/);
+      const listMatch = fullLine.match(/^(\s*)([*-])(?:\s+|$)/);
+      if (checkboxMatch) {
+        const checkboxOnly = fullLine.trim() === `[${checkboxMatch[2]}]`;
+        if (checkboxOnly) {
+          editor.setRangeText(indent, lineStart, resolvedLineEnd, "end");
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+          onSync();
+          updateSelectedLine();
+          return;
+        }
+      }
+      if (listMatch && listMatch[2] === "-") {
+        const listOnly = fullLine.trim() === listMatch[2];
+        if (listOnly) {
+          editor.setRangeText(indent, lineStart, resolvedLineEnd, "end");
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+          onSync();
+          updateSelectedLine();
+          return;
+        }
+      }
       if (checkboxMatch) {
         editor.setRangeText(`\n${indent}[ ] `, start, start, "end");
-      } else if (listMatch) {
-        const marker = listMatch[2];
-        editor.setRangeText(`\n${indent}${marker} `, start, start, "end");
+      } else if (listMatch && listMatch[2] === "-") {
+        editor.setRangeText(`\n${indent}- `, start, start, "end");
       } else {
         editor.setRangeText(`\n${indent}`, start, start, "end");
       }
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
       onSync();
       updateSelectedLine();
     }
