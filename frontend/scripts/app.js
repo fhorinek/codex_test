@@ -124,6 +124,7 @@ const dom = {
   deleteCancel: document.getElementById("delete-cancel"),
   kanbanBoard: document.getElementById("kanban-board"),
   kanbanDivider: document.getElementById("kanban-divider"),
+  kanbanGroup: document.getElementById("kanban-group"),
   graphPanel: document.querySelector(".graph-panel"),
   tagList: document.getElementById("tag-list"),
   personList: document.getElementById("person-list"),
@@ -168,7 +169,55 @@ const state = {
   positions: new Map(),
   suggestionIndex: 0,
   suggestionItems: [],
+  kanbanGroupBy: "none",
 };
+
+const KANBAN_GROUPS = new Set(["none", "person", "tag"]);
+
+function normalizeKanbanGroup(value) {
+  if (typeof value !== "string") {
+    return "none";
+  }
+  const trimmed = value.trim().toLowerCase();
+  return KANBAN_GROUPS.has(trimmed) ? trimmed : "none";
+}
+
+function getStoredKanbanGroup() {
+  try {
+    return normalizeKanbanGroup(localStorage.getItem("kanbanGroupBy"));
+  } catch {
+    return "none";
+  }
+}
+
+function updateKanbanGroupButtons() {
+  if (!dom.kanbanGroup) {
+    return;
+  }
+  const buttons = dom.kanbanGroup.querySelectorAll("button[data-kanban-group]");
+  buttons.forEach((button) => {
+    const isActive = button.dataset.kanbanGroup === state.kanbanGroupBy;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-checked", isActive ? "true" : "false");
+  });
+}
+
+function setKanbanGroupBy(value, { persist = true } = {}) {
+  const nextValue = normalizeKanbanGroup(value);
+  if (nextValue === state.kanbanGroupBy) {
+    return;
+  }
+  state.kanbanGroupBy = nextValue;
+  updateKanbanGroupButtons();
+  if (persist) {
+    try {
+      localStorage.setItem("kanbanGroupBy", nextValue);
+    } catch {
+      // Ignore storage errors.
+    }
+  }
+  buildKanban();
+}
 
 const collab = {
   spaceId: null,
@@ -573,6 +622,7 @@ function buildKanban() {
     filtersActive,
     matchesFilters,
     updateTaskState,
+    groupBy: state.kanbanGroupBy,
   });
 }
 
@@ -1742,6 +1792,16 @@ dom.searchInput.addEventListener("input", () => {
   updateClearFiltersVisibility();
 });
 
+[dom.kanbanGroup].filter(Boolean).forEach((group) => {
+  group.addEventListener("click", (event) => {
+    const target = event.target.closest("button[data-kanban-group]");
+    if (!target) {
+      return;
+    }
+    setKanbanGroupBy(target.dataset.kanbanGroup);
+  });
+});
+
 [dom.searchName, dom.searchDescription, dom.searchTag, dom.searchPerson].forEach((checkbox) => {
   checkbox.addEventListener("change", () => {
     canvasController.renderGraph();
@@ -1831,6 +1891,9 @@ window.addEventListener("mouseup", () => {
 });
 
 window.addEventListener("resize", scheduleGraphRender);
+
+state.kanbanGroupBy = getStoredKanbanGroup();
+updateKanbanGroupButtons();
 
 updateConnectButtonLabel();
 sync();

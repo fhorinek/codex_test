@@ -75,21 +75,32 @@
         <div class="graph-footer">
           <button id="clear-filters" class="toolbar-button">Clear Highlights</button>
         </div>
-        <div class="legend">
-          <div>
-            <h3>Tags</h3>
-            <div id="tag-list" class="pill-list"></div>
-          </div>
-          <div>
-            <div class="legend-header">
-              <h3>People</h3>
-            </div>
-            <div id="person-list" class="pill-list"></div>
-          </div>
+      </div>
+      <div class="legend">
+        <div class="legend-group legend-people">
+          <h3>People</h3>
+          <div id="person-list" class="pill-list"></div>
+        </div>
+        <div class="legend-group legend-tags">
+          <h3>Tags</h3>
+          <div id="tag-list" class="pill-list"></div>
         </div>
       </div>
       <div id="kanban-divider" class="kanban-divider" role="separator" aria-orientation="horizontal"></div>
       <div id="kanban-board" class="kanban-board" aria-label="Kanban board"></div>
+      <div class="kanban-group-float" aria-label="Kanban swimlane grouping">
+        <div id="kanban-group" class="kanban-group" role="radiogroup" aria-label="Kanban swimlane grouping">
+          <button type="button" class="kanban-group-button" data-kanban-group="none" role="radio" aria-checked="true">
+            No grouping
+          </button>
+          <button type="button" class="kanban-group-button" data-kanban-group="person" role="radio" aria-checked="false">
+            Person
+          </button>
+          <button type="button" class="kanban-group-button" data-kanban-group="tag" role="radio" aria-checked="false">
+            Tag
+          </button>
+        </div>
+      </div>
     </section>
   </div>
 
