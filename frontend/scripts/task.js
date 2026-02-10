@@ -48,7 +48,14 @@ function hslToHex(hue, saturation, lightness) {
 }
 
 export function applyInlineMarkdown(text) {
+  return applyInlineMarkdownWithOptions(text);
+}
+
+export function applyInlineMarkdownWithOptions(text, options = {}) {
   let value = text;
+  const { disableLinks = false } = options;
+  const linkReplacement = disableLinks ? "<span class=\"inline-link\">$1</span>" : "<a href=\"$2\" target=\"_blank\" rel=\"noopener\">$1</a>";
+  const urlReplacement = disableLinks ? "<span class=\"inline-link\">$1</span>" : "<a href=\"$1\" target=\"_blank\" rel=\"noopener\">$1</a>";
   value = value.replace(
     /(^|\s)(#[^\s#@]+)/g,
     "$1<span class=\"pill inline-pill\" data-type=\"tag\" data-value=\"$2\">$2</span>"
@@ -58,14 +65,8 @@ export function applyInlineMarkdown(text) {
     "$1<span class=\"pill inline-pill\" data-type=\"person\" data-value=\"@$2\">👤 $2</span>"
   );
   value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "<img alt=\"$1\" src=\"$2\" />");
-  value = value.replace(
-    /\[([^\]]+)\]\(([^)]+)\)/g,
-    "<a href=\"$2\" target=\"_blank\" rel=\"noopener\">$1</a>"
-  );
-  value = value.replace(
-    /(https?:\/\/[^\s<]+)/g,
-    "<a href=\"$1\" target=\"_blank\" rel=\"noopener\">$1</a>"
-  );
+  value = value.replace(/\[([^\]]+)\]\(([^)]+)\)/g, linkReplacement);
+  value = value.replace(/(https?:\/\/[^\s<]+)/g, urlReplacement);
   value = value.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   value = value.replace(/__([^_]+)__/g, "<u>$1</u>");
   value = value.replace(/==([^=]+)==/g, "<mark>$1</mark>");
@@ -77,6 +78,7 @@ export function applyInlineMarkdown(text) {
 export function renderMarkdown(text, options = {}) {
   const lines = escapeHtml(text).split("\n");
   const lineIndexes = Array.isArray(options.lineIndexes) ? options.lineIndexes : [];
+  const disableLinks = Boolean(options.disableLinks);
   let html = "";
   let inList = false;
   let inTable = false;
@@ -111,7 +113,7 @@ export function renderMarkdown(text, options = {}) {
       inTable = true;
       html += "<table><thead><tr>";
       toCells(line).forEach((cell) => {
-        html += `<th>${applyInlineMarkdown(cell)}</th>`;
+        html += `<th>${applyInlineMarkdownWithOptions(cell, { disableLinks })}</th>`;
       });
       html += "</tr></thead><tbody>";
       return;
@@ -129,7 +131,7 @@ export function renderMarkdown(text, options = {}) {
         if (cells.length) {
           html += "<tr>";
           cells.forEach((cell) => {
-            html += `<td>${applyInlineMarkdown(cell)}</td>`;
+            html += `<td>${applyInlineMarkdownWithOptions(cell, { disableLinks })}</td>`;
           });
           html += "</tr>";
         }
@@ -148,13 +150,13 @@ export function renderMarkdown(text, options = {}) {
         const lineIndex = Number.isFinite(lineIndexes[index])
           ? ` data-line="${lineIndexes[index]}"`
           : "";
-        html += `<div class="checkbox-line" data-line="${lineIndexes[index] ?? ""}"><input type="checkbox"${lineIndex} ${checked ? "checked" : ""} /> ${applyInlineMarkdown(checkboxMatch[2])}</div>`;
+        html += `<div class="checkbox-line" data-line="${lineIndexes[index] ?? ""}"><input type="checkbox"${lineIndex} ${checked ? "checked" : ""} /> ${applyInlineMarkdownWithOptions(checkboxMatch[2], { disableLinks })}</div>`;
       } else if (listMatch) {
         if (!inList) {
           html += "<ul>";
           inList = true;
         }
-        html += `<li>${applyInlineMarkdown(listMatch[1])}</li>`;
+        html += `<li>${applyInlineMarkdownWithOptions(listMatch[1], { disableLinks })}</li>`;
       }
       return;
     }
@@ -165,7 +167,7 @@ export function renderMarkdown(text, options = {}) {
     if (trimmed === "") {
       html += "<br />";
     } else {
-      html += `<p>${applyInlineMarkdown(trimmed)}</p>`;
+      html += `<p>${applyInlineMarkdownWithOptions(trimmed, { disableLinks })}</p>`;
     }
   });
 

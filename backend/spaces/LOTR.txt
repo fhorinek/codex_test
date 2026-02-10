@@ -107,6 +107,34 @@ Leave the Shire, reach Rivendell, and form the Fellowship.
             !done @boromir #fellowship
             Expand on breaking of the fellowship detail a.
 
+                % Ride to Edoras
+                !inprogress @aragorn #rohan
+                Aid Theoden and prepare for war.
+
+                    % Ride to Edoras detail A
+                    !inprogress @aragorn #rohan
+                    Expand on ride to edoras.
+
+                        % Ride to Edoras detail A detail A
+                        !inprogress @aragorn #rohan
+                        Expand on ride to edoras detail a.
+
+                        % Ride to Edoras detail A detail B
+                        !inprogress @aragorn #rohan
+                        Expand on ride to edoras detail a.
+
+                    % Ride to Edoras detail B
+                    !inprogress @aragorn #rohan
+                    Expand on ride to edoras.
+
+                        % Ride to Edoras detail B detail A
+                        !inprogress @aragorn #rohan
+                        Expand on ride to edoras detail b.
+
+                        % Ride to Edoras detail B detail B
+                        !inprogress @aragorn #rohan
+                        Expand on ride to edoras detail b.
+
             % Breaking of the Fellowship detail A detail B
             !done @boromir #fellowship
             Expand on breaking of the fellowship detail a.
@@ -123,97 +151,69 @@ Leave the Shire, reach Rivendell, and form the Fellowship.
             !done @boromir #fellowship
             Expand on breaking of the fellowship detail b.
 
-% The Two Towers
-!inprogress @aragorn #rohan
-[ ] Track the Uruk-hai
-[ ] Aid Rohan's defense
-[ ] Navigate toward Mordor
-[ ] Coordinate with allies
-Pursue the orcs, defend Rohan, and continue the quest.
+                % The Two Towers
+                !inprogress @aragorn #rohan
+                [ ] Track the Uruk-hai
+                [ ] Aid Rohan's defense
+                [ ] Navigate toward Mordor
+                [ ] Coordinate with allies
+                Pursue the orcs, defend Rohan, and continue the quest.
 
-    % Ride to Edoras
-    !inprogress @aragorn #rohan
-    Aid Theoden and prepare for war.
+                    % Helm's Deep
+                    !todo @gimli #rohan
+                    Hold the fortress against Saruman.
 
-        % Ride to Edoras detail A
-        !inprogress @aragorn #rohan
-        Expand on ride to edoras.
+                        % Helm's Deep detail A
+                        !todo @gimli #rohan
+                        Expand on helm's deep.
 
-            % Ride to Edoras detail A detail A
-            !inprogress @aragorn #rohan
-            Expand on ride to edoras detail a.
+                            % Helm's Deep detail A detail A
+                            !todo @gimli #rohan
+                            Expand on helm's deep detail a.
 
-            % Ride to Edoras detail A detail B
-            !inprogress @aragorn #rohan
-            Expand on ride to edoras detail a.
+                            % Helm's Deep detail A detail B
+                            !todo @gimli #rohan
+                            Expand on helm's deep detail a.
 
-        % Ride to Edoras detail B
-        !inprogress @aragorn #rohan
-        Expand on ride to edoras.
+                        % Helm's Deep detail B
+                        !todo @gimli #rohan
+                        Expand on helm's deep.
 
-            % Ride to Edoras detail B detail A
-            !inprogress @aragorn #rohan
-            Expand on ride to edoras detail b.
+                            % Helm's Deep detail B detail A
+                            !todo @gimli #rohan
+                            Expand on helm's deep detail b.
 
-            % Ride to Edoras detail B detail B
-            !inprogress @aragorn #rohan
-            Expand on ride to edoras detail b.
+                            % Helm's Deep detail B detail B
+                            !todo @gimli #rohan
+                            Expand on helm's deep detail b.
 
-    % Helm's Deep
-    !todo @gimli #rohan
-    Hold the fortress against Saruman.
+                    % Frodo and Sam in Ithilien
+                    !inprogress @sam #mordor
+                    Navigate Gollum's guidance.
 
-        % Helm's Deep detail A
-        !todo @gimli #rohan
-        Expand on helm's deep.
+                        % Frodo and Sam in Ithilien detail A
+                        !inprogress @sam #mordor
+                        Expand on frodo and sam in ithilien.
 
-            % Helm's Deep detail A detail A
-            !todo @gimli #rohan
-            Expand on helm's deep detail a.
+                            % Frodo and Sam in Ithilien detail A detail A
+                            !inprogress @sam #mordor
+                            Expand on frodo and sam in ithilien detail a.
 
-            % Helm's Deep detail A detail B
-            !todo @gimli #rohan
-            Expand on helm's deep detail a.
+                            % Frodo and Sam in Ithilien detail A detail B
+                            !inprogress @sam #mordor
+                            Expand on frodo and sam in ithilien detail a.
 
-        % Helm's Deep detail B
-        !todo @gimli #rohan
-        Expand on helm's deep.
+                        % Frodo and Sam in Ithilien detail B
+                        !inprogress @sam #mordor
+                        Expand on frodo and sam in ithilien.
 
-            % Helm's Deep detail B detail A
-            !todo @gimli #rohan
-            Expand on helm's deep detail b.
+                            % Frodo and Sam in Ithilien detail B detail A
+                            !inprogress @sam #mordor
+                            Expand on frodo and sam in ithilien detail b.
 
-            % Helm's Deep detail B detail B
-            !todo @gimli #rohan
-            Expand on helm's deep detail b.
-
-    % Frodo and Sam in Ithilien
-    !inprogress @sam #mordor
-    Navigate Gollum's guidance.
-
-        % Frodo and Sam in Ithilien detail A
-        !inprogress @sam #mordor
-        Expand on frodo and sam in ithilien.
-
-            % Frodo and Sam in Ithilien detail A detail A
-            !inprogress @sam #mordor
-            Expand on frodo and sam in ithilien detail a.
-
-            % Frodo and Sam in Ithilien detail A detail B
-            !inprogress @sam #mordor
-            Expand on frodo and sam in ithilien detail a.
-
-        % Frodo and Sam in Ithilien detail B
-        !inprogress @sam #mordor
-        Expand on frodo and sam in ithilien.
-
-            % Frodo and Sam in Ithilien detail B detail A
-            !inprogress @sam #mordor
-            Expand on frodo and sam in ithilien detail b.
-
-            % Frodo and Sam in Ithilien detail B detail B
-            !inprogress @sam #mordor
-            Expand on frodo and sam in ithilien detail b.
+                            % Frodo and Sam in Ithilien detail B detail B
+                            !inprogress @sam #mordor
+                            Expand on frodo and sam in ithilien detail b.
 
 % The Return of the King
 !todo @aragorn #gondor

@@ -1055,7 +1055,16 @@ function updateTaskEditPreviewFromText(text) {
     )
     .join("\n");
   const lineIndexes = descriptionLines.map((_, index) => index);
-  desc.innerHTML = renderMarkdown(cleanedDescription, { lineIndexes });
+  desc.innerHTML = renderMarkdown(cleanedDescription, { lineIndexes, disableLinks: true });
+  desc.querySelectorAll("a").forEach((link) => {
+    const span = document.createElement("span");
+    span.className = "inline-link";
+    span.textContent = link.textContent || link.getAttribute("href") || "";
+    link.replaceWith(span);
+  });
+  desc.querySelectorAll(".references").forEach((ref) => {
+    ref.classList.add("inline-link");
+  });
   card.appendChild(desc);
   dom.taskEditPreview.appendChild(card);
 

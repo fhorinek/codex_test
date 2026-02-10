@@ -60,6 +60,8 @@ function removeLeadingBlankLines(lines, start, end) {
 }
 
 const UNASSIGNED_GROUP = "__unassigned__";
+let lastKanbanClickAt = 0;
+let lastKanbanClickId = "";
 
 function normalizeGroupBy(value) {
   return value === "person" || value === "tag" ? value : "none";
@@ -211,6 +213,17 @@ function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }) {
     const task = getTaskById(card.dataset.taskId);
     if (task) {
       selectTask(task);
+      const now = performance.now();
+      if (lastKanbanClickId === task.id && now - lastKanbanClickAt < 320) {
+        if (onEditTask) {
+          onEditTask(task);
+        }
+        lastKanbanClickAt = 0;
+        lastKanbanClickId = "";
+      } else {
+        lastKanbanClickAt = now;
+        lastKanbanClickId = task.id;
+      }
     }
   });
   card.addEventListener("dblclick", () => {

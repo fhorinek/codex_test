@@ -18,6 +18,8 @@ export function createCanvas({
   let lineAnimationUntil = 0;
   let lastVisibleTasks = [];
   let lastNodesById = new Map();
+  let lastClickAt = 0;
+  let lastClickTaskId = "";
 
   const getTaskById = (taskId) =>
     state.allTasks.find((item) => item.id === taskId) || null;
@@ -72,6 +74,17 @@ export function createCanvas({
       const task = getTaskById(node.dataset.taskId);
       if (task) {
         onSelectTask(task);
+        const now = performance.now();
+        if (lastClickTaskId === task.id && now - lastClickAt < 320) {
+          if (onEditTask) {
+            onEditTask(task);
+          }
+          lastClickAt = 0;
+          lastClickTaskId = "";
+        } else {
+          lastClickAt = now;
+          lastClickTaskId = task.id;
+        }
       }
     });
     node.addEventListener("dblclick", (event) => {

@@ -2096,6 +2096,19 @@ html[data-theme="dark"] .code-editor .cm-cursor {
   cursor: default;
 }
 
+.inline-link {
+  color: #2f54eb;
+  text-decoration: underline;
+  font-size: 11px;
+  display: inline-block;
+  margin-right: 6px;
+  cursor: default;
+}
+
+html[data-theme="dark"] .inline-link {
+  color: #8fa4ff;
+}
+
 .legend .pill.active {
   background: #2f54eb;
   color: #ffffff;
