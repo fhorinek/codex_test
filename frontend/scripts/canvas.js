@@ -14,10 +14,403 @@ export function createCanvas({
   onFiltersChange,
 }) {
   const { graphNodes, graphLines, graphCanvas, graphMinimap, minimapSvg } = dom;
+  let lineAnimationFrame = null;
+  let lineAnimationUntil = 0;
+  let lastVisibleTasks = [];
+  let lastNodesById = new Map();
+
+  const getTaskById = (taskId) =>
+    state.allTasks.find((item) => item.id === taskId) || null;
+
+  const isTaskDrag = (event) => {
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) {
+      return false;
+    }
+    const types = Array.from(dataTransfer.types || []);
+    if (types.includes("application/json")) {
+      const payload = dataTransfer.getData("application/json");
+      if (payload) {
+        try {
+          const data = JSON.parse(payload);
+          return data.type === "task";
+        } catch {
+          return false;
+        }
+      }
+    }
+    return types.includes("text/plain");
+  };
+
+  const getDraggedTaskId = (event) => {
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) {
+      return null;
+    }
+    const payload = dataTransfer.getData("application/json");
+    if (payload) {
+      try {
+        const data = JSON.parse(payload);
+        if (data.type === "task" && data.taskId) {
+          return data.taskId;
+        }
+      } catch {
+        return null;
+      }
+    }
+    const text = dataTransfer.getData("text/plain");
+    return text || null;
+  };
+
+  const bindTaskNode = (node) => {
+    if (node.dataset.bound) {
+      return;
+    }
+    node.dataset.bound = "true";
+    node.draggable = true;
+    node.addEventListener("click", () => {
+      const task = getTaskById(node.dataset.taskId);
+      if (task) {
+        onSelectTask(task);
+      }
+    });
+    node.addEventListener("dblclick", (event) => {
+      event.stopPropagation();
+      if (!onEditTask) {
+        return;
+      }
+      const task = getTaskById(node.dataset.taskId);
+      if (task) {
+        onEditTask(task);
+      }
+    });
+    node.addEventListener("dragstart", (event) => {
+      const task = getTaskById(node.dataset.taskId);
+      if (!task) {
+        return;
+      }
+      event.dataTransfer.setData("text/plain", task.id);
+      event.dataTransfer.setData(
+        "application/json",
+        JSON.stringify({
+          type: "task",
+          source: "canvas",
+          taskId: task.id,
+        })
+      );
+      node.classList.add("dragging");
+      window.dispatchEvent(new CustomEvent("taskdragstart"));
+      const rect = node.getBoundingClientRect();
+      const ghost = node.cloneNode(true);
+      const scale = state.transform?.scale || 1;
+      ghost.classList.add("drag-ghost");
+      ghost.style.position = "absolute";
+      ghost.style.top = "-9999px";
+      ghost.style.left = "-9999px";
+      ghost.style.margin = "0";
+      ghost.style.width = `${rect.width / scale}px`;
+      ghost.style.height = `${rect.height / scale}px`;
+      if ("zoom" in ghost.style) {
+        ghost.style.zoom = scale;
+      } else {
+        ghost.style.transformOrigin = "top left";
+        ghost.style.transform = `scale(${scale})`;
+      }
+      ghost.style.pointerEvents = "none";
+      document.body.appendChild(ghost);
+      const offsetX = event.clientX - rect.left;
+      const offsetY = event.clientY - rect.top;
+      event.dataTransfer.setDragImage(ghost, offsetX, offsetY);
+      node._dragGhost = ghost;
+    });
+    node.addEventListener("dragend", () => {
+      if (node._dragGhost) {
+        node._dragGhost.remove();
+        node._dragGhost = null;
+      }
+      node.classList.remove("dragging");
+      window.dispatchEvent(new CustomEvent("taskdragend"));
+    });
+    node.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      if (!isTaskDrag(event)) {
+        node.classList.remove("drag-parent-target");
+        return;
+      }
+      const task = getTaskById(node.dataset.taskId);
+      if (!task) {
+        node.classList.remove("drag-parent-target");
+        return;
+      }
+      const draggedId = getDraggedTaskId(event);
+      if (draggedId && draggedId === task.id) {
+        node.classList.remove("drag-parent-target");
+        return;
+      }
+      node.classList.add("drag-parent-target");
+    });
+    node.addEventListener("dragleave", () => {
+      node.classList.remove("drag-parent-target");
+    });
+    node.addEventListener("drop", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      node.classList.remove("drag-parent-target");
+      isDraggingToken = false;
+      const task = getTaskById(node.dataset.taskId);
+      if (!task) {
+        return;
+      }
+      const payload = event.dataTransfer.getData("application/json");
+      if (payload) {
+        const data = JSON.parse(payload);
+        if (data.type === "tag" || data.type === "person") {
+          if (!onUpdateTaskToken) {
+            return;
+          }
+          onUpdateTaskToken(task, data.value, "add");
+          return;
+        }
+        if (data.type === "task" && onMakeSubtask) {
+          const sourceTask = getTaskById(data.taskId);
+          if (sourceTask) {
+            onMakeSubtask(sourceTask, task);
+          }
+          return;
+        }
+      }
+      const taskId = event.dataTransfer.getData("text/plain");
+      if (taskId && onMakeSubtask) {
+        const sourceTask = getTaskById(taskId);
+        if (sourceTask) {
+          onMakeSubtask(sourceTask, task);
+        }
+      }
+    });
+  };
+
+  const updateGraphLines = () => {
+    const paths = [];
+    lastVisibleTasks.forEach((task) => {
+      const node = lastNodesById.get(task.id);
+      if (!node) {
+        return;
+      }
+      const startX = node.offsetLeft + node.offsetWidth;
+      const startY = node.offsetTop + node.offsetHeight / 2;
+      task.children
+        .filter((child) => lastNodesById.has(child.id))
+        .forEach((child) => {
+          const childNode = lastNodesById.get(child.id);
+          const endX = childNode.offsetLeft;
+          const endY = childNode.offsetTop + childNode.offsetHeight / 2;
+          const midX = (startX + endX) / 2;
+          const muted = !matchesFiltersTask(task) || !matchesFiltersTask(child);
+          paths.push(
+            `<path d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="5" fill="none" stroke-opacity="${muted ? 0.15 : 1}" />`
+          );
+        });
+    });
+    graphLines.innerHTML = `<g>${paths.join("")}</g>`;
+  };
+
+  const scheduleLineAnimation = (duration = 550) => {
+    if (lineAnimationFrame) {
+      cancelAnimationFrame(lineAnimationFrame);
+      lineAnimationFrame = null;
+    }
+    lineAnimationUntil = performance.now() + duration;
+    const tick = (now) => {
+      updateGraphLines();
+      if (now < lineAnimationUntil) {
+        lineAnimationFrame = requestAnimationFrame(tick);
+      } else {
+        lineAnimationFrame = null;
+      }
+    };
+    lineAnimationFrame = requestAnimationFrame(tick);
+  };
+
+  const renderTaskNodeContent = (node, task) => {
+    const wasDragging = node.classList.contains("dragging");
+    node.className = "task-node";
+    if (wasDragging) {
+      node.classList.add("dragging");
+    }
+    if (state.selectedTaskId === task.id) {
+      node.classList.add("selected");
+    }
+    if (state.collapsed.has(task.id)) {
+      node.classList.add("collapsed");
+    }
+    if (!matchesFiltersTask(task)) {
+      node.classList.add("dimmed");
+    }
+    if (matchesSearch(task)) {
+      node.classList.add("search-highlight");
+    }
+    node.innerHTML = "";
+
+    const title = document.createElement("h4");
+    title.textContent = task.name;
+    const header = document.createElement("div");
+    header.className = "task-header";
+    header.appendChild(title);
+    if (task.state) {
+      const statePill = document.createElement("span");
+      statePill.className = "pill state-pill";
+      const stateMeta = state.stateMeta?.get(task.state);
+      statePill.textContent = stateMeta?.name || task.state.replace(/^!/, "");
+      const stateColor = state.stateMeta?.get(task.state)?.color;
+      if (stateColor) {
+        statePill.style.borderColor = stateColor;
+        statePill.style.color = stateColor;
+      }
+      statePill.draggable = true;
+      statePill.addEventListener("dragstart", (event) => {
+        event.stopPropagation();
+        event.dataTransfer.setData(
+          "application/json",
+          JSON.stringify({
+            type: "state",
+            value: task.state,
+            source: "task",
+            taskId: task.id,
+          })
+        );
+      });
+      header.appendChild(statePill);
+    }
+
+    const desc = document.createElement("div");
+    desc.className = "description";
+    const descriptionText = task.description
+      .map((line) =>
+        line
+          .replace(/(^|\s)![^\s#@]+/g, "$1")
+          .replace(/\s{2,}/g, " ")
+          .trim()
+      )
+      .join("\n");
+    desc.innerHTML = renderMarkdown(descriptionText, {
+      lineIndexes: task.descriptionLineIndexes,
+    });
+
+    const toggle = document.createElement("div");
+    toggle.className = "collapse-toggle";
+    if (task.children.length) {
+      const count = task.children.length;
+      const countLabel = count === 1 ? "1 Subtask" : `${count} Subtasks`;
+      toggle.textContent = countLabel;
+      toggle.dataset.taskId = task.id;
+      toggle.addEventListener("click", (event) => {
+        event.stopPropagation();
+        const targetTask = getTaskById(toggle.dataset.taskId);
+        if (!targetTask) {
+          return;
+        }
+        if (state.collapsed.has(targetTask.id)) {
+          state.collapsed.delete(targetTask.id);
+        } else {
+          state.collapsed.add(targetTask.id);
+        }
+        renderGraph();
+      });
+    }
+
+    node.appendChild(header);
+    if (task.description.length) {
+      node.appendChild(desc);
+    }
+    if (task.description.length) {
+      desc.querySelectorAll(".references").forEach((link) => {
+        link.addEventListener("click", (event) => {
+          event.stopPropagation();
+          const ref = link.dataset.ref;
+          const target = findTaskByName(ref);
+          if (target) {
+            onSelectTask(target);
+          }
+        });
+      });
+      desc.querySelectorAll(".inline-pill").forEach((pill) => {
+        const type = pill.dataset.type;
+        const value = pill.dataset.value;
+        if (type === "tag" && state.selectedTags.has(value)) {
+          pill.classList.add("active");
+        }
+        if (type === "person" && state.selectedPeople.has(value)) {
+          pill.classList.add("active");
+        }
+        if (type === "tag") {
+          const color = state.tagMeta?.get(value)?.color;
+          if (color) {
+            pill.style.borderColor = color;
+          }
+          const label = state.tagMeta?.get(value)?.name || value.replace("#", "");
+          pill.textContent = `#${label}`;
+        }
+        if (type === "person") {
+          const color = state.peopleMeta?.get(value)?.color;
+          if (color) {
+            pill.style.borderColor = color;
+          }
+          const personLabel = state.peopleMeta?.get(value)?.name || value.replace("@", "");
+          pill.textContent = `👤 ${personLabel}`;
+        }
+        pill.draggable = true;
+        pill.addEventListener("dragstart", (event) => {
+          event.stopPropagation();
+          event.dataTransfer.setData(
+            "application/json",
+            JSON.stringify({
+              type,
+              value,
+              source: "task",
+              taskId: task.id,
+            })
+          );
+        });
+        pill.addEventListener("click", (event) => {
+          event.stopPropagation();
+          if (type === "tag") {
+            toggleTag(value);
+          } else if (type === "person") {
+            togglePerson(value);
+          }
+        });
+      });
+      desc.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+        const lineIndex = Number.parseInt(
+          checkbox.dataset.line || checkbox.closest(".checkbox-line")?.dataset.line,
+          10
+        );
+        if (!Number.isFinite(lineIndex)) {
+          checkbox.disabled = true;
+          return;
+        }
+        checkbox.addEventListener("mousedown", (event) => {
+          event.stopPropagation();
+        });
+        checkbox.addEventListener("click", (event) => {
+          event.stopPropagation();
+          if (onToggleCheckbox) {
+            onToggleCheckbox(lineIndex, checkbox.checked);
+          }
+        });
+      });
+    }
+    if (task.children.length) {
+      node.appendChild(toggle);
+    }
+  };
 
   function renderGraph() {
-    graphNodes.innerHTML = "";
     graphLines.innerHTML = "";
+    const existingNodes = new Map();
+    graphNodes.querySelectorAll(".task-node[data-task-id]").forEach((node) => {
+      existingNodes.set(node.dataset.taskId, node);
+    });
     const canvasRect = graphCanvas.getBoundingClientRect();
 
     const positions = new Map();
@@ -34,314 +427,20 @@ export function createCanvas({
 
     // First pass: build nodes to measure real sizes before layout.
     visibleTasks.forEach((task) => {
-      const node = document.createElement("div");
-      node.className = "task-node";
-      node.dataset.taskId = task.id;
+      let node = existingNodes.get(task.id);
+      if (!node) {
+        node = document.createElement("div");
+        node.className = "task-node";
+        node.dataset.taskId = task.id;
+        graphNodes.appendChild(node);
+      } else if (node.dataset.taskId !== task.id) {
+        node.dataset.taskId = task.id;
+      }
+      bindTaskNode(node);
+      renderTaskNodeContent(node, task);
       node.style.left = `${startX + task.depth * (nodeWidth + 40)}px`;
       node.style.top = "0px";
       node.style.visibility = "hidden";
-
-      if (state.selectedTaskId === task.id) {
-        node.classList.add("selected");
-      }
-      if (state.collapsed.has(task.id)) {
-        node.classList.add("collapsed");
-      }
-
-      if (!matchesFiltersTask(task)) {
-        node.classList.add("dimmed");
-      }
-
-      if (matchesSearch(task)) {
-        node.classList.add("search-highlight");
-      }
-
-      const title = document.createElement("h4");
-      title.textContent = task.name;
-      const header = document.createElement("div");
-      header.className = "task-header";
-      header.appendChild(title);
-      if (task.state) {
-        const statePill = document.createElement("span");
-        statePill.className = "pill state-pill";
-        const stateMeta = state.stateMeta?.get(task.state);
-        statePill.textContent = stateMeta?.name || task.state.replace(/^!/, "");
-        const stateColor = state.stateMeta?.get(task.state)?.color;
-        if (stateColor) {
-          statePill.style.borderColor = stateColor;
-          statePill.style.color = stateColor;
-        }
-        statePill.draggable = true;
-        statePill.addEventListener("dragstart", (event) => {
-          event.stopPropagation();
-          event.dataTransfer.setData(
-            "application/json",
-            JSON.stringify({
-              type: "state",
-              value: task.state,
-              source: "task",
-              taskId: task.id,
-            })
-          );
-        });
-        header.appendChild(statePill);
-      }
-
-      const desc = document.createElement("div");
-      desc.className = "description";
-      const descriptionText = task.description
-        .map((line) =>
-          line
-            .replace(/(^|\s)![^\s#@]+/g, "$1")
-            .replace(/\s{2,}/g, " ")
-            .trim()
-        )
-        .join("\n");
-      desc.innerHTML = renderMarkdown(descriptionText, {
-        lineIndexes: task.descriptionLineIndexes,
-      });
-
-      const toggle = document.createElement("div");
-      toggle.className = "collapse-toggle";
-      if (task.children.length) {
-        const count = task.children.length;
-        const countLabel = count === 1 ? "1 Subtask" : `${count} Subtasks`;
-        toggle.textContent = countLabel;
-        toggle.addEventListener("click", (event) => {
-          event.stopPropagation();
-          if (state.collapsed.has(task.id)) {
-            state.collapsed.delete(task.id);
-          } else {
-            state.collapsed.add(task.id);
-          }
-          renderGraph();
-        });
-      }
-
-      node.appendChild(header);
-      if (task.description.length) {
-        node.appendChild(desc);
-      }
-      if (task.description.length) {
-        desc.querySelectorAll(".references").forEach((link) => {
-          link.addEventListener("click", (event) => {
-            event.stopPropagation();
-            const ref = link.dataset.ref;
-            const target = findTaskByName(ref);
-            if (target) {
-              onSelectTask(target);
-            }
-          });
-        });
-        desc.querySelectorAll(".inline-pill").forEach((pill) => {
-          const type = pill.dataset.type;
-          const value = pill.dataset.value;
-          if (type === "tag" && state.selectedTags.has(value)) {
-            pill.classList.add("active");
-          }
-          if (type === "person" && state.selectedPeople.has(value)) {
-            pill.classList.add("active");
-          }
-          if (type === "tag") {
-            const color = state.tagMeta?.get(value)?.color;
-            if (color) {
-              pill.style.borderColor = color;
-            }
-            const label = state.tagMeta?.get(value)?.name || value.replace("#", "");
-            pill.textContent = `#${label}`;
-          }
-          if (type === "person") {
-            const color = state.peopleMeta?.get(value)?.color;
-            if (color) {
-              pill.style.borderColor = color;
-            }
-            const personLabel = state.peopleMeta?.get(value)?.name || value.replace("@", "");
-            pill.textContent = `👤 ${personLabel}`;
-          }
-          pill.draggable = true;
-          pill.addEventListener("dragstart", (event) => {
-            event.stopPropagation();
-            event.dataTransfer.setData(
-              "application/json",
-              JSON.stringify({
-                type,
-                value,
-                source: "task",
-                taskId: task.id,
-              })
-            );
-          });
-          pill.addEventListener("click", (event) => {
-            event.stopPropagation();
-            if (type === "tag") {
-              toggleTag(value);
-            } else if (type === "person") {
-              togglePerson(value);
-            }
-          });
-        });
-        desc.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
-          const lineIndex = Number.parseInt(
-            checkbox.dataset.line || checkbox.closest(".checkbox-line")?.dataset.line,
-            10
-          );
-          if (!Number.isFinite(lineIndex)) {
-            checkbox.disabled = true;
-            return;
-          }
-          checkbox.addEventListener("mousedown", (event) => {
-            event.stopPropagation();
-          });
-          checkbox.addEventListener("click", (event) => {
-            event.stopPropagation();
-            if (onToggleCheckbox) {
-              onToggleCheckbox(lineIndex, checkbox.checked);
-            }
-          });
-        });
-      }
-      if (task.children.length) {
-        node.appendChild(toggle);
-      }
-
-      node.addEventListener("click", () => onSelectTask(task));
-      node.addEventListener("dblclick", (event) => {
-        event.stopPropagation();
-        if (onEditTask) {
-          onEditTask(task);
-        }
-      });
-      node.draggable = true;
-      node.addEventListener("dragstart", (event) => {
-        event.dataTransfer.setData("text/plain", task.id);
-        event.dataTransfer.setData(
-          "application/json",
-          JSON.stringify({
-            type: "task",
-            source: "canvas",
-            taskId: task.id,
-          })
-        );
-        node.classList.add("dragging");
-        window.dispatchEvent(new CustomEvent("taskdragstart"));
-        const rect = node.getBoundingClientRect();
-        const ghost = node.cloneNode(true);
-        const scale = state.transform?.scale || 1;
-        ghost.classList.add("drag-ghost");
-        ghost.style.position = "absolute";
-        ghost.style.top = "-9999px";
-        ghost.style.left = "-9999px";
-        ghost.style.margin = "0";
-        ghost.style.width = `${rect.width / scale}px`;
-        ghost.style.height = `${rect.height / scale}px`;
-        if ("zoom" in ghost.style) {
-          ghost.style.zoom = scale;
-        } else {
-          ghost.style.transformOrigin = "top left";
-          ghost.style.transform = `scale(${scale})`;
-        }
-        ghost.style.pointerEvents = "none";
-        document.body.appendChild(ghost);
-        const offsetX = event.clientX - rect.left;
-        const offsetY = event.clientY - rect.top;
-        event.dataTransfer.setDragImage(ghost, offsetX, offsetY);
-        node._dragGhost = ghost;
-      });
-      node.addEventListener("dragend", () => {
-        if (node._dragGhost) {
-          node._dragGhost.remove();
-          node._dragGhost = null;
-        }
-        node.classList.remove("dragging");
-        window.dispatchEvent(new CustomEvent("taskdragend"));
-      });
-      const isTaskDrag = (event) => {
-        const dataTransfer = event.dataTransfer;
-        if (!dataTransfer) {
-          return false;
-        }
-        const types = Array.from(dataTransfer.types || []);
-        if (types.includes("application/json")) {
-          const payload = dataTransfer.getData("application/json");
-          if (payload) {
-            try {
-              const data = JSON.parse(payload);
-              return data.type === "task";
-            } catch {
-              return false;
-            }
-          }
-        }
-        return types.includes("text/plain");
-      };
-      const getDraggedTaskId = (event) => {
-        const dataTransfer = event.dataTransfer;
-        if (!dataTransfer) {
-          return null;
-        }
-        const payload = dataTransfer.getData("application/json");
-        if (payload) {
-          try {
-            const data = JSON.parse(payload);
-            if (data.type === "task" && data.taskId) {
-              return data.taskId;
-            }
-          } catch {
-            return null;
-          }
-        }
-        const text = dataTransfer.getData("text/plain");
-        return text || null;
-      };
-      node.addEventListener("dragover", (event) => {
-        event.preventDefault();
-        if (!isTaskDrag(event)) {
-          node.classList.remove("drag-parent-target");
-          return;
-        }
-        const draggedId = getDraggedTaskId(event);
-        if (draggedId && draggedId === task.id) {
-          node.classList.remove("drag-parent-target");
-          return;
-        }
-        node.classList.add("drag-parent-target");
-      });
-      node.addEventListener("dragleave", () => {
-        node.classList.remove("drag-parent-target");
-      });
-      node.addEventListener("drop", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        node.classList.remove("drag-parent-target");
-        isDraggingToken = false;
-        const payload = event.dataTransfer.getData("application/json");
-        if (payload) {
-          const data = JSON.parse(payload);
-          if (data.type === "tag" || data.type === "person") {
-            if (!onUpdateTaskToken) {
-              return;
-            }
-            onUpdateTaskToken(task, data.value, "add");
-            return;
-          }
-          if (data.type === "task" && onMakeSubtask) {
-            const sourceTask = state.allTasks.find((item) => item.id === data.taskId);
-            if (sourceTask) {
-              onMakeSubtask(sourceTask, task);
-            }
-            return;
-          }
-        }
-        const taskId = event.dataTransfer.getData("text/plain");
-        if (taskId && onMakeSubtask) {
-          const sourceTask = state.allTasks.find((item) => item.id === taskId);
-          if (sourceTask) {
-            onMakeSubtask(sourceTask, task);
-          }
-        }
-      });
-
-      graphNodes.appendChild(node);
       nodesById.set(task.id, node);
       const rect = node.getBoundingClientRect();
       const scale = state.transform?.scale || 1;
@@ -349,6 +448,12 @@ export function createCanvas({
       const measuredWidth = Math.ceil(rect.width / scale);
       heightsById.set(task.id, measuredHeight || node.offsetHeight || 0);
       widthsById.set(task.id, measuredWidth || node.offsetWidth || nodeWidth);
+    });
+
+    existingNodes.forEach((node, taskId) => {
+      if (!nodesById.has(taskId)) {
+        node.remove();
+      }
     });
 
     const nodeHeightFor = (taskId) => heightsById.get(taskId) || 120;
@@ -426,28 +531,10 @@ export function createCanvas({
       canvasRect,
     });
 
-    const paths = [];
-    visibleTasks.forEach((task) => {
-      const node = nodesById.get(task.id);
-      if (!node) {
-        return;
-      }
-      const startX = node.offsetLeft + node.offsetWidth;
-      const startY = node.offsetTop + node.offsetHeight / 2;
-      task.children
-        .filter((child) => nodesById.has(child.id))
-        .forEach((child) => {
-          const childNode = nodesById.get(child.id);
-          const endX = childNode.offsetLeft;
-          const endY = childNode.offsetTop + childNode.offsetHeight / 2;
-          const midX = (startX + endX) / 2;
-          const muted = !matchesFiltersTask(task) || !matchesFiltersTask(child);
-          paths.push(
-            `<path d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="5" fill="none" stroke-opacity="${muted ? 0.15 : 1}" />`
-          );
-        });
-    });
-    graphLines.innerHTML = `<g>${paths.join("")}</g>`;
+    lastVisibleTasks = visibleTasks;
+    lastNodesById = nodesById;
+    updateGraphLines();
+    scheduleLineAnimation();
 
     applyTransform(state.animateTransform);
     state.animateTransform = false;

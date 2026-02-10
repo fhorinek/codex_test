@@ -257,6 +257,7 @@ export function parseTasks(text) {
   const { config, startIndex } = parseConfig(lines);
   const tasks = [];
   const stack = [];
+  let rootCounter = 0;
   let currentTask = null;
   const tags = new Set();
   const people = new Set();
@@ -293,8 +294,9 @@ export function parseTasks(text) {
       const indent = taskMatch[1].length;
       const depth = Math.floor(indent / 4);
       const name = taskMatch[2].trim();
+      const encodedName = encodeURIComponent(name || "task");
       const task = {
-        id: `${index}-${name}`,
+        id: "",
         name,
         depth,
         parent: null,
@@ -308,14 +310,21 @@ export function parseTasks(text) {
         lineIndex: index,
       };
       if (depth === 0) {
+        rootCounter += 1;
+        task.id = `root/${rootCounter}-${encodedName}`;
         tasks.push(task);
         stack.length = 0;
         stack.push(task);
       } else {
         const parent = stack[depth - 1];
         if (parent) {
+          parent._childSeq = (parent._childSeq || 0) + 1;
+          task.id = `${parent.id}/${parent._childSeq}-${encodedName}`;
           parent.children.push(task);
           task.parent = parent;
+        } else {
+          rootCounter += 1;
+          task.id = `root/${rootCounter}-${encodedName}`;
         }
         stack[depth] = task;
       }

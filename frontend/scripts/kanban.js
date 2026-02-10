@@ -123,6 +123,147 @@ function getTaskGroupKeys(task, groupBy) {
   return [UNASSIGNED_GROUP];
 }
 
+function renderKanbanCardContent({
+  card,
+  task,
+  state,
+  matchesSearchTask,
+  filtersActive,
+  matchesFilters,
+}) {
+  const wasDragging = card.classList.contains("dragging");
+  card.className = "kanban-card";
+  if (wasDragging) {
+    card.classList.add("dragging");
+  }
+  card.dataset.taskId = task.id;
+  card.setAttribute("aria-current", "false");
+  if (state.selectedTaskId === task.id) {
+    card.classList.add("selected");
+    card.setAttribute("aria-current", "true");
+  } else {
+    card.removeAttribute("aria-current");
+  }
+  card.style.borderColor = "";
+  card.innerHTML = "";
+
+  const titleNode = document.createElement("div");
+  titleNode.className = "kanban-card-title";
+  titleNode.textContent = task.name;
+  card.appendChild(titleNode);
+  const metaWrap = document.createElement("div");
+  metaWrap.className = "kanban-card-meta";
+  let hasMeta = false;
+  if (task.people.length) {
+    const person = task.people[0];
+    const meta = state.peopleMeta?.get(person);
+    const pill = document.createElement("span");
+    pill.className = "pill kanban-person";
+    pill.textContent = `👤 ${meta?.name || person.replace("@", "")}`;
+    if (meta?.color) {
+      pill.style.borderColor = meta.color;
+    }
+    metaWrap.appendChild(pill);
+    hasMeta = true;
+  }
+  if (task.tags.length) {
+    const seenTags = new Set();
+    task.tags.forEach((tag) => {
+      if (seenTags.has(tag)) {
+        return;
+      }
+      seenTags.add(tag);
+      const meta = state.tagMeta?.get(tag);
+      const pill = document.createElement("span");
+      pill.className = "pill kanban-tag";
+      pill.textContent = `#${meta?.name || tag.replace("#", "")}`;
+      if (meta?.color) {
+        pill.style.borderColor = meta.color;
+      }
+      metaWrap.appendChild(pill);
+      hasMeta = true;
+    });
+  }
+  if (hasMeta) {
+    card.appendChild(metaWrap);
+  }
+  if (matchesSearchTask(task)) {
+    card.classList.add("kanban-search");
+  }
+  if (filtersActive() && !matchesFilters(task)) {
+    card.classList.add("kanban-hidden");
+  }
+  if (task.state) {
+    const color = state.stateMeta?.get(task.state)?.color;
+    if (color) {
+      card.style.borderColor = lightenColor(color, 0.5);
+    }
+  }
+}
+
+function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }) {
+  if (card.dataset.bound) {
+    return;
+  }
+  card.dataset.bound = "true";
+  card.draggable = true;
+  card.addEventListener("click", () => {
+    const task = getTaskById(card.dataset.taskId);
+    if (task) {
+      selectTask(task);
+    }
+  });
+  card.addEventListener("dblclick", () => {
+    if (!onEditTask) {
+      return;
+    }
+    const task = getTaskById(card.dataset.taskId);
+    if (task) {
+      onEditTask(task);
+    }
+  });
+  card.addEventListener("dragstart", (event) => {
+    const task = getTaskById(card.dataset.taskId);
+    if (!task) {
+      return;
+    }
+    const rect = card.getBoundingClientRect();
+    const ghost = card.cloneNode(true);
+    ghost.classList.add("drag-ghost");
+    ghost.style.position = "absolute";
+    ghost.style.top = "-9999px";
+    ghost.style.left = "-9999px";
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.height = `${rect.height}px`;
+    document.body.appendChild(ghost);
+    event.dataTransfer.setDragImage(
+      ghost,
+      ghost.offsetWidth / 2,
+      ghost.offsetHeight / 2
+    );
+    card.classList.add("dragging");
+    event.dataTransfer.setData("text/plain", task.id);
+    event.dataTransfer.setData(
+      "application/json",
+      JSON.stringify({
+        type: "task",
+        source: "kanban",
+        taskId: task.id,
+      })
+    );
+    window.dispatchEvent(new CustomEvent("taskdragstart"));
+    card._dragGhost = ghost;
+  });
+  card.addEventListener("dragend", () => {
+    card.classList.remove("dragging");
+    if (card._dragGhost) {
+      card._dragGhost.remove();
+      card._dragGhost = null;
+    }
+    window.dispatchEvent(new CustomEvent("taskdragend"));
+  });
+}
+
 function createKanbanColumn({
   state,
   stateTag,
@@ -133,6 +274,8 @@ function createKanbanColumn({
   filtersActive,
   matchesFilters,
   updateTaskState,
+  existingCards,
+  getTaskById,
 }) {
   const column = document.createElement("div");
   column.className = "kanban-column";
@@ -149,108 +292,25 @@ function createKanbanColumn({
   const list = document.createElement("div");
   list.className = "kanban-list";
   tasks.forEach((task) => {
-    const card = document.createElement("button");
-    card.type = "button";
-    card.className = "kanban-card";
-    card.dataset.taskId = task.id;
-    if (state.selectedTaskId === task.id) {
-      card.classList.add("selected");
-      card.setAttribute("aria-current", "true");
+    let card = existingCards?.get(task.id);
+    if (!card) {
+      card = document.createElement("button");
+      card.type = "button";
     }
-    const titleNode = document.createElement("div");
-    titleNode.className = "kanban-card-title";
-    titleNode.textContent = task.name;
-    card.appendChild(titleNode);
-    const metaWrap = document.createElement("div");
-    metaWrap.className = "kanban-card-meta";
-    let hasMeta = false;
-    if (task.people.length) {
-      const person = task.people[0];
-      const meta = state.peopleMeta?.get(person);
-      const pill = document.createElement("span");
-      pill.className = "pill kanban-person";
-      pill.textContent = `👤 ${meta?.name || person.replace("@", "")}`;
-      if (meta?.color) {
-        pill.style.borderColor = meta.color;
-      }
-      metaWrap.appendChild(pill);
-      hasMeta = true;
-    }
-    if (task.tags.length) {
-      const seenTags = new Set();
-      task.tags.forEach((tag) => {
-        if (seenTags.has(tag)) {
-          return;
-        }
-        seenTags.add(tag);
-        const meta = state.tagMeta?.get(tag);
-        const pill = document.createElement("span");
-        pill.className = "pill kanban-tag";
-        pill.textContent = `#${meta?.name || tag.replace("#", "")}`;
-        if (meta?.color) {
-          pill.style.borderColor = meta.color;
-        }
-        metaWrap.appendChild(pill);
-        hasMeta = true;
-      });
-    }
-    if (hasMeta) {
-      card.appendChild(metaWrap);
-    }
-    if (matchesSearchTask(task)) {
-      card.classList.add("kanban-search");
-    }
-    if (filtersActive() && !matchesFilters(task)) {
-      card.classList.add("kanban-hidden");
-    }
-    if (task.state) {
-      const color = state.stateMeta?.get(task.state)?.color;
-      if (color) {
-        card.style.borderColor = lightenColor(color, 0.5);
-      }
-    }
-    card.addEventListener("click", () => selectTask(task));
-    card.addEventListener("dblclick", () => {
-      if (onEditTask) {
-        onEditTask(task);
-      }
+    renderKanbanCardContent({
+      card,
+      task,
+      state,
+      matchesSearchTask,
+      filtersActive,
+      matchesFilters,
     });
-    card.draggable = true;
-    card.addEventListener("dragstart", (event) => {
-      const rect = card.getBoundingClientRect();
-      const ghost = card.cloneNode(true);
-      ghost.classList.add("drag-ghost");
-      ghost.style.position = "absolute";
-      ghost.style.top = "-9999px";
-      ghost.style.left = "-9999px";
-      ghost.style.width = `${rect.width}px`;
-      ghost.style.height = `${rect.height}px`;
-      document.body.appendChild(ghost);
-      event.dataTransfer.setDragImage(
-        ghost,
-        ghost.offsetWidth / 2,
-        ghost.offsetHeight / 2
-      );
-      card.classList.add("dragging");
-      event.dataTransfer.setData("text/plain", task.id);
-      event.dataTransfer.setData(
-        "application/json",
-        JSON.stringify({
-          type: "task",
-          source: "kanban",
-          taskId: task.id,
-        })
-      );
-      window.dispatchEvent(new CustomEvent("taskdragstart"));
-      card._dragGhost = ghost;
-    });
-    card.addEventListener("dragend", () => {
-      card.classList.remove("dragging");
-      if (card._dragGhost) {
-        card._dragGhost.remove();
-        card._dragGhost = null;
-      }
-      window.dispatchEvent(new CustomEvent("taskdragend"));
+    bindKanbanCard({
+      card,
+      state,
+      selectTask,
+      onEditTask,
+      getTaskById,
     });
     list.appendChild(card);
   });
@@ -290,6 +350,18 @@ export function buildKanban({
   if (!dom.kanbanBoard) {
     return;
   }
+  const getTaskById = (taskId) =>
+    state.allTasks.find((item) => item.id === taskId) || null;
+  const normalizedGroupBy = normalizeGroupBy(groupBy);
+  const reuseCards = normalizedGroupBy === "none";
+  const existingCards = reuseCards ? new Map() : null;
+  if (reuseCards) {
+    dom.kanbanBoard
+      .querySelectorAll(".kanban-card[data-task-id]")
+      .forEach((card) => {
+        existingCards.set(card.dataset.taskId, card);
+      });
+  }
   const content = dom.kanbanContent || dom.kanbanBoard;
   let groupFloat = null;
   if (content === dom.kanbanBoard) {
@@ -302,7 +374,6 @@ export function buildKanban({
   if (groupFloat) {
     content.appendChild(groupFloat);
   }
-  const normalizedGroupBy = normalizeGroupBy(groupBy);
   dom.kanbanBoard.classList.toggle("kanban-grouped", normalizedGroupBy !== "none");
   const stateOrder = state.config?.states?.map((stateItem) => `!${stateItem.key}`) || [];
   const extraStates = Array.from(state.states)
@@ -334,6 +405,8 @@ export function buildKanban({
         filtersActive,
         matchesFilters,
         updateTaskState,
+        existingCards,
+        getTaskById,
       });
       content.appendChild(column);
     });
@@ -440,6 +513,8 @@ export function buildKanban({
         filtersActive,
         matchesFilters,
         updateTaskState,
+        existingCards: null,
+        getTaskById,
       });
       columns.appendChild(column);
     });

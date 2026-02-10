@@ -188,6 +188,7 @@ const state = {
   suggestionIndex: 0,
   suggestionItems: [],
   kanbanGroupBy: "none",
+  taskSignatures: new Map(),
 };
 
 const KANBAN_GROUPS = new Set(["none", "person", "tag"]);
@@ -677,6 +678,7 @@ function sync() {
     peopleMeta,
     stateMeta,
   } = parseTasks(editorController.getValue());
+  applyStableTaskIds({ allTasks, lines });
   state.tasks = tasks;
   state.allTasks = allTasks;
   state.tags = tags;
@@ -1217,48 +1219,77 @@ function closeTaskDeleteModal() {
   clearTaskDeletePreview();
 }
 
+function animateTaskRemoval(task, onComplete) {
+  if (!task) {
+    onComplete();
+    return;
+  }
+  const nodes = [];
+  const graphNode = document.querySelector(`.task-node[data-task-id="${task.id}"]`);
+  if (graphNode) {
+    nodes.push(graphNode);
+  }
+  const kanbanCard = document.querySelector(`.kanban-card[data-task-id="${task.id}"]`);
+  if (kanbanCard) {
+    nodes.push(kanbanCard);
+  }
+  if (!nodes.length) {
+    onComplete();
+    return;
+  }
+  nodes.forEach((node) => node.classList.add("deleting"));
+  setTimeout(onComplete, 220);
+}
+
 function deleteTask(task) {
   if (!task) {
     return;
   }
-  const lines = editorController.getValue().split("\n");
-  const block = findTaskBlock(lines, task.lineIndex);
-  if (!block) {
-    return;
-  }
-  lines.splice(block.start, block.end - block.start);
-  applyEditorValue(lines.join("\n"));
-  syncEditorState();
-  handleEditorSelection(Math.max(0, block.start - 1));
+  animateTaskRemoval(task, () => {
+    const lines = editorController.getValue().split("\n");
+    const block = findTaskBlock(lines, task.lineIndex);
+    if (!block) {
+      return;
+    }
+    lines.splice(block.start, block.end - block.start);
+    applyEditorValue(lines.join("\n"));
+    syncEditorState();
+    handleEditorSelection(Math.max(0, block.start - 1));
+  });
 }
 
 function deleteTaskKeepSubtasks(task) {
   if (!task) {
     return;
   }
-  const lines = editorController.getValue().split("\n");
-  const block = findTaskBlock(lines, task.lineIndex);
-  if (!block) {
-    return;
-  }
-  const blockLines = lines.slice(block.start, block.end);
-  if (blockLines.length <= 1) {
-    lines.splice(block.start, block.end - block.start);
+  animateTaskRemoval(task, () => {
+    const lines = editorController.getValue().split("\n");
+    const block = findTaskBlock(lines, task.lineIndex);
+    if (!block) {
+      return;
+    }
+    const blockLines = lines.slice(block.start, block.end);
+    if (blockLines.length <= 1) {
+      lines.splice(block.start, block.end - block.start);
+      applyEditorValue(lines.join("\n"));
+      syncEditorState();
+      handleEditorSelection(Math.max(0, block.start - 1));
+      return;
+    }
+    const childLines = blockLines.slice(1).map((line) => adjustIndent(line, -4));
+    lines.splice(block.start, block.end - block.start, ...childLines);
     applyEditorValue(lines.join("\n"));
     syncEditorState();
     handleEditorSelection(Math.max(0, block.start - 1));
-    return;
-  }
-  const childLines = blockLines.slice(1).map((line) => adjustIndent(line, -4));
-  lines.splice(block.start, block.end - block.start, ...childLines);
-  applyEditorValue(lines.join("\n"));
-  syncEditorState();
-  handleEditorSelection(Math.max(0, block.start - 1));
+  });
 }
 
 function clearTaskDeletePreview() {
   document.querySelectorAll(".task-node.delete-preview").forEach((node) => {
     node.classList.remove("delete-preview");
+  });
+  document.querySelectorAll(".kanban-card.delete-preview").forEach((card) => {
+    card.classList.remove("delete-preview");
   });
 }
 
@@ -1285,6 +1316,10 @@ function highlightTaskDeletePreview(task, includeSubtasks) {
     const node = document.querySelector(`.task-node[data-task-id="${item.id}"]`);
     if (node) {
       node.classList.add("delete-preview");
+    }
+    const card = document.querySelector(`.kanban-card[data-task-id="${item.id}"]`);
+    if (card) {
+      card.classList.add("delete-preview");
     }
   });
 }
@@ -1381,6 +1416,40 @@ function findTaskBlock(lines, lineIndex) {
     end += 1;
   }
   return { start: lineIndex, end, depth, indent };
+}
+
+function buildTaskSignature(lines, task) {
+  const parts = [task.name, ...task.description];
+  const signature = parts.join("\n").trim();
+  if (signature) {
+    return signature;
+  }
+  return `${task.name}|${task.lineIndex}`;
+}
+
+function applyStableTaskIds({ allTasks, lines }) {
+  const previous = state.taskSignatures;
+  if (previous && previous.size) {
+    const remaining = new Map();
+    previous.forEach((list, signature) => {
+      remaining.set(signature, list.slice());
+    });
+    allTasks.forEach((task) => {
+      const signature = buildTaskSignature(lines, task);
+      const candidates = remaining.get(signature);
+      if (candidates && candidates.length) {
+        task.id = candidates.shift();
+      }
+    });
+  }
+  const nextSignatures = new Map();
+  allTasks.forEach((task) => {
+    const signature = buildTaskSignature(lines, task);
+    const list = nextSignatures.get(signature) || [];
+    list.push(task.id);
+    nextSignatures.set(signature, list);
+  });
+  state.taskSignatures = nextSignatures;
 }
 
 function adjustIndent(line, deltaSpaces) {
