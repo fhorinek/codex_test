@@ -2362,6 +2362,12 @@ function setTheme(theme) {
   const resolved = theme === "dark" ? "dark" : "light";
   document.documentElement.dataset.theme = resolved;
   localStorage.setItem("theme", resolved);
+  if (editorController?.setTheme) {
+    editorController.setTheme(resolved);
+  }
+  if (modalEditorController?.setTheme) {
+    modalEditorController.setTheme(resolved);
+  }
   if (dom.themeButton) {
     setButtonIcon(dom.themeButton, resolved === "dark" ? "fa-moon" : "fa-sun");
     dom.themeButton.title = "Toggle light/dark mode";

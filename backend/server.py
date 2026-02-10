@@ -220,7 +220,7 @@ def read_space(space_id: str, user: str = Depends(require_auth)) -> Response:
 
 
 @app.put("/api/spaces/{space_id}")
-def write_space(
+async def write_space(
     space_id: str,
     content: str = Body(default="", media_type="text/plain"),
     user: str = Depends(require_auth),

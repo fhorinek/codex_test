@@ -327,6 +327,32 @@ body {
   color: #b45309;
 }
 
+.code-editor .cm-indentation-marker {
+  background-color: rgba(154, 160, 184, 0.35);
+}
+
+.code-editor .cm-highlightSpace {
+  background-image: radial-gradient(circle at center, rgba(98, 106, 138, 0.95) 1.4px, transparent 1.4px);
+  background-repeat: no-repeat;
+  background-position: center;
+}
+
+.code-editor .cm-highlightTab {
+  background-image: linear-gradient(
+      to right,
+      rgba(98, 106, 138, 0.95),
+      rgba(98, 106, 138, 0.95)
+    ),
+    linear-gradient(
+      to right,
+      transparent,
+      transparent
+    );
+  background-repeat: no-repeat;
+  background-size: calc(100% - 6px) 1px, 6px 6px;
+  background-position: center left, right center;
+}
+
 .code-editor .cm-config-line {
   color: #2b335a;
   font-weight: 600;
@@ -1992,6 +2018,27 @@ html[data-theme="dark"] .code-editor .cm-state-token {
 
 html[data-theme="dark"] .code-editor .cm-reference-token {
   color: #ffb454;
+}
+
+html[data-theme="dark"] .code-editor .cm-indentation-marker {
+  background-color: rgba(92, 100, 126, 0.45);
+}
+
+html[data-theme="dark"] .code-editor .cm-highlightSpace {
+  background-image: radial-gradient(circle at center, rgba(168, 178, 210, 0.9) 1.4px, transparent 1.4px);
+}
+
+html[data-theme="dark"] .code-editor .cm-highlightTab {
+  background-image: linear-gradient(
+      to right,
+      rgba(168, 178, 210, 0.9),
+      rgba(168, 178, 210, 0.9)
+    ),
+    linear-gradient(
+      to right,
+      transparent,
+      transparent
+    );
 }
 
 html[data-theme="dark"] .code-editor .cm-config-line {

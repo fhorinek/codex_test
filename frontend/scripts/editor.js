@@ -1,4 +1,4 @@
-import { EditorState, RangeSetBuilder } from "@codemirror/state";
+import { Compartment, EditorState, RangeSetBuilder } from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -20,6 +20,7 @@ import {
 import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap } from "@codemirror/search";
 import { foldGutter, foldKeymap, foldService, indentUnit } from "@codemirror/language";
+import { indentationMarkers } from "@replit/codemirror-indentation-markers";
 
 const taskLineDecoration = Decoration.line({ class: "cm-task-line" });
 const subtaskLineDecoration = Decoration.line({ class: "cm-subtask-line" });
@@ -30,6 +31,8 @@ const personDecoration = Decoration.mark({ class: "cm-person-token" });
 const stateDecoration = Decoration.mark({ class: "cm-state-token" });
 const invalidStateDecoration = Decoration.mark({ class: "cm-state-token cm-error-token" });
 const referenceDecoration = Decoration.mark({ class: "cm-reference-token" });
+const selectedSpaceDecoration = Decoration.mark({ class: "cm-highlightSpace" });
+const selectedTabDecoration = Decoration.mark({ class: "cm-highlightTab" });
 
 function getIndent(text) {
   return text.match(/^\s*/)?.[0].length || 0;
@@ -209,6 +212,63 @@ function createTaskScriptHighlight(appState) {
   );
 }
 
+function addSelectedWhitespaceDecorations(doc, builder, start, end) {
+  let pos = start;
+  while (pos < end) {
+    const line = doc.lineAt(pos);
+    const lineEnd = Math.min(line.to, end);
+    const text = doc.sliceString(pos, lineEnd);
+    for (let i = 0; i < text.length; i += 1) {
+      const char = text[i];
+      if (char === " ") {
+        builder.add(pos + i, pos + i + 1, selectedSpaceDecoration);
+      } else if (char === "\t") {
+        builder.add(pos + i, pos + i + 1, selectedTabDecoration);
+      }
+    }
+    pos = lineEnd + 1;
+  }
+}
+
+function buildSelectedWhitespaceDecorations(view) {
+  const builder = new RangeSetBuilder();
+  const selectionRanges = view.state.selection.ranges.filter((range) => !range.empty);
+  if (!selectionRanges.length) {
+    return builder.finish();
+  }
+  for (const visible of view.visibleRanges) {
+    for (const range of selectionRanges) {
+      const start = Math.max(visible.from, range.from);
+      const end = Math.min(visible.to, range.to);
+      if (start >= end) {
+        continue;
+      }
+      addSelectedWhitespaceDecorations(view.state.doc, builder, start, end);
+    }
+  }
+  return builder.finish();
+}
+
+const selectedWhitespaceHighlighter = ViewPlugin.fromClass(
+  class {
+    constructor(view) {
+      this.decorations = buildSelectedWhitespaceDecorations(view);
+    }
+    update(update) {
+      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+        this.decorations = buildSelectedWhitespaceDecorations(update.view);
+      }
+    }
+  },
+  {
+    decorations: (value) => value.decorations,
+  }
+);
+
+function themeExtension(isDark) {
+  return EditorView.theme({}, { dark: isDark });
+}
+
 function taskScriptCompletionSource(state) {
   return (context) => {
     const before = context.matchBefore(/(?:^|\s)([#@!{])([^\s}]*)$/);
@@ -354,26 +414,28 @@ export function createEditor({
   if (!textarea || !host) {
     return {
       getValue: () => "",
-      setValue: () => {},
-      setValueFromRemote: () => {},
-      replaceRange: () => {},
-      focus: () => {},
-      setSelectionRange: () => {},
+      setValue: () => { },
+      setValueFromRemote: () => { },
+      replaceRange: () => { },
+      focus: () => { },
+      setSelectionRange: () => { },
       getSelectionRange: () => ({ start: 0, end: 0 }),
       getScroll: () => ({ top: 0, left: 0 }),
-      setScroll: () => {},
-      dispatchInput: () => {},
-      updateSelectedLine: () => {},
-      highlightText: () => {},
-      updateSuggestions: () => {},
-      undo: () => {},
-      redo: () => {},
+      setScroll: () => { },
+      dispatchInput: () => { },
+      updateSelectedLine: () => { },
+      highlightText: () => { },
+      updateSuggestions: () => { },
+      undo: () => { },
+      redo: () => { },
     };
   }
 
   let suppressTextareaInput = false;
   let suppressTextareaUpdate = false;
   let view;
+  const themeCompartment = new Compartment();
+  const initialDarkTheme = document.documentElement.dataset.theme === "dark";
 
   const completionSource = taskScriptCompletionSource(state);
 
@@ -424,6 +486,17 @@ export function createEditor({
         foldGutter(),
         highlightActiveLineGutter(),
         highlightActiveLine(),
+        indentationMarkers({
+          activeThickness: 2,
+          colors: {
+            light: "#e1e5f2",
+            dark: "#1a1f2e",
+            activeLight: "#c7d2ff",
+            activeDark: "#2a3145",
+          },
+        }),
+        selectedWhitespaceHighlighter,
+        themeCompartment.of(themeExtension(initialDarkTheme)),
         history(),
         indentUnit.of("    "),
         updateListener,
@@ -555,9 +628,15 @@ export function createEditor({
     dispatchInput: () => {
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     },
+    setTheme: (theme) => {
+      const isDark = theme === "dark";
+      view.dispatch({
+        effects: themeCompartment.reconfigure(themeExtension(isDark)),
+      });
+    },
     updateSelectedLine,
-    highlightText: () => {},
-    updateSuggestions: () => {},
+    highlightText: () => { },
+    updateSuggestions: () => { },
     undo: () => {
       undo(view);
     },
