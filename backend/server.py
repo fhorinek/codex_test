@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import logging
 import re
 import time
 from pathlib import Path
@@ -25,6 +26,12 @@ SPACES_DIR.mkdir(parents=True, exist_ok=True)
 YSTORE_DIR = Path(__file__).resolve().parent / "ystore"
 YSTORE_DIR.mkdir(parents=True, exist_ok=True)
 USERS_FILE = Path(__file__).resolve().parent / "users.txt"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("server")
 
 if not USERS_FILE.exists():
     USERS_FILE.write_text("user:devtoken\n", encoding="utf-8")
@@ -109,7 +116,12 @@ def room_name(space_id: str) -> str:
 
 def ydoc_to_text(ydoc: Y.YDoc) -> str:
     text = ydoc.get_text("content")
-    return json.loads(text.to_json())
+    raw = text.to_json()
+    if isinstance(raw, str):
+        if len(raw) >= 2 and raw[0] == raw[-1] == '"':
+            return raw[1:-1]
+        return raw
+    return str(raw)
 
 
 def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
@@ -128,8 +140,11 @@ def schedule_space_snapshot(space_id: str, room) -> None:
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        content = ydoc_to_text(room.ydoc)
-        space_path(space_id).write_text(content, encoding="utf-8")
+        try:
+            content = ydoc_to_text(room.ydoc)
+            space_path(space_id).write_text(content, encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to snapshot space %s (sync)", space_id)
         return
 
     if space_id in space_save_tasks:
@@ -142,6 +157,8 @@ def schedule_space_snapshot(space_id: str, room) -> None:
             space_path(space_id).write_text(content, encoding="utf-8")
         except asyncio.CancelledError:
             return
+        except Exception:
+            logger.exception("Failed to snapshot space %s", space_id)
         finally:
             space_save_tasks.pop(space_id, None)
 
