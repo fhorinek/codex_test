@@ -6,6 +6,16 @@ Board:
 
 % [JIRA:KAN-34] jira format test
 !in-review #unknown @frantisek-horinek
+{new task 2}
 
-    % [JIRA:KAN-35] new task
-    !inprogress @frantisek-horinek
+% [JIRA:KAN-35] new task 2
+!done @frantisek-horinek #hovno
+basic **format**
+- asdf
+- asdfa
+- ffasdasd
+{jira format test}
+
+% [JIRA:KAN-36] Epic
+!todo
+

@@ -64,7 +64,7 @@ export function parseJiraTitle(title) {
   return { key: match[1], title: cleaned };
 }
 
-export function applyInlineMarkdown(text) {
+export function applyInlineown(text) {
   return applyInlineMarkdownWithOptions(text);
 }
 
@@ -241,8 +241,8 @@ function parseConfig(lines) {
       const key = match ? match[1] : trimmed;
       const autoColor =
         currentSection === "tags" ||
-        currentSection === "people" ||
-        currentSection === "states"
+          currentSection === "people" ||
+          currentSection === "states"
           ? colorFromString(key)
           : "";
       const entry = { key, name: key, color: autoColor };

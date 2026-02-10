@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import re
 import time
@@ -18,9 +19,9 @@ logger = logging.getLogger("jira-worker")
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if __package__ in (None, ""):
     sys.path.append(str(BACKEND_DIR))
-    from jira.client import JiraClient, from_adf
+    from jira.client import JiraClient, from_adf, extract_references_from_adf
 else:
-    from .client import JiraClient, from_adf
+    from .client import JiraClient, from_adf, extract_references_from_adf
 SPACES_DIR = BACKEND_DIR / "spaces"
 
 JIRA_BASE_URL = "https://frantisek-horinek.atlassian.net"
@@ -32,6 +33,7 @@ JIRA_PROJECTS: Dict[str, str] = {
 JIRA_SYNC_INTERVAL = 10
 JIRA_PULL_IDLE_SECONDS = 5
 JIRA_ISSUE_TYPE = "Task"
+JIRA_SUBTASK_ISSUE_TYPE = "Sub-task"
 JIRA_DEFAULT_STATE = "Backlog"
 JIRA_STATE_MAP = {
     "todo": "To Do",
@@ -78,6 +80,7 @@ class ParsedTask:
     state: Optional[str]
     tags: List[str]
     people: List[str]
+    parent_index: Optional[int] = None
 
 
 def jira_enabled() -> bool:
@@ -352,6 +355,66 @@ def parse_tasks(lines: List[str]) -> List[ParsedTask]:
             )
         )
     return tasks
+
+
+def assign_task_parents(tasks: List[ParsedTask]) -> None:
+    stack: List[ParsedTask] = []
+    for task in tasks:
+        indent = len(task.indent)
+        while stack and len(stack[-1].indent) >= indent:
+            stack.pop()
+        task.parent_index = stack[-1].line_index if stack else None
+        stack.append(task)
+
+
+def find_task_by_line(tasks: List[ParsedTask], line_index: int) -> Optional[ParsedTask]:
+    for task in tasks:
+        if task.line_index == line_index:
+            return task
+    return None
+
+
+def append_missing_references(description: str, refs: List[str]) -> str:
+    if not refs:
+        return description
+    existing = set(re.findall(r"\{([^}]+)\}", description))
+    missing = []
+    for ref in refs:
+        if ref in existing or ref in missing:
+            continue
+        missing.append(ref)
+    if not missing:
+        return description
+    lines = description.split("\n") if description else []
+    lines.extend([f"{{{ref}}}" for ref in missing])
+    return "\n".join(lines)
+
+
+def extract_issue_link_refs(issue: Dict[str, Any]) -> List[str]:
+    fields = issue.get("fields", {}) if isinstance(issue, dict) else {}
+    links = fields.get("issuelinks") or []
+    refs: List[str] = []
+    for link in links:
+        if not isinstance(link, dict):
+            continue
+        inward = link.get("inwardIssue")
+        outward = link.get("outwardIssue")
+        if isinstance(inward, dict):
+            ref = inward.get("fields", {}).get("summary") or inward.get("key")
+            if ref:
+                refs.append(ref)
+        if isinstance(outward, dict):
+            ref = outward.get("fields", {}).get("summary") or outward.get("key")
+            if ref:
+                refs.append(ref)
+    seen = set()
+    unique = []
+    for ref in refs:
+        if ref in seen:
+            continue
+        seen.add(ref)
+        unique.append(ref)
+    return unique
 
 
 def insert_jira_key(lines: List[str], task: ParsedTask, jira_key: str) -> None:
@@ -631,6 +694,7 @@ def log_jira_issue_fields(
     next_state: Optional[str],
     labels: List[str],
     assignee: Optional[Dict[str, Any]],
+    issue_links: Optional[List[str]] = None,
 ) -> None:
     prefix = f"[Space {space_id}] <- [JIRA {project_key}] {jira_key}"
     logger.info("%s summary=%s", prefix, summary)
@@ -638,6 +702,8 @@ def log_jira_issue_fields(
     logger.info("%s status_name=%s", prefix, status_name or "")
     logger.info("%s next_state=%s", prefix, next_state or "")
     logger.info("%s labels=%s", prefix, ",".join(labels))
+    if issue_links is not None:
+        logger.info("%s issuelinks=%s", prefix, ",".join(issue_links))
     if assignee:
         logger.info("%s assignee.displayName=%s", prefix, assignee.get("displayName", ""))
         logger.info("%s assignee.email=%s", prefix, assignee.get("emailAddress", ""))
@@ -876,6 +942,7 @@ async def sync_space_with_jira(
                 return account_id
         return None
     tasks = parse_tasks(lines)
+    assign_task_parents(tasks)
     if not tasks:
         logger.debug("No tasks found in space %s", session.space_id)
         return
@@ -889,6 +956,21 @@ async def sync_space_with_jira(
     for task in tasks:
         if task.jira_key:
             continue
+        parent_task = (
+            find_task_by_line(tasks, task.parent_index)
+            if task.parent_index is not None
+            else None
+        )
+        if parent_task and not parent_task.jira_key:
+            logger.info(
+                "[Space %s] -> [JIRA %s] skip subtask '%s' until parent is created",
+                session.space_id,
+                project_key,
+                task.name,
+            )
+            continue
+        issue_type = JIRA_SUBTASK_ISSUE_TYPE if parent_task else JIRA_ISSUE_TYPE
+        parent_key = parent_task.jira_key if parent_task else None
         logger.info(
             "[Space %s] -> [JIRA %s] create issue for '%s'",
             session.space_id,
@@ -902,7 +984,8 @@ async def sync_space_with_jira(
             task.name,
             task.description,
             task.tags,
-            JIRA_ISSUE_TYPE,
+            issue_type,
+            parent_key,
             assignee_id,
         )
         logger.info(
@@ -1037,11 +1120,24 @@ async def sync_space_with_jira(
             task.jira_key,
             summarize_jira_response(status, issue if isinstance(issue, dict) else None),
         )
+        if isinstance(issue, dict):
+            logger.info(
+                "[Space %s] <- [JIRA %s] payload for %s:\n%s",
+                session.space_id,
+                project_key,
+                task.jira_key,
+                json.dumps(issue, ensure_ascii=False, indent=2),
+            )
         if not issue:
             continue
         fields = issue.get("fields", {})
         summary = fields.get("summary") or task.name
         description = from_adf(fields.get("description"))
+        refs = extract_references_from_adf(fields.get("description"))
+        linked_refs = extract_issue_link_refs(issue)
+        combined_refs = refs + linked_refs
+        if combined_refs:
+            description = append_missing_references(description, combined_refs)
         status_name = fields.get("status", {}).get("name")
         next_state = map_jira_to_state(status_name)
         if not next_state and status_name:
@@ -1059,6 +1155,7 @@ async def sync_space_with_jira(
             next_state,
             labels,
             assignee,
+            linked_refs,
         )
         if assignee and not assignee_person:
             display_name = assignee.get("displayName") or assignee.get("name") or "person"
