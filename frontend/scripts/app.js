@@ -1,4 +1,4 @@
-import { parseTasks, renderMarkdown } from "./task.js";
+import { parseTasks, parseJiraTitle, renderMarkdown } from "./task.js";
 import { createEditor } from "./editor.js";
 import { createCanvas } from "./canvas.js";
 import {
@@ -37,6 +37,56 @@ const STATUS_LABELS = {
   offline: "offline",
   idle: "idle",
 };
+
+async function copyToClipboard(text) {
+  if (!text) {
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } catch {
+      // Ignore copy failures.
+    }
+    document.body.removeChild(textarea);
+  }
+}
+
+function createJiraTitlePill(key) {
+  const pill = document.createElement("span");
+  pill.className = "pill jira-pill";
+  pill.textContent = key;
+  pill.title = `Copy ${key}`;
+  pill.addEventListener("click", (event) => {
+    event.stopPropagation();
+    copyToClipboard(key);
+  });
+  return pill;
+}
+
+function updateTaskEditJiraPill(key) {
+  if (!dom.taskEditJiraPill) {
+    return;
+  }
+  if (!key) {
+    dom.taskEditJiraPill.classList.add("hidden");
+    dom.taskEditJiraPill.textContent = "";
+    dom.taskEditJiraPill.title = "";
+    return;
+  }
+  dom.taskEditJiraPill.textContent = key;
+  dom.taskEditJiraPill.title = `Copy ${key}`;
+  dom.taskEditJiraPill.classList.remove("hidden");
+}
 
 function getCollabIdentity(preferredName) {
   try {
@@ -114,6 +164,7 @@ const dom = {
   logoutButton: document.getElementById("logout-button"),
   taskEditModal: document.getElementById("task-edit-modal"),
   taskEditTitleInput: document.getElementById("task-edit-title-input"),
+  taskEditJiraPill: document.getElementById("task-edit-jira-pill"),
   taskEditPreview: document.getElementById("task-edit-preview"),
   taskEditCode: document.getElementById("task-edit-code"),
   taskEditCodeHost: document.getElementById("task-edit-code-editor"),
@@ -729,6 +780,7 @@ function updateTaskToken(task, token, action) {
 
 let editingTaskRange = null;
 let editingTaskIndent = "";
+let editingTaskJiraKey = null;
 let modalEditorController = null;
 let modalEditorState = null;
 let pendingDeleteTask = null;
@@ -1017,13 +1069,20 @@ function updateTaskEditPreviewFromText(text) {
   }
   const parsed = parseTaskBody(text);
   const titleValue = dom.taskEditTitleInput?.value.trim() || "Untitled task";
+  const { key: jiraKey, title: jiraTitle } = parseJiraTitle(titleValue);
+  const displayKey = jiraKey || editingTaskJiraKey;
+  updateTaskEditJiraPill(displayKey);
+  const displayTitle = jiraTitle || "Untitled task";
   dom.taskEditPreview.innerHTML = "";
   const card = document.createElement("div");
   card.className = "task-preview-card";
   const header = document.createElement("div");
   header.className = "task-header";
   const title = document.createElement("h4");
-  title.textContent = titleValue;
+  if (displayKey) {
+    title.appendChild(createJiraTitlePill(displayKey));
+  }
+  title.append(displayTitle);
   header.appendChild(title);
   if (parsed.state) {
     const pill = document.createElement("span");
@@ -1090,6 +1149,15 @@ function updateTaskEditPreviewFromText(text) {
         pill.style.borderColor = meta.color;
         pill.style.color = meta.color;
       }
+    } else if (type === "jira") {
+      pill.textContent = value;
+      pill.title = `Copy ${value}`;
+      pill.addEventListener("click", (event) => {
+        event.stopPropagation();
+        copyToClipboard(value);
+      });
+      pill.draggable = false;
+      return;
     }
     pill.draggable = true;
     pill.addEventListener("dragstart", (event) => {
@@ -1172,8 +1240,11 @@ function openTaskEditModal(task) {
     dom.taskEditError.textContent = "";
   }
   if (dom.taskEditTitleInput) {
-    dom.taskEditTitleInput.value = task.name || "";
+    const parsedTitle = parseJiraTitle(task.name || "");
+    editingTaskJiraKey = task.jiraKey || parsedTitle.key;
+    dom.taskEditTitleInput.value = task.name || parsedTitle.title || "";
   }
+  updateTaskEditJiraPill(editingTaskJiraKey);
   const bodyLines = lines
     .slice(task.lineIndex + 1, end)
     .map((line) =>
@@ -1200,6 +1271,27 @@ function closeTaskEditModal() {
   dom.taskEditModal.classList.add("hidden");
   editingTaskRange = null;
   editingTaskIndent = "";
+  editingTaskJiraKey = null;
+  updateTaskEditJiraPill(null);
+}
+
+function countSubtasks(task) {
+  if (!task || !Array.isArray(task.children)) {
+    return 0;
+  }
+  let count = 0;
+  const stack = [...task.children];
+  while (stack.length) {
+    const current = stack.pop();
+    if (!current) {
+      continue;
+    }
+    count += 1;
+    if (Array.isArray(current.children) && current.children.length) {
+      stack.push(...current.children);
+    }
+  }
+  return count;
 }
 
 function openTaskDeleteModal(task) {
@@ -1212,7 +1304,10 @@ function openTaskDeleteModal(task) {
     dom.taskDeleteMessage.textContent = `Remove "${name}"?`;
   }
   if (dom.taskDeleteConfirmAll) {
-    const hasSubtasks = Array.isArray(task.children) && task.children.length > 0;
+    const subtaskCount = countSubtasks(task);
+    const hasSubtasks = subtaskCount > 0;
+    const label = subtaskCount === 1 ? "Delete with 1 subtask" : `Delete with ${subtaskCount} subtasks`;
+    dom.taskDeleteConfirmAll.textContent = label;
     dom.taskDeleteConfirmAll.classList.toggle("hidden", !hasSubtasks);
     dom.taskDeleteConfirmAll.disabled = !hasSubtasks;
   }
@@ -1285,8 +1380,32 @@ function deleteTaskKeepSubtasks(task) {
       handleEditorSelection(Math.max(0, block.start - 1));
       return;
     }
-    const childLines = blockLines.slice(1).map((line) => adjustIndent(line, -4));
-    lines.splice(block.start, block.end - block.start, ...childLines);
+    const childBlocks = [];
+    let index = block.start + 1;
+    while (index < block.end) {
+      const line = lines[index];
+      const taskMatch = line.match(/^(\s*)%/);
+      if (taskMatch) {
+        const lineDepth = Math.floor(taskMatch[1].length / 4);
+        if (lineDepth === block.depth + 1) {
+          const childBlock = findTaskBlock(lines, index);
+          if (childBlock) {
+            const childLines = lines
+              .slice(childBlock.start, childBlock.end)
+              .map((childLine) => adjustIndent(childLine, -4));
+            childBlocks.push(...childLines);
+            index = childBlock.end;
+            continue;
+          }
+        }
+      }
+      index += 1;
+    }
+    if (!childBlocks.length) {
+      lines.splice(block.start, block.end - block.start);
+    } else {
+      lines.splice(block.start, block.end - block.start, ...childBlocks);
+    }
     applyEditorValue(lines.join("\n"));
     syncEditorState();
     handleEditorSelection(Math.max(0, block.start - 1));
@@ -1342,7 +1461,17 @@ function saveTaskEditModal() {
     closeTaskEditModal();
     return;
   }
-  const title = dom.taskEditTitleInput?.value.trim() || "";
+  const rawTitle = dom.taskEditTitleInput?.value.trim() || "";
+  if (!rawTitle) {
+    if (dom.taskEditError) {
+      dom.taskEditError.textContent = "Title is required.";
+      dom.taskEditError.classList.remove("hidden");
+    }
+    return;
+  }
+  const parsedTitle = parseJiraTitle(rawTitle);
+  const jiraKey = parsedTitle.key || editingTaskJiraKey;
+  const title = parsedTitle.title || "";
   if (!title) {
     if (dom.taskEditError) {
       dom.taskEditError.textContent = "Title is required.";
@@ -1355,7 +1484,8 @@ function saveTaskEditModal() {
     .replace(/\r/g, "")
     .split("\n")
     .map((line) => (line.trim() === "" ? "" : `${editingTaskIndent}${line}`));
-  const nextLines = [`${editingTaskIndent}% ${title}`, ...bodyLines];
+  const jiraPrefix = jiraKey ? ` [JIRA:${jiraKey}]` : "";
+  const nextLines = [`${editingTaskIndent}%${jiraPrefix} ${title}`, ...bodyLines];
   const lines = editorController.getValue().split("\n");
   lines.splice(editingTaskRange.start, editingTaskRange.end - editingTaskRange.start, ...nextLines);
   applyEditorValue(lines.join("\n"));
@@ -1526,7 +1656,11 @@ function matchesSearchTask(task) {
     return false;
   }
   const query = state.searchQuery.toLowerCase();
-  if (dom.searchName.checked && task.name.toLowerCase().includes(query)) {
+  if (
+    dom.searchName.checked &&
+    (task.name.toLowerCase().includes(query) ||
+      (task.jiraKey || "").toLowerCase().includes(query))
+  ) {
     return true;
   }
   if (dom.searchDescription.checked && task.description.join(" ").toLowerCase().includes(query)) {
@@ -2446,7 +2580,21 @@ if (dom.taskEditTitleInput) {
     if (!modalEditorController) {
       return;
     }
+    const parsedTitle = parseJiraTitle(dom.taskEditTitleInput.value || "");
+    if (parsedTitle.key) {
+      editingTaskJiraKey = parsedTitle.key;
+    }
+    updateTaskEditJiraPill(editingTaskJiraKey);
     updateTaskEditPreviewFromText(modalEditorController.getValue());
+  });
+}
+
+if (dom.taskEditJiraPill) {
+  dom.taskEditJiraPill.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (editingTaskJiraKey) {
+      copyToClipboard(editingTaskJiraKey);
+    }
   });
 }
 

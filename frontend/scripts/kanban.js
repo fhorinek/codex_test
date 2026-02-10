@@ -1,4 +1,5 @@
 import { splitIndent, normalizeContent, prependTokenToLine } from "./formatter.js";
+import { parseJiraTitle } from "./task.js";
 
 function lightenColor(color, amount = 0.4) {
   const hex = color.replace("#", "");
@@ -151,7 +152,36 @@ function renderKanbanCardContent({
 
   const titleNode = document.createElement("div");
   titleNode.className = "kanban-card-title";
-  titleNode.textContent = task.name;
+  const displayTitle = task.name || "Untitled task";
+  const jiraKey = task.jiraKey || parseJiraTitle(task.name || "").key;
+  if (jiraKey) {
+    const pill = document.createElement("span");
+    pill.className = "pill jira-pill";
+    pill.textContent = jiraKey;
+    pill.title = `Copy ${jiraKey}`;
+    pill.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(jiraKey);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = jiraKey;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand("copy");
+        } catch {
+          // Ignore copy failures.
+        }
+        document.body.removeChild(textarea);
+      }
+    });
+    titleNode.appendChild(pill);
+  }
+  titleNode.append(displayTitle);
   card.appendChild(titleNode);
   const metaWrap = document.createElement("div");
   metaWrap.className = "kanban-card-meta";

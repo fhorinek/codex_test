@@ -1,0 +1,11 @@
+Board:
+    people:
+        frantisek-horinek:
+            name: František Horínek
+            mail: frantisekhorinek@gmail.com
+
+% [JIRA:KAN-34] jira format test
+!in-review #unknown @frantisek-horinek
+
+    % [JIRA:KAN-35] new task
+    !inprogress @frantisek-horinek

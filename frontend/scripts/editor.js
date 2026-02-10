@@ -31,6 +31,7 @@ const personDecoration = Decoration.mark({ class: "cm-person-token" });
 const stateDecoration = Decoration.mark({ class: "cm-state-token" });
 const invalidStateDecoration = Decoration.mark({ class: "cm-state-token cm-error-token" });
 const referenceDecoration = Decoration.mark({ class: "cm-reference-token" });
+const jiraDecoration = Decoration.mark({ class: "cm-jira-token" });
 const selectedSpaceDecoration = Decoration.mark({ class: "cm-highlightSpace" });
 const selectedTabDecoration = Decoration.mark({ class: "cm-highlightTab" });
 
@@ -166,6 +167,14 @@ function buildDecorations(view, appState) {
           from: line.from + match.index,
           to: line.from + match.index + match[0].length,
           decoration: referenceDecoration,
+        });
+      }
+      const jiraRegex = /\[JIRA:[A-Z][A-Z0-9]+-\d+\]/g;
+      while ((match = jiraRegex.exec(text)) !== null) {
+        ranges.push({
+          from: line.from + match.index,
+          to: line.from + match.index + match[0].length,
+          decoration: jiraDecoration,
         });
       }
 

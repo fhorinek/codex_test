@@ -327,6 +327,11 @@ body {
   color: #b45309;
 }
 
+.code-editor .cm-jira-token {
+  color: #0052cc;
+  font-weight: 600;
+}
+
 .code-editor .cm-indentation-marker {
   background-color: rgba(154, 160, 184, 0.35);
 }
@@ -843,6 +848,16 @@ html[data-kanban-collapsed="true"] .kanban-board {
   width: 100%;
 }
 
+.task-edit-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-edit-title-row input {
+  flex: 1;
+}
+
 .task-edit-title-field input {
   font-size: 18px;
   font-weight: 600;
@@ -1035,15 +1050,6 @@ html[data-kanban-collapsed="true"] .kanban-board {
   min-height: 120px;
 }
 
-.modal-token-input {
-  display: flex;
-  gap: 8px;
-}
-
-.modal-token-input input {
-  flex: 1;
-}
-
 .modal-token-list {
   display: flex;
   flex-wrap: wrap;
@@ -1197,13 +1203,6 @@ html[data-kanban-collapsed="true"] .kanban-board {
   border-color: #9b1c25;
 }
 
-.legend-header {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
 .graph-search {
   position: absolute;
   top: 16px;
@@ -1349,14 +1348,6 @@ body.dragging-task .task-trash.drag-over {
   justify-content: flex-end;
 }
 
-
-.graph-toolbar input[type="text"] {
-  flex: 1;
-  min-width: 200px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  border: 1px solid #c9cce0;
-}
 
 .graph-canvas {
   position: relative;
@@ -1520,6 +1511,13 @@ body.task-trash-over .task-node.dragging {
   gap: 6px;
 }
 
+.task-header h4,
+.kanban-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .state-pill {
   background: transparent;
   color: #2f54eb;
@@ -1527,6 +1525,14 @@ body.task-trash-over .task-node.dragging {
   font-weight: 600;
   font-size: 12px;
   padding: 3px 12px;
+}
+
+.jira-pill {
+  background: #e7f0ff;
+  border-color: #0052cc;
+  color: #0052cc;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .task-node .meta {
@@ -1950,6 +1956,12 @@ html[data-theme="dark"] .pill {
   color: #e6e8f2;
 }
 
+html[data-theme="dark"] .jira-pill {
+  background: #0b244d;
+  border-color: #2d6cdf;
+  color: #8bb7ff;
+}
+
 html[data-theme="dark"] .pill.active,
 html[data-theme="dark"] .legend .pill.active {
   background: #8fa4ff;
@@ -2018,6 +2030,11 @@ html[data-theme="dark"] .code-editor .cm-state-token {
 
 html[data-theme="dark"] .code-editor .cm-reference-token {
   color: #ffb454;
+}
+
+html[data-theme="dark"] .code-editor .cm-jira-token {
+  color: #8bb7ff;
+  font-weight: 600;
 }
 
 html[data-theme="dark"] .code-editor .cm-indentation-marker {
@@ -2141,6 +2158,10 @@ html[data-theme="dark"] .code-editor .cm-cursor {
   padding: 1px 6px;
   font-size: 10px;
   cursor: default;
+}
+
+.pill.inline-pill.jira-pill {
+  cursor: pointer;
 }
 
 .inline-link {
@@ -2343,26 +2364,4 @@ html[data-theme="dark"] .task-preview-card .description tbody tr:nth-child(odd) 
 
 .search-highlight {
   outline: 2px solid #ffb020;
-}
-
-.line-numbers {
-  position: absolute;
-  top: 0;
-  left: 0;
-  bottom: 0;
-  width: 48px;
-  padding: 16px 8px;
-  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
-  font-size: 14px;
-  line-height: 1.5;
-  color: #9aa0b8;
-  text-align: right;
-  border-right: 1px solid #e6e9f4;
-  background: #fafbff;
-  pointer-events: none;
-}
-
-.line-numbers span {
-  display: block;
-  height: 1.5em;
 }

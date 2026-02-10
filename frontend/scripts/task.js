@@ -47,6 +47,23 @@ function hslToHex(hue, saturation, lightness) {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
+const JIRA_KEY_RE = /\[JIRA:([A-Z][A-Z0-9]+-\d+)\]/;
+const JIRA_KEY_GLOBAL_RE = /\s*\[JIRA:[A-Z][A-Z0-9]+-\d+\]\s*/g;
+
+export function parseJiraTitle(title) {
+  const raw = typeof title === "string" ? title : "";
+  const trimmed = raw.replace(/^%\s*/, "");
+  const match = trimmed.match(JIRA_KEY_RE);
+  if (!match) {
+    return { key: null, title: trimmed.trim() };
+  }
+  const cleaned = trimmed
+    .replace(JIRA_KEY_GLOBAL_RE, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  return { key: match[1], title: cleaned };
+}
+
 export function applyInlineMarkdown(text) {
   return applyInlineMarkdownWithOptions(text);
 }
@@ -63,6 +80,10 @@ export function applyInlineMarkdownWithOptions(text, options = {}) {
   value = value.replace(
     /(^|\s)@([^\s#@]+)/g,
     "$1<span class=\"pill inline-pill\" data-type=\"person\" data-value=\"@$2\">👤 $2</span>"
+  );
+  value = value.replace(
+    /\[JIRA:([A-Z][A-Z0-9]+-\d+)\]/g,
+    "<span class=\"pill inline-pill jira-pill\" data-type=\"jira\" data-value=\"$1\">$1</span>"
   );
   value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "<img alt=\"$1\" src=\"$2\" />");
   value = value.replace(/\[([^\]]+)\]\(([^)]+)\)/g, linkReplacement);
@@ -295,11 +316,15 @@ export function parseTasks(text) {
     if (taskMatch) {
       const indent = taskMatch[1].length;
       const depth = Math.floor(indent / 4);
-      const name = taskMatch[2].trim();
-      const encodedName = encodeURIComponent(name || "task");
+      const rawName = taskMatch[2].trim();
+      const parsedTitle = parseJiraTitle(rawName);
+      const name = parsedTitle.title || "";
+      const baseName = name || rawName || "task";
+      const encodedName = encodeURIComponent(baseName);
       const task = {
         id: "",
         name,
+        jiraKey: parsedTitle.key,
         depth,
         parent: null,
         tags: [],

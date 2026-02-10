@@ -127,17 +127,16 @@ Contain the protomolecule arms race.
             !done @bobbie #mars #ganymede
             Expand on ganymede crisis detail a.
 
-        % Ganymede crisis detail B
+    !done @bobbie #mars #ganymede
+    Expand on ganymede crisis.
+
+        % Ganymede crisis detail B detail A
         !done @bobbie #mars #ganymede
-        Expand on ganymede crisis.
+        Expand on ganymede crisis detail b.
 
-            % Ganymede crisis detail B detail A
-            !done @bobbie #mars #ganymede
-            Expand on ganymede crisis detail b.
-
-            % Ganymede crisis detail B detail B
-            !done @bobbie #mars #ganymede
-            Expand on ganymede crisis detail b.
+        % Ganymede crisis detail B detail B
+        !done @bobbie #mars #ganymede
+        Expand on ganymede crisis detail b.
 
     % Prax and Mei
     !done @prax #ganymede
@@ -194,123 +193,3 @@ Contain the protomolecule arms race.
             % Io station detail B detail B
             !done @holden #protomolecule
             Expand on io station detail b.
-
-% Abaddon's Gate
-!inprogress @holden #gate
-[ ] Stabilize the slow zone
-[ ] Prevent faction conflict
-[ ] Secure the Behemoth
-[ ] Resolve Clarissa's threat
-Investigate the Ring and control the slow zone.
-
-    % Behemoth enters
-    !inprogress @naomi #behemoth
-    Stabilize the drum and save lives.
-
-        % Behemoth enters detail A
-        !inprogress @naomi #behemoth
-        Expand on behemoth enters.
-
-            % Behemoth enters detail A detail A
-            !inprogress @naomi #behemoth
-            Expand on behemoth enters detail a.
-
-            % Behemoth enters detail A detail B
-            !inprogress @naomi #behemoth
-            Expand on behemoth enters detail a.
-
-        % Behemoth enters detail B
-        !inprogress @naomi #behemoth
-        Expand on behemoth enters.
-
-            % Behemoth enters detail B detail A
-            !inprogress @naomi #behemoth
-            Expand on behemoth enters detail b.
-
-            % Behemoth enters detail B detail B
-            !inprogress @naomi #behemoth
-            Expand on behemoth enters detail b.
-
-    % Bull takes command
-    !todo @amos #behemoth
-    Hold the Behemoth together.
-
-        % Bull takes command detail A
-        !todo @amos #behemoth
-        Expand on bull takes command.
-
-            % Bull takes command detail A detail A
-            !todo @amos #behemoth
-            Expand on bull takes command detail a.
-
-            % Bull takes command detail A detail B
-            !todo @amos #behemoth
-            Expand on bull takes command detail a.
-
-        % Bull takes command detail B
-        !todo @amos #behemoth
-        Expand on bull takes command.
-
-            % Bull takes command detail B detail A
-            !todo @amos #behemoth
-            Expand on bull takes command detail b.
-
-            % Bull takes command detail B detail B
-            !todo @amos #behemoth
-            Expand on bull takes command detail b.
-
-    % Anna on the mission
-    !todo @anna #politics
-    Keep the peace aboard the Behemoth.
-
-        % Anna on the mission detail A
-        !todo @anna #politics
-        Expand on anna on the mission.
-
-            % Anna on the mission detail A detail A
-            !todo @anna #politics
-            Expand on anna on the mission detail a.
-
-            % Anna on the mission detail A detail B
-            !todo @anna #politics
-            Expand on anna on the mission detail a.
-
-        % Anna on the mission detail B
-        !todo @anna #politics
-        Expand on anna on the mission.
-
-            % Anna on the mission detail B detail A
-            !todo @anna #politics
-            Expand on anna on the mission detail b.
-
-            % Anna on the mission detail B detail B
-            !todo @anna #politics
-            Expand on anna on the mission detail b.
-
-    % Clarissa's plan
-    !todo @clarissa #politics
-    Decide to help or harm Holden.
-
-        % Clarissa's plan detail A
-        !todo @clarissa #politics
-        Expand on clarissa's plan.
-
-            % Clarissa's plan detail A detail A
-            !todo @clarissa #politics
-            Expand on clarissa's plan detail a.
-
-            % Clarissa's plan detail A detail B
-            !todo @clarissa #politics
-            Expand on clarissa's plan detail a.
-
-        % Clarissa's plan detail B
-        !todo @clarissa #politics
-        Expand on clarissa's plan.
-
-            % Clarissa's plan detail B detail A
-            !todo @clarissa #politics
-            Expand on clarissa's plan detail b.
-
-            % Clarissa's plan detail B detail B
-            !todo @clarissa #politics
-            Expand on clarissa's plan detail b.

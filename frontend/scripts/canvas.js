@@ -21,6 +21,31 @@ export function createCanvas({
   let lastClickAt = 0;
   let lastClickTaskId = "";
 
+  const copyToClipboard = async (text) => {
+    if (!text) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Ignore and fallback below.
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "true");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+    } catch {
+      // Ignore copy failures.
+    }
+    document.body.removeChild(textarea);
+  };
+
   const getTaskById = (taskId) =>
     state.allTasks.find((item) => item.id === taskId) || null;
 
@@ -265,7 +290,19 @@ export function createCanvas({
     node.innerHTML = "";
 
     const title = document.createElement("h4");
-    title.textContent = task.name;
+    const displayTitle = task.name || "Untitled task";
+    if (task.jiraKey) {
+      const pill = document.createElement("span");
+      pill.className = "pill jira-pill";
+      pill.textContent = task.jiraKey;
+      pill.title = `Copy ${task.jiraKey}`;
+      pill.addEventListener("click", (event) => {
+        event.stopPropagation();
+        copyToClipboard(task.jiraKey);
+      });
+      title.appendChild(pill);
+    }
+    title.append(displayTitle);
     const header = document.createElement("div");
     header.className = "task-header";
     header.appendChild(title);
@@ -370,6 +407,16 @@ export function createCanvas({
           }
           const personLabel = state.peopleMeta?.get(value)?.name || value.replace("@", "");
           pill.textContent = `👤 ${personLabel}`;
+        }
+        if (type === "jira") {
+          pill.textContent = value;
+          pill.title = `Copy ${value}`;
+          pill.addEventListener("click", (event) => {
+            event.stopPropagation();
+            copyToClipboard(value);
+          });
+          pill.draggable = false;
+          return;
         }
         pill.draggable = true;
         pill.addEventListener("dragstart", (event) => {

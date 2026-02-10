@@ -187,7 +187,7 @@
         <div id="task-delete-message" class="modal-help"></div>
         <div class="modal-actions">
           <button id="task-delete-confirm" class="toolbar-button danger" type="button">Remove</button>
-          <button id="task-delete-confirm-all" class="toolbar-button danger" type="button">Remove with all subtasks</button>
+          <button id="task-delete-confirm-all" class="toolbar-button danger" type="button">Delete with subtasks</button>
           <button id="task-delete-cancel" class="toolbar-button" type="button">Cancel</button>
         </div>
       </div>
@@ -199,7 +199,10 @@
       <div class="modal-header task-edit-header">
         <label class="modal-field task-edit-title-field">
           <span id="task-edit-title-label">Title</span>
-          <input id="task-edit-title-input" type="text" />
+          <div class="task-edit-title-row">
+            <span id="task-edit-jira-pill" class="pill jira-pill hidden" role="button" tabindex="0"></span>
+            <input id="task-edit-title-input" type="text" />
+          </div>
         </label>
       </div>
       <div class="modal-body task-edit-body">

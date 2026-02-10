@@ -42,10 +42,13 @@ space_save_tasks: Dict[str, asyncio.Task] = {}
 SPACE_SAVE_DELAY = 0.5
 
 
+
 def sanitize_space(space_id: str) -> str:
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", space_id or ""):
         raise HTTPException(status_code=400, detail="Invalid space id.")
     return space_id
+
+
 
 
 def load_users() -> Dict[str, str]:
@@ -168,7 +171,26 @@ def schedule_space_snapshot(space_id: str, room) -> None:
 async def hydrate_room_from_storage(space_id: str, room) -> None:
     store_path = ystore_path(space_id)
     if store_path.exists():
-        await room.ystore.apply_updates(room.ydoc)
+        try:
+            await room.ystore.apply_updates(room.ydoc)
+        except Exception:
+            logger.exception("Failed to apply ystore for %s; rebuilding from snapshot", space_id)
+            backup_path = store_path.with_suffix(f".ystore.corrupt.{int(time.time())}")
+            try:
+                store_path.rename(backup_path)
+                logger.warning("Corrupt ystore moved to %s", backup_path)
+            except Exception:
+                try:
+                    store_path.unlink()
+                    logger.warning("Corrupt ystore removed for %s", space_id)
+                except Exception:
+                    logger.exception("Failed to remove corrupt ystore for %s", space_id)
+            content_path = space_path(space_id)
+            if content_path.exists():
+                content = content_path.read_text(encoding="utf-8")
+                if content:
+                    replace_ydoc_text(room.ydoc, content)
+                    await room.ystore.encode_state_as_update(room.ydoc)
     else:
         content_path = space_path(space_id)
         if content_path.exists():
@@ -189,6 +211,43 @@ def attach_snapshot_hook(space_id: str, room) -> None:
 
     room.ydoc.observe_after_transaction(_after_txn)
     room._snapshot_hook = True
+
+
+async def scan_ystore_files() -> None:
+    if not YSTORE_DIR.exists():
+        return
+    for store_path in YSTORE_DIR.glob("*.ystore"):
+        space_id = store_path.stem
+        logger.info("Scanning ystore for %s", space_id)
+        ydoc = Y.YDoc()
+        store = FileYStore(str(store_path))
+        try:
+            await store.apply_updates(ydoc)
+            continue
+        except Exception:
+            logger.exception("Corrupt ystore detected for %s; rebuilding", space_id)
+        backup_path = store_path.with_suffix(f".ystore.corrupt.{int(time.time())}")
+        try:
+            store_path.rename(backup_path)
+            logger.warning("Corrupt ystore moved to %s", backup_path)
+        except Exception:
+            try:
+                store_path.unlink()
+                logger.warning("Corrupt ystore removed for %s", space_id)
+            except Exception:
+                logger.exception("Failed to remove corrupt ystore for %s", space_id)
+        content_path = space_path(space_id)
+        if content_path.exists():
+            content = content_path.read_text(encoding="utf-8")
+            if content:
+                replace_ydoc_text(ydoc, content)
+            try:
+                await store.encode_state_as_update(ydoc)
+                logger.info("Rebuilt ystore for %s from snapshot", space_id)
+            except Exception:
+                logger.exception("Failed to rebuild ystore for %s", space_id)
+        else:
+            logger.warning("No snapshot found for %s; skipping rebuild", space_id)
 
 
 app = FastAPI()
@@ -391,6 +450,7 @@ app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 
 
 async def main() -> None:
+    await scan_ystore_files()
     config = uvicorn.Config(app, host="0.0.0.0", port=5000, log_level="info")
     server = uvicorn.Server(config)
     async with websocket_server:
