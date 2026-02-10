@@ -29,7 +29,7 @@ bash run.sh
 4. Edit the script in the left pane.
 
 ## Collaboration
-The app connects to shared spaces via Yjs on the same server.
+The app connects to shared spaces via Yjs on the same server. Yjs updates are persisted on disk so spaces recover after a restart.
 
 1. Create one or more space files in `backend/spaces/` (e.g. `atlas.txt`).
 2. In the app, click the connect button, log in, and pick a space.
@@ -59,6 +59,9 @@ Description line 2
 - Toggle checkboxes directly on the graph.
 - Filter by tags/people or search by name, description, tags, or people.
 - Connect to a shared space for live collaboration.
+- Group the kanban board by person or tag.
+- Double-click a task to open the edit modal (preview + code editor).
+- Drag a task to the trash icon to delete it (remove only or remove with subtasks).
 
 ## Config Header (Optional)
 Define board name, people, tags, and states before the first task line.
@@ -74,7 +77,14 @@ Atlas board:
 
 If `states` are omitted, defaults are `todo`, `inprogress`, `done`.
 
+## Persistence
+Server-side collaboration data is saved in `backend/ystore/` and synced back to the `.txt` space files. This allows recovery after a crash or restart.
+
+## Example Spaces
+Sample spaces live in `backend/spaces/` (e.g. `LOTR`, `expanse`, `witcher`, `what-does-the-fox-say`).
+
 ## Project Structure
+
 - `frontend/` static app (HTML/CSS/JS + `node_modules`).
 - `backend/` FastAPI server and collaboration backend.
 - `setup.sh` installs frontend dependencies.

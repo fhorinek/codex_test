@@ -3,6 +3,7 @@ Project requirements
 Overview
 - Single-page split-pane app: editor on the left, graph on the right, kanban below the graph.
 - The task script is the single source of truth; edits update graph/kanban live.
+- Vertical divider resizes editor/graph; horizontal divider resizes kanban and can collapse it while keeping the legend visible.
 - Keep this document updated whenever project behavior or UI changes.
 
 Config header
@@ -20,7 +21,7 @@ Task script syntax
 - Task description follows until a blank line or the next task line.
 - Preferred token line is directly under the task line: `!state @person #tag #tag`.
 - Tags: `#tag`, people: `@person`, references: `{Task name}`.
-- State tokens use `!state`; the first state per task is used, extra states are invalid and highlighted.
+- State tokens use `!state`; the first state per task is used, extra states are invalid and highlighted in the editor.
 - Checkbox syntax: `[ ]` or `[x]` (no leading `-`).
 - Markdown in descriptions supports bold, italic, underline, highlight, lists, tables, images, and links.
 
@@ -28,6 +29,8 @@ Editor
 - Monospace editor with line numbers and syntax highlighting.
 - Tab/Shift+Tab indent and unindent; Enter keeps indentation and repeats list/checkbox markers.
 - Suggestions for `#`, `@`, `!`, `{}` tokens; navigable with arrows, accept with Enter/Tab.
+- Fold gutter for config headers and task blocks.
+- Extra `!state` tokens are underlined and their lines are highlighted as errors.
 - Undo/redo supported via textarea history and toolbar buttons.
 
 Formatting
@@ -49,6 +52,8 @@ Graph view
 - Subtasks can be collapsed/expanded with a right-aligned toggle showing `+`/`–` and a count.
 - A minimap in the top-right shows the full graph and the current viewport.
 - Drag a task onto another task to reparent it as a subtask (append after existing children).
+- Double-click a task to open the edit modal.
+- Drag a task to the trash icon to remove it; modal offers remove-only (promote subtasks) or remove-with-subtasks.
 
 Kanban view
 - Kanban board sits below the graph.
@@ -56,6 +61,8 @@ Kanban view
 - Cards show task name, first person, and tags.
 - Drag cards across columns to change `!state` in the editor.
 - Drag a kanban card onto the graph to clear its `!state`.
+- Grouping switch supports none/person/tag; empty groups are hidden.
+- Selected task is highlighted in the kanban board.
 
 Drag and drop tokens
 - Drag tag/person pills from the legend or other tasks onto a task to add them.
@@ -63,6 +70,15 @@ Drag and drop tokens
 - Drag a state pill out of a task to clear its `!state`.
 - When adding tokens via drag, insert into the first description line under the task (reuse the line if present).
 - State must remain the first token on the first description line.
+- If no token line exists, inserting tokens creates one under the task and leaves a blank line after it.
+- Removing tokens cleans up an empty leading token line.
+
+Task edit modal
+- Open by double-clicking a graph node or kanban card.
+- Title field updates the task name; preview shows rendered markdown.
+- Inline pills in the preview can be dragged out to remove tokens.
+- State/people/tag palettes show display names and colors; drag into the preview to add.
+- Checkboxes in the preview update the editor text.
 
 Filters & search
 - Legend toggles tag/people filters; non-matching tasks are dimmed.
@@ -75,6 +91,7 @@ Collaboration
 - REST backend at `/api` lists available spaces and saves text content.
 - Authentication is Basic auth using credentials in `backend/users.txt`.
 - Each space maps to a single `.txt` document on the backend.
+- Yjs updates are persisted to disk and restored after server restarts.
 
 Misc
 - Clear Highlights resets tag/person filters and search input.

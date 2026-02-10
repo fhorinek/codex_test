@@ -1,0 +1,316 @@
+The Expanse:
+    states:
+        todo:
+            name: TODO
+        inprogress:
+            name: In progress
+        done:
+            name: Done
+    people:
+        holden:
+            name: James Holden
+        naomi:
+            name: Naomi Nagata
+        amos:
+            name: Amos Burton
+        alex:
+            name: Alex Kamal
+        miller:
+            name: Joe Miller
+        avasarala:
+            name: Chrisjen Avasarala
+        bobbie:
+            name: Bobbie Draper
+        prax:
+            name: Prax Meng
+        anna:
+            name: Anna Volovodov
+        clarissa:
+            name: Clarissa Mao
+    tags:
+        rocinante
+        protomolecule
+        politics
+        belt
+        mars
+        investigation
+        eros
+        ganymede
+        gate
+        behemoth
+
+% Leviathan Wakes
+!done @miller #investigation #belt
+[ ] Identify Julie Mao
+[ ] Trace the protomolecule
+[ ] Survive the Donnager
+[ ] Stop Eros
+Track Julie Mao and uncover the protomolecule.
+
+    % Scopuli distress
+    !done @holden #rocinante
+    Respond to the distress call and take the Knight.
+
+        % Scopuli distress detail A
+        !done @holden #rocinante
+        Expand on scopuli distress.
+
+            % Scopuli distress detail A detail A
+            !done @holden #rocinante
+            Expand on scopuli distress detail a.
+
+            % Scopuli distress detail A detail B
+            !done @holden #rocinante
+            Expand on scopuli distress detail a.
+
+        % Scopuli distress detail B
+        !done @holden #rocinante
+        Expand on scopuli distress.
+
+            % Scopuli distress detail B detail A
+            !done @holden #rocinante
+            Expand on scopuli distress detail b.
+
+            % Scopuli distress detail B detail B
+            !done @holden #rocinante
+            Expand on scopuli distress detail b.
+
+    % Eros incident
+    !done @miller #eros #protomolecule
+    Stop Eros from reaching Earth.
+
+        % Eros incident detail A
+        !done @miller #eros #protomolecule
+        Expand on eros incident.
+
+            % Eros incident detail A detail A
+            !done @miller #eros #protomolecule
+            Expand on eros incident detail a.
+
+            % Eros incident detail A detail B
+            !done @miller #eros #protomolecule
+            Expand on eros incident detail a.
+
+        % Eros incident detail B
+        !done @miller #eros #protomolecule
+        Expand on eros incident.
+
+            % Eros incident detail B detail A
+            !done @miller #eros #protomolecule
+            Expand on eros incident detail b.
+
+            % Eros incident detail B detail B
+            !done @miller #eros #protomolecule
+            Expand on eros incident detail b.
+
+% Caliban's War
+!done @avasarala #politics
+[ ] Contain political fallout
+[ ] Secure protomolecule intel
+[ ] Support Bobbie's testimony
+[ ] Shut down the hybrid program
+Contain the protomolecule arms race.
+
+    % Ganymede crisis
+    !done @bobbie #mars #ganymede
+    Survive the attack and testify.
+
+        % Ganymede crisis detail A
+        !done @bobbie #mars #ganymede
+        Expand on ganymede crisis.
+
+            % Ganymede crisis detail A detail A
+            !done @bobbie #mars #ganymede
+            Expand on ganymede crisis detail a.
+
+            % Ganymede crisis detail A detail B
+            !done @bobbie #mars #ganymede
+            Expand on ganymede crisis detail a.
+
+        % Ganymede crisis detail B
+        !done @bobbie #mars #ganymede
+        Expand on ganymede crisis.
+
+            % Ganymede crisis detail B detail A
+            !done @bobbie #mars #ganymede
+            Expand on ganymede crisis detail b.
+
+            % Ganymede crisis detail B detail B
+            !done @bobbie #mars #ganymede
+            Expand on ganymede crisis detail b.
+
+    % Prax and Mei
+    !done @prax #ganymede
+    Find Mei and expose the experiments.
+
+        % Prax and Mei detail A
+        !done @prax #ganymede
+        Expand on prax and mei.
+
+            % Prax and Mei detail A detail A
+            !done @prax #ganymede
+            Expand on prax and mei detail a.
+
+            % Prax and Mei detail A detail B
+            !done @prax #ganymede
+            Expand on prax and mei detail a.
+
+        % Prax and Mei detail B
+        !done @prax #ganymede
+        Expand on prax and mei.
+
+            % Prax and Mei detail B detail A
+            !done @prax #ganymede
+            Expand on prax and mei detail b.
+
+            % Prax and Mei detail B detail B
+            !done @prax #ganymede
+            Expand on prax and mei detail b.
+
+    % Io station
+    !done @holden #protomolecule
+    Destroy the hybrid program.
+
+        % Io station detail A
+        !done @holden #protomolecule
+        Expand on io station.
+
+            % Io station detail A detail A
+            !done @holden #protomolecule
+            Expand on io station detail a.
+
+            % Io station detail A detail B
+            !done @holden #protomolecule
+            Expand on io station detail a.
+
+        % Io station detail B
+        !done @holden #protomolecule
+        Expand on io station.
+
+            % Io station detail B detail A
+            !done @holden #protomolecule
+            Expand on io station detail b.
+
+            % Io station detail B detail B
+            !done @holden #protomolecule
+            Expand on io station detail b.
+
+% Abaddon's Gate
+!inprogress @holden #gate
+[ ] Stabilize the slow zone
+[ ] Prevent faction conflict
+[ ] Secure the Behemoth
+[ ] Resolve Clarissa's threat
+Investigate the Ring and control the slow zone.
+
+    % Behemoth enters
+    !inprogress @naomi #behemoth
+    Stabilize the drum and save lives.
+
+        % Behemoth enters detail A
+        !inprogress @naomi #behemoth
+        Expand on behemoth enters.
+
+            % Behemoth enters detail A detail A
+            !inprogress @naomi #behemoth
+            Expand on behemoth enters detail a.
+
+            % Behemoth enters detail A detail B
+            !inprogress @naomi #behemoth
+            Expand on behemoth enters detail a.
+
+        % Behemoth enters detail B
+        !inprogress @naomi #behemoth
+        Expand on behemoth enters.
+
+            % Behemoth enters detail B detail A
+            !inprogress @naomi #behemoth
+            Expand on behemoth enters detail b.
+
+            % Behemoth enters detail B detail B
+            !inprogress @naomi #behemoth
+            Expand on behemoth enters detail b.
+
+    % Bull takes command
+    !todo @amos #behemoth
+    Hold the Behemoth together.
+
+        % Bull takes command detail A
+        !todo @amos #behemoth
+        Expand on bull takes command.
+
+            % Bull takes command detail A detail A
+            !todo @amos #behemoth
+            Expand on bull takes command detail a.
+
+            % Bull takes command detail A detail B
+            !todo @amos #behemoth
+            Expand on bull takes command detail a.
+
+        % Bull takes command detail B
+        !todo @amos #behemoth
+        Expand on bull takes command.
+
+            % Bull takes command detail B detail A
+            !todo @amos #behemoth
+            Expand on bull takes command detail b.
+
+            % Bull takes command detail B detail B
+            !todo @amos #behemoth
+            Expand on bull takes command detail b.
+
+    % Anna on the mission
+    !todo @anna #politics
+    Keep the peace aboard the Behemoth.
+
+        % Anna on the mission detail A
+        !todo @anna #politics
+        Expand on anna on the mission.
+
+            % Anna on the mission detail A detail A
+            !todo @anna #politics
+            Expand on anna on the mission detail a.
+
+            % Anna on the mission detail A detail B
+            !todo @anna #politics
+            Expand on anna on the mission detail a.
+
+        % Anna on the mission detail B
+        !todo @anna #politics
+        Expand on anna on the mission.
+
+            % Anna on the mission detail B detail A
+            !todo @anna #politics
+            Expand on anna on the mission detail b.
+
+            % Anna on the mission detail B detail B
+            !todo @anna #politics
+            Expand on anna on the mission detail b.
+
+    % Clarissa's plan
+    !todo @clarissa #politics
+    Decide to help or harm Holden.
+
+        % Clarissa's plan detail A
+        !todo @clarissa #politics
+        Expand on clarissa's plan.
+
+            % Clarissa's plan detail A detail A
+            !todo @clarissa #politics
+            Expand on clarissa's plan detail a.
+
+            % Clarissa's plan detail A detail B
+            !todo @clarissa #politics
+            Expand on clarissa's plan detail a.
+
+        % Clarissa's plan detail B
+        !todo @clarissa #politics
+        Expand on clarissa's plan.
+
+            % Clarissa's plan detail B detail A
+            !todo @clarissa #politics
+            Expand on clarissa's plan detail b.
+
+            % Clarissa's plan detail B detail B
+            !todo @clarissa #politics
+            Expand on clarissa's plan detail b.

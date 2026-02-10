@@ -6,7 +6,7 @@ import {
   updateTaskState as updateTaskStateInEditor,
   updateTaskToken as updateTaskTokenInEditor,
 } from "./kanban.js";
-import { formatTaskScript } from "./formatter.js";
+import { formatTaskScript, normalizeContent } from "./formatter.js";
 
 const REMOTE_BASE = window.location.origin;
 const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
@@ -81,13 +81,11 @@ function getCollabIdentity(preferredName) {
 
 const dom = {
   editor: document.getElementById("task-editor"),
-  highlightLayer: document.getElementById("highlight-layer"),
-  suggestions: document.getElementById("suggestions"),
+  editorHost: document.getElementById("code-editor"),
   graphNodes: document.getElementById("graph-nodes"),
   graphLines: document.getElementById("graph-lines"),
   graphMinimap: document.getElementById("graph-minimap"),
   minimapSvg: document.getElementById("minimap-svg"),
-  lineNumbers: document.getElementById("line-numbers"),
   searchInput: document.getElementById("search-input"),
   searchName: document.getElementById("search-name"),
   searchDescription: document.getElementById("search-description"),
@@ -114,6 +112,24 @@ const dom = {
   spacesModal: document.getElementById("spaces-modal"),
   spacesModalClose: document.getElementById("spaces-modal-close"),
   logoutButton: document.getElementById("logout-button"),
+  taskEditModal: document.getElementById("task-edit-modal"),
+  taskEditTitleInput: document.getElementById("task-edit-title-input"),
+  taskEditPreview: document.getElementById("task-edit-preview"),
+  taskEditCode: document.getElementById("task-edit-code"),
+  taskEditCodeHost: document.getElementById("task-edit-code-editor"),
+  taskEditSide: document.getElementById("task-edit-side"),
+  taskEditStates: document.getElementById("task-edit-states"),
+  taskEditPeople: document.getElementById("task-edit-people"),
+  taskEditTags: document.getElementById("task-edit-tags"),
+  taskEditCancel: document.getElementById("task-edit-cancel"),
+  taskEditSave: document.getElementById("task-edit-save"),
+  taskEditError: document.getElementById("task-edit-error"),
+  taskTrash: document.getElementById("task-trash"),
+  taskDeleteModal: document.getElementById("task-delete-modal"),
+  taskDeleteMessage: document.getElementById("task-delete-message"),
+  taskDeleteCancel: document.getElementById("task-delete-cancel"),
+  taskDeleteConfirm: document.getElementById("task-delete-confirm"),
+  taskDeleteConfirmAll: document.getElementById("task-delete-confirm-all"),
   spaceNew: document.getElementById("space-new"),
   spaceCreate: document.getElementById("space-create"),
   spaceError: document.getElementById("space-error"),
@@ -123,9 +139,11 @@ const dom = {
   deleteConfirm: document.getElementById("delete-confirm"),
   deleteCancel: document.getElementById("delete-cancel"),
   kanbanBoard: document.getElementById("kanban-board"),
+  kanbanContent: document.getElementById("kanban-content"),
   kanbanDivider: document.getElementById("kanban-divider"),
   kanbanGroup: document.getElementById("kanban-group"),
   graphPanel: document.querySelector(".graph-panel"),
+  legend: document.querySelector(".legend"),
   tagList: document.getElementById("tag-list"),
   personList: document.getElementById("person-list"),
   clearFilters: document.getElementById("clear-filters"),
@@ -407,11 +425,86 @@ const sample = `Example board:\n    people:\n        maya:\n            name: Ma
 
 dom.editor.value = sample;
 
-const editorController = createEditor({
+let editorController;
+
+function updateCollabSelection(start, end, active = true) {
+  if (!collab.provider?.awareness || !collab.ytext || !collab.modules?.Y) {
+    return;
+  }
+  const identity =
+    collab.identity || getCollabIdentity(collab.displayName || collab.username || "user");
+  if (!active) {
+    collab.provider.awareness.setLocalStateField(dom.editor.id, {
+      user: collab.provider.awareness.clientID,
+      selection: false,
+      name: identity.name,
+      color: identity.color,
+    });
+    return;
+  }
+  const { Y } = collab.modules;
+  const safeStart = Math.max(0, Math.min(start ?? 0, collab.ytext.length));
+  const safeEnd = Math.max(0, Math.min(end ?? safeStart, collab.ytext.length));
+  const startRel = Y.createRelativePositionFromTypeIndex(collab.ytext, safeStart);
+  const endRel = Y.createRelativePositionFromTypeIndex(collab.ytext, safeEnd);
+  collab.provider.awareness.setLocalStateField(dom.editor.id, {
+    user: collab.provider.awareness.clientID,
+    selection: true,
+    start: JSON.stringify(startRel),
+    end: JSON.stringify(endRel),
+    name: identity.name,
+    color: identity.color,
+  });
+}
+
+function syncYTextFromEditor(value) {
+  if (!collab.ytext || !collab.ydoc) {
+    return false;
+  }
+  const current = collab.ytext.toString();
+  if (current === value) {
+    return true;
+  }
+  let prefix = 0;
+  const maxPrefix = Math.min(current.length, value.length);
+  while (prefix < maxPrefix && current[prefix] === value[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  const maxSuffix = Math.min(current.length - prefix, value.length - prefix);
+  while (
+    suffix < maxSuffix &&
+    current[current.length - 1 - suffix] === value[value.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const deleteFrom = prefix;
+  const deleteLength = current.length - prefix - suffix;
+  const insert = value.slice(prefix, value.length - suffix);
+  collab.ydoc.transact(() => {
+    if (deleteLength > 0) {
+      collab.ytext.delete(deleteFrom, deleteLength);
+    }
+    if (insert) {
+      collab.ytext.insert(deleteFrom, insert);
+    }
+  });
+  return true;
+}
+editorController = createEditor({
   state,
   dom,
   onSync: sync,
   onSelectTask: handleEditorSelection,
+  onLocalChange: syncYTextFromEditor,
+  onSelectionChange: (start, end) => updateCollabSelection(start, end, true),
+  onFocusChange: (focused, start, end) => {
+    if (!focused) {
+      updateCollabSelection(0, 0, false);
+      return;
+    }
+    updateCollabSelection(start, end, true);
+  },
 });
 
 const canvasController = createCanvas({
@@ -419,6 +512,7 @@ const canvasController = createCanvas({
   dom,
   renderMarkdown,
   onSelectTask: selectTask,
+  onEditTask: (task) => openTaskEditModal(task),
   findTaskByName,
   onUpdateTaskToken: updateTaskToken,
   onUpdateTaskState: updateTaskState,
@@ -432,12 +526,9 @@ const canvasController = createCanvas({
 });
 
 function applyEditorValue(nextValue) {
-  const { editor } = dom;
-  const start = editor.selectionStart;
-  const end = editor.selectionEnd;
-  const scrollTop = editor.scrollTop;
-  const scrollLeft = editor.scrollLeft;
-  const currentValue = editor.value;
+  const currentValue = editorController.getValue();
+  const { start, end } = editorController.getSelectionRange();
+  const { top: scrollTop, left: scrollLeft } = editorController.getScroll();
   if (currentValue === nextValue) {
     return;
   }
@@ -462,17 +553,8 @@ function applyEditorValue(nextValue) {
   const oldReplaceStart = prefix;
   const oldReplaceEnd = currentValue.length - suffix;
   const newReplace = nextValue.slice(prefix, nextValue.length - suffix);
-  editor.focus();
-  editor.setSelectionRange(oldReplaceStart, oldReplaceEnd);
-  let replaced = false;
-  try {
-    replaced = document.execCommand("insertText", false, newReplace);
-  } catch {
-    replaced = false;
-  }
-  if (!replaced) {
-    editor.setRangeText(newReplace, oldReplaceStart, oldReplaceEnd, "end");
-  }
+  editorController.focus();
+  editorController.replaceRange(oldReplaceStart, oldReplaceEnd, newReplace);
   const delta = nextValue.length - currentValue.length;
   const adjustOffset = (pos) => {
     if (pos <= oldReplaceStart) {
@@ -483,18 +565,14 @@ function applyEditorValue(nextValue) {
     }
     return oldReplaceStart + newReplace.length;
   };
-  const clampedStart = Math.min(adjustOffset(start), editor.value.length);
-  const clampedEnd = Math.min(adjustOffset(end), editor.value.length);
-  editor.setSelectionRange(clampedStart, clampedEnd);
-  editor.scrollTop = scrollTop;
-  editor.scrollLeft = scrollLeft;
+  const clampedStart = Math.min(adjustOffset(start), nextValue.length);
+  const clampedEnd = Math.min(adjustOffset(end), nextValue.length);
+  editorController.setSelectionRange(clampedStart, clampedEnd);
+  editorController.setScroll({ top: scrollTop, left: scrollLeft });
 }
 
 function dispatchEditorInput() {
-  if (!dom.editor) {
-    return;
-  }
-  dom.editor.dispatchEvent(new Event("input", { bubbles: true }));
+  editorController.dispatchInput();
 }
 
 function forceEditorRefresh(value) {
@@ -504,12 +582,20 @@ function forceEditorRefresh(value) {
 }
 
 function handleEditorSelection(line) {
-  const task = state.allTasks.find((item) => item.lineIndex === line);
+  const task = state.allTasks.find(
+    (item) =>
+      item.lineIndex === line ||
+      (item.descriptionLineIndexes && item.descriptionLineIndexes.includes(line))
+  );
   if (task) {
+    if (state.selectedTaskId === task.id) {
+      return;
+    }
     state.selectedTaskId = task.id;
-    state.selectedLine = task.lineIndex;
+    state.selectedLine = line;
     canvasController.focusOnTask(task);
     canvasController.renderGraph();
+    buildKanban();
   } else {
     editorController.updateSelectedLine();
   }
@@ -523,15 +609,16 @@ function selectTask(task) {
     state.collapsed.delete(current.id);
     current = current.parent;
   }
-  const lines = dom.editor.value.split("\n");
+  const lines = editorController.getValue().split("\n");
   const targetLine = task.lineIndex;
   const caretPosition = lines.slice(0, targetLine).reduce((sum, line) => sum + line.length + 1, 0);
-  dom.editor.focus();
-  dom.editor.setSelectionRange(caretPosition, caretPosition);
+  editorController.focus();
+  editorController.setSelectionRange(caretPosition, caretPosition);
   editorController.updateSelectedLine();
-  editorController.highlightText(dom.editor.value.split("\n"));
+  editorController.highlightText(lines);
   canvasController.focusOnTask(task);
   canvasController.renderGraph();
+  buildKanban();
 }
 
 function buildTagPersonLists() {
@@ -574,6 +661,9 @@ function buildTagPersonLists() {
 }
 
 function sync() {
+  if (!editorController) {
+    return;
+  }
   const {
     tasks,
     tags,
@@ -586,7 +676,7 @@ function sync() {
     tagMeta,
     peopleMeta,
     stateMeta,
-  } = parseTasks(dom.editor.value);
+  } = parseTasks(editorController.getValue());
   state.tasks = tasks;
   state.allTasks = allTasks;
   state.tags = tags;
@@ -618,6 +708,7 @@ function buildKanban() {
     state,
     dom,
     selectTask,
+    onEditTask: (task) => openTaskEditModal(task),
     matchesSearchTask,
     filtersActive,
     matchesFilters,
@@ -634,6 +725,601 @@ function updateTaskToken(task, token, action) {
   updateTaskTokenInEditor({ task, token, action, dom, sync, applyEditorValue });
 }
 
+let editingTaskRange = null;
+let editingTaskIndent = "";
+let modalEditorController = null;
+let modalEditorState = null;
+let pendingDeleteTask = null;
+let isTaskDragActive = false;
+let taskEditDragHandlersBound = false;
+
+function getTaskBlockRange(lines, lineIndex) {
+  let start = lineIndex;
+  let end = lineIndex + 1;
+  while (end < lines.length) {
+    if (/^\s*%/.test(lines[end])) {
+      break;
+    }
+    end += 1;
+  }
+  return { start, end };
+}
+
+function setTaskDragActive(active) {
+  if (isTaskDragActive === active) {
+    return;
+  }
+  isTaskDragActive = active;
+  document.body.classList.toggle("dragging-task", active);
+  if (!active && dom.taskTrash) {
+    dom.taskTrash.classList.remove("drag-over");
+    document.body.classList.remove("task-trash-over");
+  }
+}
+
+function parseTaskBody(text) {
+  const lines = text.replace(/\r/g, "").split("\n");
+  const tags = new Set();
+  const people = new Set();
+  let stateToken = null;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    let match;
+    const tagRegex = /(^|\s)(#[^\s#@]+)/g;
+    while ((match = tagRegex.exec(line)) !== null) {
+      tags.add(match[2]);
+    }
+    const personRegex = /(^|\s)(@[^\s#@]+)/g;
+    while ((match = personRegex.exec(line)) !== null) {
+      people.add(match[2]);
+    }
+    if (!stateToken) {
+      const stateMatch = line.match(/(^|\s)(![^\s#@]+)/);
+      if (stateMatch) {
+        stateToken = stateMatch[2];
+      }
+    }
+  }
+  return {
+    descriptionText: lines.join("\n"),
+    tags: Array.from(tags),
+    people: Array.from(people),
+    state: stateToken,
+  };
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function insertTokenIntoBody(text, token) {
+  const tokenMatch = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`);
+  if (tokenMatch.test(text)) {
+    return text;
+  }
+  const lines = text.replace(/\r/g, "").split("\n");
+  let targetIndex = lines.findIndex((line) => line.trim() !== "");
+  if (targetIndex === -1) {
+    return `${token}\n`;
+  }
+  const trimmed = lines[targetIndex].trim();
+  const hasTokenLine = /(^|\s)([#@!][^\s#@]+)/.test(trimmed);
+  if (!hasTokenLine) {
+    lines.splice(targetIndex, 0, token);
+    return lines.join("\n");
+  }
+  const stateMatch = trimmed.match(/(^|\s)(![^\s#@]+)/);
+  if (stateMatch) {
+    const stateToken = stateMatch[2];
+    const rest = normalizeContent(trimmed.replace(/(^|\s)![^\s#@]+(?=\s|$)/g, "$1"));
+    lines[targetIndex] = rest ? `${stateToken} ${token} ${rest}` : `${stateToken} ${token}`;
+  } else {
+    lines[targetIndex] = normalizeContent(`${token} ${trimmed}`);
+  }
+  return lines.join("\n");
+}
+
+function insertStateIntoBody(text, stateToken) {
+  if (!stateToken) {
+    return text;
+  }
+  const lines = text.replace(/\r/g, "").split("\n");
+  const stateReplace = /(^|\s)![^\s#@]+(?=\s|$)/g;
+  const cleaned = lines.map((line) => normalizeContent(line.replace(stateReplace, "$1")));
+  let targetIndex = cleaned.findIndex((line) => line.trim() !== "");
+  if (targetIndex === -1) {
+    return `${stateToken}\n`;
+  }
+  const trimmed = cleaned[targetIndex].trim();
+  const hasTokenLine = /(^|\s)([#@!][^\s#@]+)/.test(trimmed);
+  if (!hasTokenLine) {
+    cleaned.splice(targetIndex, 0, stateToken);
+    return cleaned.join("\n");
+  }
+  cleaned[targetIndex] = trimmed ? `${stateToken} ${trimmed}` : stateToken;
+  return cleaned.join("\n");
+}
+
+function updateCheckboxInBody(text, lineIndex, checked) {
+  const lines = text.replace(/\r/g, "").split("\n");
+  if (!Number.isFinite(lineIndex) || lineIndex < 0 || lineIndex >= lines.length) {
+    return text;
+  }
+  const line = lines[lineIndex];
+  const updated = line.replace(/^(\s*)\[[ xX]\](\s+|$)/, `$1[${checked ? "x" : " "}]$2`);
+  if (updated === line) {
+    return text;
+  }
+  lines[lineIndex] = updated;
+  return lines.join("\n");
+}
+
+function removeTokenFromBody(text, token) {
+  const tokenReplace = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
+  const lines = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => normalizeContent(line.replace(tokenReplace, "$1")));
+  while (lines.length && lines[0].trim() === "") {
+    lines.shift();
+  }
+  return lines.join("\n");
+}
+
+function removeStateFromBody(text) {
+  const stateReplace = /(^|\s)![^\s#@]+(?=\s|$)/g;
+  const lines = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => normalizeContent(line.replace(stateReplace, "$1")));
+  while (lines.length && lines[0].trim() === "") {
+    lines.shift();
+  }
+  return lines.join("\n");
+}
+
+function renderTaskEditTokenList(container, tokens, metaMap, type) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+  tokens.forEach((token) => {
+    const pill = document.createElement("button");
+    pill.type = "button";
+    pill.className = "pill";
+    const meta = metaMap?.get(token);
+    if (meta?.color) {
+      pill.style.borderColor = meta.color;
+      pill.style.color = meta.color;
+    }
+    if (type === "state") {
+      const label = meta?.name || token.replace(/^!/, "");
+      pill.classList.add("state-pill");
+      pill.textContent = label;
+    } else if (type === "tag") {
+      const label = meta?.name || token.replace("#", "");
+      pill.textContent = `#${label}`;
+    } else {
+      const label = meta?.name || token.replace("@", "");
+      pill.textContent = `👤 ${label}`;
+    }
+    pill.draggable = true;
+    pill.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData(
+        "application/json",
+        JSON.stringify({ type, value: token, source: "palette" })
+      );
+      event.dataTransfer.effectAllowed = "copy";
+    });
+    container.appendChild(pill);
+  });
+}
+
+function refreshTaskEditTokenLists() {
+  const stateOrder = state.config?.states?.map((item) => `!${item.key}`) || [];
+  const extraStates = Array.from(state.states)
+    .filter((value) => !stateOrder.includes(value))
+    .sort((a, b) => a.localeCompare(b));
+  const stateTokens = [...stateOrder, ...extraStates];
+  const tagOrder = state.config?.tags?.map((tag) => `#${tag.key}`) || [];
+  const extraTags = Array.from(state.tags)
+    .filter((tag) => !tagOrder.includes(tag))
+    .sort((a, b) => a.localeCompare(b));
+  const tagTokens = [...tagOrder, ...extraTags];
+  const peopleOrder = state.config?.people?.map((person) => `@${person.key}`) || [];
+  const extraPeople = Array.from(state.people)
+    .filter((person) => !peopleOrder.includes(person))
+    .sort((a, b) => a.localeCompare(b));
+  const peopleTokens = [...peopleOrder, ...extraPeople];
+  renderTaskEditTokenList(dom.taskEditStates, stateTokens, state.stateMeta, "state");
+  renderTaskEditTokenList(dom.taskEditTags, tagTokens, state.tagMeta, "tag");
+  renderTaskEditTokenList(dom.taskEditPeople, peopleTokens, state.peopleMeta, "person");
+}
+
+function ensureTaskEditDragHandlers() {
+  if (taskEditDragHandlersBound) {
+    return;
+  }
+  taskEditDragHandlersBound = true;
+  if (dom.taskEditPreview) {
+    dom.taskEditPreview.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      dom.taskEditPreview.classList.add("drag-over");
+    });
+    dom.taskEditPreview.addEventListener("dragleave", () => {
+      dom.taskEditPreview.classList.remove("drag-over");
+    });
+    dom.taskEditPreview.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dom.taskEditPreview.classList.remove("drag-over");
+      const payload = event.dataTransfer?.getData("application/json");
+      if (!payload || !modalEditorController) {
+        return;
+      }
+      try {
+        const data = JSON.parse(payload);
+        if (data.source !== "palette") {
+          return;
+        }
+        if (data.type !== "tag" && data.type !== "person" && data.type !== "state") {
+          return;
+        }
+        const updated =
+          data.type === "state"
+            ? insertStateIntoBody(modalEditorController.getValue(), data.value)
+            : insertTokenIntoBody(modalEditorController.getValue(), data.value);
+        modalEditorController.setValue(updated);
+      } catch {
+        // ignore invalid payloads
+      }
+    });
+  }
+  if (dom.taskEditSide) {
+    dom.taskEditSide.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      dom.taskEditSide.classList.add("drag-over");
+    });
+    dom.taskEditSide.addEventListener("dragleave", () => {
+      dom.taskEditSide.classList.remove("drag-over");
+    });
+    dom.taskEditSide.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dom.taskEditSide.classList.remove("drag-over");
+      const payload = event.dataTransfer?.getData("application/json");
+      if (!payload || !modalEditorController) {
+        return;
+      }
+      try {
+        const data = JSON.parse(payload);
+        if (data.source !== "preview") {
+          return;
+        }
+        if (data.type !== "tag" && data.type !== "person" && data.type !== "state") {
+          return;
+        }
+        const updated =
+          data.type === "state"
+            ? removeStateFromBody(modalEditorController.getValue())
+            : removeTokenFromBody(modalEditorController.getValue(), data.value);
+        modalEditorController.setValue(updated);
+      } catch {
+        // ignore invalid payloads
+      }
+    });
+  }
+}
+
+function updateTaskEditPreviewFromText(text) {
+  if (!dom.taskEditPreview) {
+    return;
+  }
+  const parsed = parseTaskBody(text);
+  const titleValue = dom.taskEditTitleInput?.value.trim() || "Untitled task";
+  dom.taskEditPreview.innerHTML = "";
+  const card = document.createElement("div");
+  card.className = "task-preview-card";
+  const header = document.createElement("div");
+  header.className = "task-header";
+  const title = document.createElement("h4");
+  title.textContent = titleValue;
+  header.appendChild(title);
+  if (parsed.state) {
+    const pill = document.createElement("span");
+    pill.className = "pill state-pill";
+    pill.draggable = true;
+    const stateMeta = state.stateMeta?.get(parsed.state);
+    pill.textContent = stateMeta?.name || parsed.state.replace(/^!/, "");
+    const stateColor = stateMeta?.color;
+    if (stateColor) {
+      pill.style.borderColor = stateColor;
+      pill.style.color = stateColor;
+    }
+    pill.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData(
+        "application/json",
+        JSON.stringify({ type: "state", value: parsed.state, source: "preview" })
+      );
+      event.dataTransfer.effectAllowed = "move";
+    });
+    header.appendChild(pill);
+  }
+  card.appendChild(header);
+  const desc = document.createElement("div");
+  desc.className = "description";
+  const descriptionLines = (parsed.descriptionText || "").replace(/\r/g, "").split("\n");
+  const cleanedDescription = descriptionLines
+    .map((line) =>
+      line.replace(/(^|\s)![^\s#@]+/g, "$1").replace(/\s{2,}/g, " ").trimEnd()
+    )
+    .join("\n");
+  const lineIndexes = descriptionLines.map((_, index) => index);
+  desc.innerHTML = renderMarkdown(cleanedDescription, { lineIndexes });
+  card.appendChild(desc);
+  dom.taskEditPreview.appendChild(card);
+
+  dom.taskEditPreview.querySelectorAll(".inline-pill").forEach((pill) => {
+    const type = pill.dataset.type;
+    const value = pill.dataset.value;
+    if (!type || !value) {
+      return;
+    }
+    if (type === "tag") {
+      const meta = state.tagMeta?.get(value);
+      const label = meta?.name || value.replace("#", "");
+      pill.textContent = `#${label}`;
+      if (meta?.color) {
+        pill.style.borderColor = meta.color;
+        pill.style.color = meta.color;
+      }
+    } else if (type === "person") {
+      const meta = state.peopleMeta?.get(value);
+      const label = meta?.name || value.replace("@", "");
+      pill.textContent = `👤 ${label}`;
+      if (meta?.color) {
+        pill.style.borderColor = meta.color;
+        pill.style.color = meta.color;
+      }
+    }
+    pill.draggable = true;
+    pill.addEventListener("dragstart", (event) => {
+      event.dataTransfer.setData(
+        "application/json",
+        JSON.stringify({ type, value, source: "preview" })
+      );
+      event.dataTransfer.effectAllowed = "move";
+    });
+  });
+  dom.taskEditPreview
+    .querySelectorAll('input[type="checkbox"][data-line]')
+    .forEach((checkbox) => {
+      checkbox.addEventListener("change", (event) => {
+        if (!modalEditorController) {
+          return;
+        }
+        const target = event.currentTarget;
+        const lineIndex = Number(target.dataset.line);
+        if (!Number.isFinite(lineIndex)) {
+          return;
+        }
+        const updated = updateCheckboxInBody(
+          modalEditorController.getValue(),
+          lineIndex,
+          target.checked
+        );
+        modalEditorController.setValue(updated);
+      });
+    });
+  ensureTaskEditDragHandlers();
+}
+
+function ensureTaskEditEditor() {
+  if (!dom.taskEditCode || !dom.taskEditCodeHost) {
+    return null;
+  }
+  if (!modalEditorState) {
+    modalEditorState = {
+      tags: state.tags,
+      people: state.people,
+      states: state.states,
+      allTasks: state.allTasks,
+      selectedLine: 0,
+    };
+  }
+  modalEditorState.tags = state.tags;
+  modalEditorState.people = state.people;
+  modalEditorState.states = state.states;
+  modalEditorState.allTasks = state.allTasks;
+  if (!modalEditorController) {
+    modalEditorController = createEditor({
+      state: modalEditorState,
+      dom: { editor: dom.taskEditCode, editorHost: dom.taskEditCodeHost },
+      onSync: () => {
+        if (dom.taskEditModal && !dom.taskEditModal.classList.contains("hidden")) {
+          updateTaskEditPreviewFromText(modalEditorController.getValue());
+        }
+      },
+      onSelectTask: () => {},
+      onLocalChange: () => true,
+      onSelectionChange: () => {},
+      onFocusChange: () => {},
+    });
+  }
+  return modalEditorController;
+}
+
+function openTaskEditModal(task) {
+  if (!dom.taskEditModal || !task) {
+    return;
+  }
+  const lines = editorController.getValue().split("\n");
+  const { start, end } = getTaskBlockRange(lines, task.lineIndex);
+  editingTaskRange = { start, end };
+  const taskLine = lines[task.lineIndex] || "";
+  editingTaskIndent = taskLine.match(/^\s*/)?.[0] || "";
+  if (dom.taskEditError) {
+    dom.taskEditError.classList.add("hidden");
+    dom.taskEditError.textContent = "";
+  }
+  if (dom.taskEditTitleInput) {
+    dom.taskEditTitleInput.value = task.name || "";
+  }
+  const bodyLines = lines
+    .slice(task.lineIndex + 1, end)
+    .map((line) =>
+      line.startsWith(editingTaskIndent) ? line.slice(editingTaskIndent.length) : line.trimStart()
+    );
+  const bodyText = bodyLines.join("\n");
+  const modalEditor = ensureTaskEditEditor();
+  if (modalEditor) {
+    dom.taskEditCode.value = bodyText;
+    modalEditor.setValue(bodyText);
+  }
+  refreshTaskEditTokenLists();
+  updateTaskEditPreviewFromText(bodyText);
+  dom.taskEditModal.classList.remove("hidden");
+  if (modalEditor) {
+    modalEditor.focus();
+  }
+}
+
+function closeTaskEditModal() {
+  if (!dom.taskEditModal) {
+    return;
+  }
+  dom.taskEditModal.classList.add("hidden");
+  editingTaskRange = null;
+  editingTaskIndent = "";
+}
+
+function openTaskDeleteModal(task) {
+  if (!dom.taskDeleteModal || !task) {
+    return;
+  }
+  pendingDeleteTask = task;
+  if (dom.taskDeleteMessage) {
+    const name = task.name || "this task";
+    dom.taskDeleteMessage.textContent = `Remove "${name}"?`;
+  }
+  if (dom.taskDeleteConfirmAll) {
+    const hasSubtasks = Array.isArray(task.children) && task.children.length > 0;
+    dom.taskDeleteConfirmAll.classList.toggle("hidden", !hasSubtasks);
+    dom.taskDeleteConfirmAll.disabled = !hasSubtasks;
+  }
+  dom.taskDeleteModal.classList.remove("hidden");
+}
+
+function closeTaskDeleteModal() {
+  if (!dom.taskDeleteModal) {
+    return;
+  }
+  dom.taskDeleteModal.classList.add("hidden");
+  pendingDeleteTask = null;
+  clearTaskDeletePreview();
+}
+
+function deleteTask(task) {
+  if (!task) {
+    return;
+  }
+  const lines = editorController.getValue().split("\n");
+  const block = findTaskBlock(lines, task.lineIndex);
+  if (!block) {
+    return;
+  }
+  lines.splice(block.start, block.end - block.start);
+  applyEditorValue(lines.join("\n"));
+  syncEditorState();
+  handleEditorSelection(Math.max(0, block.start - 1));
+}
+
+function deleteTaskKeepSubtasks(task) {
+  if (!task) {
+    return;
+  }
+  const lines = editorController.getValue().split("\n");
+  const block = findTaskBlock(lines, task.lineIndex);
+  if (!block) {
+    return;
+  }
+  const blockLines = lines.slice(block.start, block.end);
+  if (blockLines.length <= 1) {
+    lines.splice(block.start, block.end - block.start);
+    applyEditorValue(lines.join("\n"));
+    syncEditorState();
+    handleEditorSelection(Math.max(0, block.start - 1));
+    return;
+  }
+  const childLines = blockLines.slice(1).map((line) => adjustIndent(line, -4));
+  lines.splice(block.start, block.end - block.start, ...childLines);
+  applyEditorValue(lines.join("\n"));
+  syncEditorState();
+  handleEditorSelection(Math.max(0, block.start - 1));
+}
+
+function clearTaskDeletePreview() {
+  document.querySelectorAll(".task-node.delete-preview").forEach((node) => {
+    node.classList.remove("delete-preview");
+  });
+}
+
+function highlightTaskDeletePreview(task, includeSubtasks) {
+  clearTaskDeletePreview();
+  if (!task) {
+    return;
+  }
+  const toHighlight = [task];
+  if (includeSubtasks) {
+    const stack = [...task.children];
+    while (stack.length) {
+      const current = stack.shift();
+      if (!current) {
+        continue;
+      }
+      toHighlight.push(current);
+      if (current.children?.length) {
+        stack.push(...current.children);
+      }
+    }
+  }
+  toHighlight.forEach((item) => {
+    const node = document.querySelector(`.task-node[data-task-id="${item.id}"]`);
+    if (node) {
+      node.classList.add("delete-preview");
+    }
+  });
+}
+
+function saveTaskEditModal() {
+  if (!dom.taskEditModal) {
+    return;
+  }
+  const modalEditor = ensureTaskEditEditor();
+  if (!modalEditor || !editingTaskRange) {
+    closeTaskEditModal();
+    return;
+  }
+  const title = dom.taskEditTitleInput?.value.trim() || "";
+  if (!title) {
+    if (dom.taskEditError) {
+      dom.taskEditError.textContent = "Title is required.";
+      dom.taskEditError.classList.remove("hidden");
+    }
+    return;
+  }
+  const bodyLines = modalEditor
+    .getValue()
+    .replace(/\r/g, "")
+    .split("\n")
+    .map((line) => (line.trim() === "" ? "" : `${editingTaskIndent}${line}`));
+  const nextLines = [`${editingTaskIndent}% ${title}`, ...bodyLines];
+  const lines = editorController.getValue().split("\n");
+  lines.splice(editingTaskRange.start, editingTaskRange.end - editingTaskRange.start, ...nextLines);
+  applyEditorValue(lines.join("\n"));
+  syncEditorState();
+  handleEditorSelection(editingTaskRange.start);
+  closeTaskEditModal();
+}
+
 function moveTaskAsSubtask(sourceTask, targetTask) {
   if (!sourceTask || !targetTask || sourceTask.id === targetTask.id) {
     return;
@@ -645,7 +1331,7 @@ function moveTaskAsSubtask(sourceTask, targetTask) {
     }
     current = current.parent;
   }
-  const lines = dom.editor.value.split("\n");
+  const lines = editorController.getValue().split("\n");
   const sourceBlock = findTaskBlock(lines, sourceTask.lineIndex);
   const targetBlock = findTaskBlock(lines, targetTask.lineIndex);
   if (!sourceBlock || !targetBlock) {
@@ -710,7 +1396,7 @@ function adjustIndent(line, deltaSpaces) {
 }
 
 function toggleCheckboxAtLine(lineIndex, checked = null) {
-  const lines = dom.editor.value.split("\n");
+  const lines = editorController.getValue().split("\n");
   const line = lines[lineIndex];
   if (!line) {
     return;
@@ -1391,7 +2077,7 @@ function scheduleRemoteSave() {
     clearTimeout(collab.saveTimer);
   }
   collab.saveTimer = setTimeout(() => {
-    const body = dom.editor.value;
+    const body = editorController.getValue();
     fetch(`${REMOTE_BASE}/api/spaces/${collab.spaceId}`, {
       method: "PUT",
       headers: {
@@ -1462,12 +2148,17 @@ async function connectToSpace(spaceId) {
     color: identity.color,
   };
   const binding = new TextAreaBinding(ytext, dom.editor, bindingOptions);
-  provider.awareness.setLocalStateField(dom.editor.id, {
-    user: provider.awareness.clientID,
-    selection: false,
-    name: identity.name,
-    color: identity.color,
-  });
+  const selection = editorController?.getSelectionRange?.();
+  if (selection) {
+    updateCollabSelection(selection.start, selection.end, true);
+  } else {
+    provider.awareness.setLocalStateField(dom.editor.id, {
+      user: provider.awareness.clientID,
+      selection: false,
+      name: identity.name,
+      color: identity.color,
+    });
+  }
 
   collab.spaceId = spaceId;
   collab.provider = provider;
@@ -1509,7 +2200,10 @@ async function connectToSpace(spaceId) {
     }
   });
 
-  ytext.observe(() => {
+  ytext.observe((event, transaction) => {
+    if (transaction && transaction.local === false) {
+      editorController.setValueFromRemote(ytext.toString());
+    }
     markActivity();
     scheduleRemoteSave();
     scheduleCollabSync();
@@ -1528,16 +2222,16 @@ function matchesFilters(task) {
 
 if (dom.undoButton) {
   dom.undoButton.addEventListener("click", () => {
-    dom.editor.focus();
-    document.execCommand("undo");
+    editorController.focus();
+    editorController.undo();
     syncEditorState();
   });
 }
 
 if (dom.redoButton) {
   dom.redoButton.addEventListener("click", () => {
-    dom.editor.focus();
-    document.execCommand("redo");
+    editorController.focus();
+    editorController.redo();
     syncEditorState();
   });
 }
@@ -1552,7 +2246,7 @@ if (dom.loadButton && dom.fileInput) {
       return;
     }
     const text = await file.text();
-    dom.editor.value = text;
+    editorController.setValue(text);
     dom.fileInput.value = "";
     syncEditorState();
   });
@@ -1562,7 +2256,7 @@ if (dom.saveButton) {
   dom.saveButton.addEventListener("click", () => {
     const title = state.config?.boardName || dom.boardTitle?.textContent || "tasks";
     const filename = `${toSafeFilename(title)}.txt`;
-    const blob = new Blob([dom.editor.value], { type: "text/plain" });
+    const blob = new Blob([editorController.getValue()], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -1576,8 +2270,9 @@ if (dom.saveButton) {
 
 if (dom.formatButton) {
   dom.formatButton.addEventListener("click", () => {
-    const formatted = formatTaskScript(dom.editor.value);
-    if (formatted === dom.editor.value) {
+    const currentValue = editorController.getValue();
+    const formatted = formatTaskScript(currentValue);
+    if (formatted === currentValue) {
       return;
     }
     applyEditorValue(formatted);
@@ -1650,6 +2345,79 @@ if (dom.spacesModalClose) {
   });
 }
 
+if (dom.taskEditCancel) {
+  dom.taskEditCancel.addEventListener("click", () => {
+    closeTaskEditModal();
+  });
+}
+
+if (dom.taskEditSave) {
+  dom.taskEditSave.addEventListener("click", () => {
+    saveTaskEditModal();
+  });
+}
+
+if (dom.taskEditTitleInput) {
+  dom.taskEditTitleInput.addEventListener("input", () => {
+    if (!modalEditorController) {
+      return;
+    }
+    updateTaskEditPreviewFromText(modalEditorController.getValue());
+  });
+}
+
+if (dom.taskDeleteCancel) {
+  dom.taskDeleteCancel.addEventListener("click", () => {
+    closeTaskDeleteModal();
+  });
+}
+
+if (dom.taskDeleteConfirm) {
+  dom.taskDeleteConfirm.addEventListener("click", () => {
+    if (pendingDeleteTask) {
+      deleteTaskKeepSubtasks(pendingDeleteTask);
+    }
+    closeTaskDeleteModal();
+  });
+}
+
+if (dom.taskDeleteConfirmAll) {
+  dom.taskDeleteConfirmAll.addEventListener("click", () => {
+    if (pendingDeleteTask) {
+      deleteTask(pendingDeleteTask);
+    }
+    closeTaskDeleteModal();
+  });
+}
+
+if (dom.taskDeleteConfirm) {
+  dom.taskDeleteConfirm.addEventListener("mouseenter", () => {
+    if (pendingDeleteTask) {
+      highlightTaskDeletePreview(pendingDeleteTask, false);
+    }
+  });
+  dom.taskDeleteConfirm.addEventListener("mouseleave", () => {
+    clearTaskDeletePreview();
+  });
+}
+
+if (dom.taskDeleteConfirmAll) {
+  dom.taskDeleteConfirmAll.addEventListener("mouseenter", () => {
+    if (pendingDeleteTask) {
+      highlightTaskDeletePreview(pendingDeleteTask, true);
+    }
+  });
+  dom.taskDeleteConfirmAll.addEventListener("mouseleave", () => {
+    clearTaskDeletePreview();
+  });
+}
+
+if (dom.taskDeleteCancel) {
+  dom.taskDeleteCancel.addEventListener("mouseenter", () => {
+    clearTaskDeletePreview();
+  });
+}
+
 if (dom.loginModal) {
   dom.loginModal.addEventListener("click", (event) => {
     if (event.target === dom.loginModal) {
@@ -1680,11 +2448,71 @@ if (dom.deleteModal) {
   });
 }
 
+if (dom.taskDeleteModal) {
+  dom.taskDeleteModal.addEventListener("click", (event) => {
+    if (event.target === dom.taskDeleteModal) {
+      closeTaskDeleteModal();
+    }
+  });
+}
+
+if (dom.taskEditModal) {
+  dom.taskEditModal.addEventListener("click", () => {});
+}
+
+window.addEventListener("taskdragstart", () => {
+  setTaskDragActive(true);
+});
+
+window.addEventListener("taskdragend", () => {
+  setTaskDragActive(false);
+});
+
+if (dom.taskTrash) {
+  dom.taskTrash.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    dom.taskTrash.classList.add("drag-over");
+    document.body.classList.add("task-trash-over");
+  });
+  dom.taskTrash.addEventListener("dragleave", () => {
+    dom.taskTrash.classList.remove("drag-over");
+    document.body.classList.remove("task-trash-over");
+  });
+  dom.taskTrash.addEventListener("drop", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dom.taskTrash.classList.remove("drag-over");
+    document.body.classList.remove("task-trash-over");
+    setTaskDragActive(false);
+    let taskId = "";
+    const payload = event.dataTransfer?.getData("application/json");
+    if (payload) {
+      try {
+        const data = JSON.parse(payload);
+        if (data.type === "task" && data.taskId) {
+          taskId = data.taskId;
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (!taskId) {
+      taskId = event.dataTransfer?.getData("text/plain") || "";
+    }
+    const task = state.allTasks.find((item) => item.id === taskId);
+    if (task) {
+      openTaskDeleteModal(task);
+    }
+  });
+}
+
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
     closeLoginModal();
     closeSpacesModal();
     closeDeleteModal();
+    closeTaskEditModal();
+    closeTaskDeleteModal();
   }
 });
 
@@ -1853,11 +2681,19 @@ window.addEventListener("mousemove", (event) => {
     if (resizingKanban) {
       const panelRect = (dom.graphPanel || dom.graphCanvas).getBoundingClientRect();
       const dividerHeight = dom.kanbanDivider?.offsetHeight || 0;
-      const minHeight = 120;
-      const minGraphHeight = 200;
-      const maxHeight = Math.max(minHeight, panelRect.height - minGraphHeight - dividerHeight);
+      const legendHeight = dom.legend?.getBoundingClientRect().height || 0;
+      const minHeight = 0;
+      const maxHeight = Math.max(minHeight, panelRect.height - legendHeight - dividerHeight);
       const desired = panelRect.bottom - event.clientY;
-      const clamped = Math.min(maxHeight, Math.max(minHeight, desired));
+      let clamped = Math.min(maxHeight, Math.max(minHeight, desired));
+      const collapseThreshold = 48;
+      const isCollapsed = clamped < collapseThreshold;
+      if (isCollapsed) {
+        clamped = 0;
+        document.documentElement.setAttribute("data-kanban-collapsed", "true");
+      } else {
+        document.documentElement.removeAttribute("data-kanban-collapsed");
+      }
       document.documentElement.style.setProperty("--kanban-height", `${clamped}px`);
       scheduleGraphRender();
       return;

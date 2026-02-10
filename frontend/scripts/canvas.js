@@ -5,6 +5,7 @@ export function createCanvas({
   dom,
   renderMarkdown,
   onSelectTask,
+  onEditTask,
   findTaskByName,
   onUpdateTaskToken,
   onUpdateTaskState,
@@ -22,7 +23,7 @@ export function createCanvas({
     const positions = new Map();
     const nodeWidth = 308;
     const startX = 60;
-    const gapY = 40;
+    const gapY = 24;
 
     let maxX = 0;
     let maxY = 0;
@@ -35,6 +36,7 @@ export function createCanvas({
     visibleTasks.forEach((task) => {
       const node = document.createElement("div");
       node.className = "task-node";
+      node.dataset.taskId = task.id;
       node.style.left = `${startX + task.depth * (nodeWidth + 40)}px`;
       node.style.top = "0px";
       node.style.visibility = "hidden";
@@ -203,9 +205,25 @@ export function createCanvas({
       }
 
       node.addEventListener("click", () => onSelectTask(task));
+      node.addEventListener("dblclick", (event) => {
+        event.stopPropagation();
+        if (onEditTask) {
+          onEditTask(task);
+        }
+      });
       node.draggable = true;
       node.addEventListener("dragstart", (event) => {
         event.dataTransfer.setData("text/plain", task.id);
+        event.dataTransfer.setData(
+          "application/json",
+          JSON.stringify({
+            type: "task",
+            source: "canvas",
+            taskId: task.id,
+          })
+        );
+        node.classList.add("dragging");
+        window.dispatchEvent(new CustomEvent("taskdragstart"));
         const rect = node.getBoundingClientRect();
         const ghost = node.cloneNode(true);
         const scale = state.transform?.scale || 1;
@@ -234,13 +252,67 @@ export function createCanvas({
           node._dragGhost.remove();
           node._dragGhost = null;
         }
+        node.classList.remove("dragging");
+        window.dispatchEvent(new CustomEvent("taskdragend"));
       });
+      const isTaskDrag = (event) => {
+        const dataTransfer = event.dataTransfer;
+        if (!dataTransfer) {
+          return false;
+        }
+        const types = Array.from(dataTransfer.types || []);
+        if (types.includes("application/json")) {
+          const payload = dataTransfer.getData("application/json");
+          if (payload) {
+            try {
+              const data = JSON.parse(payload);
+              return data.type === "task";
+            } catch {
+              return false;
+            }
+          }
+        }
+        return types.includes("text/plain");
+      };
+      const getDraggedTaskId = (event) => {
+        const dataTransfer = event.dataTransfer;
+        if (!dataTransfer) {
+          return null;
+        }
+        const payload = dataTransfer.getData("application/json");
+        if (payload) {
+          try {
+            const data = JSON.parse(payload);
+            if (data.type === "task" && data.taskId) {
+              return data.taskId;
+            }
+          } catch {
+            return null;
+          }
+        }
+        const text = dataTransfer.getData("text/plain");
+        return text || null;
+      };
       node.addEventListener("dragover", (event) => {
         event.preventDefault();
+        if (!isTaskDrag(event)) {
+          node.classList.remove("drag-parent-target");
+          return;
+        }
+        const draggedId = getDraggedTaskId(event);
+        if (draggedId && draggedId === task.id) {
+          node.classList.remove("drag-parent-target");
+          return;
+        }
+        node.classList.add("drag-parent-target");
+      });
+      node.addEventListener("dragleave", () => {
+        node.classList.remove("drag-parent-target");
       });
       node.addEventListener("drop", (event) => {
         event.preventDefault();
         event.stopPropagation();
+        node.classList.remove("drag-parent-target");
         isDraggingToken = false;
         const payload = event.dataTransfer.getData("application/json");
         if (payload) {
@@ -285,7 +357,7 @@ export function createCanvas({
     widthsById.forEach((width) => {
       maxNodeWidth = Math.max(maxNodeWidth, width);
     });
-    const spacingX = maxNodeWidth + 40;
+    const spacingX = maxNodeWidth + 80;
 
     // Second pass: compute positions using measured heights to avoid overlaps.
     const placeTask = (task, yPos) => {
@@ -302,12 +374,14 @@ export function createCanvas({
         return yPos + height;
       }
       let currentBottom = yPos + height;
+      let childStackBottom = yPos;
       task.children.forEach((child, index) => {
         if (!nodesById.has(child.id)) {
           return;
         }
-        const childY = index === 0 ? yPos : currentBottom + gapY;
+        const childY = index === 0 ? yPos : childStackBottom + gapY;
         const childBottom = placeTask(child, childY);
+        childStackBottom = Math.max(childStackBottom, childBottom);
         currentBottom = Math.max(currentBottom, childBottom);
       });
       return currentBottom;

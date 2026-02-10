@@ -1,0 +1,250 @@
+The Witcher:
+    states:
+        todo:
+            name: TODO
+        inprogress:
+            name: In progress
+        done:
+            name: Done
+    people:
+        geralt:
+            name: Geralt of Rivia
+        yennefer:
+            name: Yennefer
+        ciri:
+            name: Ciri
+        dandelion:
+            name: Dandelion
+        triss:
+            name: Triss Merigold
+        vesemir:
+            name: Vesemir
+        emhyr:
+            name: Emhyr var Emreis
+    tags:
+        kaer-morhen
+        nilfgaard
+        politics
+        magic
+        monsters
+        destiny
+
+% The Last Wish
+!done @geralt #monsters
+[ ] Close the striga case
+[ ] Uphold witcher neutrality
+[ ] Navigate royal politics
+[ ] Secure payment
+Establish Geralt's early exploits and code.
+
+    % The Witcher
+    !done @geralt #monsters
+    Deal with the striga.
+
+        % Lift the curse
+        !done @geralt #monsters
+        Survive till dawn.
+
+            % Lift the curse detail A
+            !done @geralt #monsters
+            Expand on lift the curse.
+
+            % Lift the curse detail B
+            !done @geralt #monsters
+            Expand on lift the curse.
+
+        % The Witcher detail B
+        !done @geralt #monsters
+        Expand on the witcher.
+
+            % Lift the curse detail A
+            !done @geralt #monsters
+            Expand on lift the curse.
+
+            % Lift the curse detail B
+            !done @geralt #monsters
+            Expand on lift the curse.
+
+    % A Question of Price
+    !done @geralt #destiny
+    Attend the banquet in Cintra.
+
+        % Claim of surprise
+        !done @geralt #destiny
+        Invoke the law of surprise.
+
+            % Claim of surprise detail A
+            !done @geralt #destiny
+            Expand on claim of surprise.
+
+            % Claim of surprise detail B
+            !done @geralt #destiny
+            Expand on claim of surprise.
+
+        % A Question of Price detail B
+        !done @geralt #destiny
+        Expand on a question of price.
+
+            % Claim of surprise detail A
+            !done @geralt #destiny
+            Expand on claim of surprise.
+
+            % Claim of surprise detail B
+            !done @geralt #destiny
+            Expand on claim of surprise.
+
+% Sword of Destiny
+!done @geralt #destiny
+[ ] Locate Ciri
+[ ] Unravel destiny ties
+[ ] Survive Brokilon
+[ ] Decide Ciri's path
+Introduce Ciri and the threads of fate.
+
+    % Something More
+    !done @geralt #destiny
+    Find Ciri after the war.
+
+        % Reunion at Yurga's
+        !done @geralt #destiny
+        Accept the child of destiny.
+
+            % Reunion at Yurga's detail A
+            !done @geralt #destiny
+            Expand on reunion at yurga's.
+
+            % Reunion at Yurga's detail B
+            !done @geralt #destiny
+            Expand on reunion at yurga's.
+
+        % Something More detail B
+        !done @geralt #destiny
+        Expand on something more.
+
+            % Reunion at Yurga's detail A
+            !done @geralt #destiny
+            Expand on reunion at yurga's.
+
+            % Reunion at Yurga's detail B
+            !done @geralt #destiny
+            Expand on reunion at yurga's.
+
+    % Bounds of Reason
+    !done @geralt #monsters
+    Dragon hunt with Yennefer.
+
+        % Golden dragon reveal
+        !done @geralt #monsters
+        Learn the dragon's secret.
+
+            % Golden dragon reveal detail A
+            !done @geralt #monsters
+            Expand on golden dragon reveal.
+
+            % Golden dragon reveal detail B
+            !done @geralt #monsters
+            Expand on golden dragon reveal.
+
+        % Bounds of Reason detail B
+        !done @geralt #monsters
+        Expand on bounds of reason.
+
+            % Golden dragon reveal detail A
+            !done @geralt #monsters
+            Expand on golden dragon reveal.
+
+            % Golden dragon reveal detail B
+            !done @geralt #monsters
+            Expand on golden dragon reveal.
+
+% Blood of Elves
+!inprogress @ciri #kaer-morhen
+[ ] Train Ciri
+[ ] Monitor Nilfgaard threat
+[ ] Study chaos control
+[ ] Prepare for Thanedd
+Train Ciri and enter the political conflict.
+
+    % Kaer Morhen training
+    !inprogress @vesemir #kaer-morhen
+    Teach sword and signs.
+
+        % Master the basics
+        !inprogress @ciri #kaer-morhen
+        Build stamina and control.
+
+            % Master the basics detail A
+            !inprogress @ciri #kaer-morhen
+            Expand on master the basics.
+
+            % Master the basics detail B
+            !inprogress @ciri #kaer-morhen
+            Expand on master the basics.
+
+        % Kaer Morhen training detail B
+        !inprogress @vesemir #kaer-morhen
+        Expand on kaer morhen training.
+
+            % Master the basics detail A
+            !inprogress @ciri #kaer-morhen
+            Expand on master the basics.
+
+            % Master the basics detail B
+            !inprogress @ciri #kaer-morhen
+            Expand on master the basics.
+
+    % Aretuza lessons
+    !todo @yennefer #magic
+    Ciri learns from Yennefer.
+
+        % Chaos discipline
+        !todo @yennefer #magic
+        Teach control and safety.
+
+            % Chaos discipline detail A
+            !todo @yennefer #magic
+            Expand on chaos discipline.
+
+            % Chaos discipline detail B
+            !todo @yennefer #magic
+            Expand on chaos discipline.
+
+        % Aretuza lessons detail B
+        !todo @yennefer #magic
+        Expand on aretuza lessons.
+
+            % Chaos discipline detail A
+            !todo @yennefer #magic
+            Expand on chaos discipline.
+
+            % Chaos discipline detail B
+            !todo @yennefer #magic
+            Expand on chaos discipline.
+
+    % Thanedd tensions
+    !todo @triss #politics
+    Build toward the conclave.
+
+        % Court intrigue
+        !todo @triss #politics
+        Navigate competing factions.
+
+            % Court intrigue detail A
+            !todo @triss #politics
+            Expand on court intrigue.
+
+            % Court intrigue detail B
+            !todo @triss #politics
+            Expand on court intrigue.
+
+        % Thanedd tensions detail B
+        !todo @triss #politics
+        Expand on thanedd tensions.
+
+            % Court intrigue detail A
+            !todo @triss #politics
+            Expand on court intrigue.
+
+            % Court intrigue detail B
+            !todo @triss #politics
+            Expand on court intrigue.

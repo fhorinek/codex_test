@@ -36,6 +36,29 @@ function insertTokenRespectState(line, token) {
   return `${indent}${normalizeContent(`${token} ${trimmed}`)}`;
 }
 
+function findFirstNonEmptyLine(lines, start, end) {
+  for (let i = start; i < end; i += 1) {
+    if (lines[i].trim() !== "") {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function lineHasTokens(line) {
+  const { content } = splitIndent(line);
+  return /(^|\s)([#@!][^\s#@]+)/.test(content);
+}
+
+function removeLeadingBlankLines(lines, start, end) {
+  let currentEnd = end;
+  while (start < currentEnd && lines[start].trim() === "") {
+    lines.splice(start, 1);
+    currentEnd -= 1;
+  }
+  return currentEnd;
+}
+
 const UNASSIGNED_GROUP = "__unassigned__";
 
 function normalizeGroupBy(value) {
@@ -105,6 +128,7 @@ function createKanbanColumn({
   stateTag,
   tasks,
   selectTask,
+  onEditTask,
   matchesSearchTask,
   filtersActive,
   matchesFilters,
@@ -128,6 +152,11 @@ function createKanbanColumn({
     const card = document.createElement("button");
     card.type = "button";
     card.className = "kanban-card";
+    card.dataset.taskId = task.id;
+    if (state.selectedTaskId === task.id) {
+      card.classList.add("selected");
+      card.setAttribute("aria-current", "true");
+    }
     const titleNode = document.createElement("div");
     titleNode.className = "kanban-card-title";
     titleNode.textContent = task.name;
@@ -181,6 +210,11 @@ function createKanbanColumn({
       }
     }
     card.addEventListener("click", () => selectTask(task));
+    card.addEventListener("dblclick", () => {
+      if (onEditTask) {
+        onEditTask(task);
+      }
+    });
     card.draggable = true;
     card.addEventListener("dragstart", (event) => {
       const rect = card.getBoundingClientRect();
@@ -207,6 +241,7 @@ function createKanbanColumn({
           taskId: task.id,
         })
       );
+      window.dispatchEvent(new CustomEvent("taskdragstart"));
       card._dragGhost = ghost;
     });
     card.addEventListener("dragend", () => {
@@ -215,6 +250,7 @@ function createKanbanColumn({
         card._dragGhost.remove();
         card._dragGhost = null;
       }
+      window.dispatchEvent(new CustomEvent("taskdragend"));
     });
     list.appendChild(card);
   });
@@ -244,6 +280,7 @@ export function buildKanban({
   state,
   dom,
   selectTask,
+  onEditTask,
   matchesSearchTask,
   filtersActive,
   matchesFilters,
@@ -253,7 +290,18 @@ export function buildKanban({
   if (!dom.kanbanBoard) {
     return;
   }
-  dom.kanbanBoard.innerHTML = "";
+  const content = dom.kanbanContent || dom.kanbanBoard;
+  let groupFloat = null;
+  if (content === dom.kanbanBoard) {
+    groupFloat = dom.kanbanBoard.querySelector(".kanban-group-float");
+    if (groupFloat) {
+      groupFloat.remove();
+    }
+  }
+  content.innerHTML = "";
+  if (groupFloat) {
+    content.appendChild(groupFloat);
+  }
   const normalizedGroupBy = normalizeGroupBy(groupBy);
   dom.kanbanBoard.classList.toggle("kanban-grouped", normalizedGroupBy !== "none");
   const stateOrder = state.config?.states?.map((stateItem) => `!${stateItem.key}`) || [];
@@ -281,12 +329,13 @@ export function buildKanban({
         stateTag,
         tasks: tasksByState.get(stateTag) || [],
         selectTask,
+        onEditTask,
         matchesSearchTask,
         filtersActive,
         matchesFilters,
         updateTaskState,
       });
-      dom.kanbanBoard.appendChild(column);
+      content.appendChild(column);
     });
     return;
   }
@@ -386,6 +435,7 @@ export function buildKanban({
         stateTag,
         tasks: groupedTasks.get(group.key)?.get(stateTag) || [],
         selectTask,
+        onEditTask,
         matchesSearchTask,
         filtersActive,
         matchesFilters,
@@ -394,7 +444,7 @@ export function buildKanban({
       columns.appendChild(column);
     });
     lane.appendChild(columns);
-    dom.kanbanBoard.appendChild(lane);
+    content.appendChild(lane);
   });
 }
 
@@ -407,43 +457,52 @@ export function updateTaskState({ task, newState, dom, sync, applyEditorValue })
   let end = start;
   while (end < lines.length) {
     const line = lines[end];
-    if (line.trim() === "" || /^\s*%/.test(line)) {
+    if (/^\s*%/.test(line)) {
       break;
     }
     end += 1;
   }
+  const originalSlice = lines.slice(start, end);
   const stateMatch = /(^|\s)![^\s#@]+(?=\s|$)/;
   const stateReplace = /(^|\s)![^\s#@]+(?=\s|$)/g;
   if (start === end) {
     if (newState) {
-      if (start < lines.length && lines[start].trim() === "") {
-        const blankIndent = splitIndent(lines[start]).indent || indent;
-        lines[start] = `${blankIndent}${newState}`;
-      } else {
-        lines.splice(start, 0, `${indent}${newState}`);
-      }
+      lines.splice(start, 0, `${indent}${newState}`, "");
     }
   } else {
     for (let i = start; i < end; i += 1) {
-      const { indent: lineIndent, content } = splitIndent(lines[i]);
-      if (!stateMatch.test(content)) {
+      if (lines[i].trim() === "") {
         continue;
       }
-      const cleaned = normalizeContent(content.replace(stateReplace, "$1"));
-      lines[i] = cleaned ? `${lineIndent}${cleaned}` : "";
+      const { indent: lineIndent, content } = splitIndent(lines[i]);
+      if (stateMatch.test(content)) {
+        const cleaned = normalizeContent(content.replace(stateReplace, "$1"));
+        lines[i] = cleaned ? `${lineIndent}${cleaned}` : "";
+      }
+    }
+    const emptyIndexes = [];
+    for (let i = start; i < end; i += 1) {
+      if (lines[i].trim() === "" && originalSlice[i - start].trim() !== "") {
+        emptyIndexes.push(i);
+      }
+    }
+    for (let i = emptyIndexes.length - 1; i >= 0; i -= 1) {
+      lines.splice(emptyIndexes[i], 1);
+      end -= 1;
     }
     if (newState) {
-      if (lines[start].trim() === "") {
-        const blankIndent = splitIndent(lines[start]).indent || indent;
-        lines[start] = `${blankIndent}${newState}`;
+      const firstNonEmpty = findFirstNonEmptyLine(lines, start, end);
+      if (firstNonEmpty === -1) {
+        lines.splice(start, 0, `${indent}${newState}`, "");
+      } else if (lineHasTokens(lines[firstNonEmpty])) {
+        lines[firstNonEmpty] = prependTokenToLine(lines[firstNonEmpty], newState);
+      } else if (lines[start].trim() === "") {
+        lines[start] = `${indent}${newState}`;
       } else {
-        lines[start] = prependTokenToLine(lines[start], newState);
+        lines.splice(start, 0, `${indent}${newState}`);
       }
     } else {
-      const allEmpty = lines.slice(start, end).every((line) => line.trim() === "");
-      if (allEmpty) {
-        lines.splice(start, end - start);
-      }
+      end = removeLeadingBlankLines(lines, start, end);
     }
   }
   const nextValue = lines.join("\n");
@@ -464,11 +523,12 @@ export function updateTaskToken({ task, token, action, dom, sync, applyEditorVal
   let end = start;
   while (end < lines.length) {
     const line = lines[end];
-    if (line.trim() === "" || /^\s*%/.test(line)) {
+    if (/^\s*%/.test(line)) {
       break;
     }
     end += 1;
   }
+  const originalSlice = lines.slice(start, end);
   const tokenMatch = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`);
   const tokenReplace = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
   const hasToken = lines
@@ -488,11 +548,13 @@ export function updateTaskToken({ task, token, action, dom, sync, applyEditorVal
         lines[i] = stripToken(lines[i]);
       }
     }
-    if (start < end) {
-      lines[start] = insertTokenRespectState(lines[start], token);
-    } else if (start < lines.length && lines[start].trim() === "") {
-      const blankIndent = splitIndent(lines[start]).indent || indent;
-      lines[start] = `${blankIndent}${token}`;
+    const firstNonEmpty = findFirstNonEmptyLine(lines, start, end);
+    if (firstNonEmpty === -1) {
+      lines.splice(start, 0, `${indent}${token}`, "");
+    } else if (lineHasTokens(lines[firstNonEmpty])) {
+      lines[firstNonEmpty] = insertTokenRespectState(lines[firstNonEmpty], token);
+    } else if (lines[start].trim() === "") {
+      lines[start] = `${indent}${token}`;
     } else {
       lines.splice(start, 0, `${indent}${token}`);
     }
@@ -510,13 +572,14 @@ export function updateTaskToken({ task, token, action, dom, sync, applyEditorVal
     }
     const emptyIndexes = [];
     for (let i = start; i < end; i += 1) {
-      if (lines[i].trim() === "") {
+      if (lines[i].trim() === "" && originalSlice[i - start].trim() !== "") {
         emptyIndexes.push(i);
       }
     }
     for (let i = emptyIndexes.length - 1; i >= 0; i -= 1) {
       lines.splice(emptyIndexes[i], 1);
     }
+    removeLeadingBlankLines(lines, start, end);
   }
   const nextValue = lines.join("\n");
   if (applyEditorValue) {

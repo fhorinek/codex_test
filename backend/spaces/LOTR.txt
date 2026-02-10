@@ -1,0 +1,308 @@
+LOTR:
+    states:
+        todo:
+            name: TODO
+        inprogress:
+            name: In progress
+        done:
+            name: Done
+    people:
+        frodo:
+            name: Frodo Baggins
+        sam:
+            name: Samwise Gamgee
+        aragorn:
+            name: Aragorn
+        gandalf:
+            name: Gandalf
+        legolas:
+            name: Legolas
+        gimli:
+            name: Gimli
+        boromir:
+            name: Boromir
+        gollum:
+            name: Gollum
+    tags:
+        shire
+        fellowship
+        mordor
+        rohan
+        gondor
+        quest
+
+% The Fellowship of the Ring
+!done @frodo #shire #quest
+[ ] Assemble Fellowship members
+[ ] Secure supplies for the journey
+[ ] Choose initial route
+[ ] Depart Rivendell
+Leave the Shire, reach Rivendell, and form the Fellowship.
+
+    % Council of Elrond
+    !done @gandalf #fellowship
+    Decide the fate of the Ring.
+
+        % Council of Elrond detail A
+        !done @gandalf #fellowship
+        Expand on council of elrond.
+
+            % Council of Elrond detail A detail A
+            !done @gandalf #fellowship
+            Expand on council of elrond detail a.
+
+            % Council of Elrond detail A detail B
+            !done @gandalf #fellowship
+            Expand on council of elrond detail a.
+
+        % Council of Elrond detail B
+        !done @gandalf #fellowship
+        Expand on council of elrond.
+
+            % Council of Elrond detail B detail A
+            !done @gandalf #fellowship
+            Expand on council of elrond detail b.
+
+            % Council of Elrond detail B detail B
+            !done @gandalf #fellowship
+            Expand on council of elrond detail b.
+
+    % Journey through Moria
+    !done @gandalf #fellowship
+    Confront the Balrog and escape.
+
+        % Journey through Moria detail A
+        !done @gandalf #fellowship
+        Expand on journey through moria.
+
+            % Journey through Moria detail A detail A
+            !done @gandalf #fellowship
+            Expand on journey through moria detail a.
+
+            % Journey through Moria detail A detail B
+            !done @gandalf #fellowship
+            Expand on journey through moria detail a.
+
+        % Journey through Moria detail B
+        !done @gandalf #fellowship
+        Expand on journey through moria.
+
+            % Journey through Moria detail B detail A
+            !done @gandalf #fellowship
+            Expand on journey through moria detail b.
+
+            % Journey through Moria detail B detail B
+            !done @gandalf #fellowship
+            Expand on journey through moria detail b.
+
+    % Breaking of the Fellowship
+    !done @boromir #fellowship
+    Amon Hen and the split.
+
+        % Breaking of the Fellowship detail A
+        !done @boromir #fellowship
+        Expand on breaking of the fellowship.
+
+            % Breaking of the Fellowship detail A detail A
+            !done @boromir #fellowship
+            Expand on breaking of the fellowship detail a.
+
+            % Breaking of the Fellowship detail A detail B
+            !done @boromir #fellowship
+            Expand on breaking of the fellowship detail a.
+
+        % Breaking of the Fellowship detail B
+        !done @boromir #fellowship
+        Expand on breaking of the fellowship.
+
+            % Breaking of the Fellowship detail B detail A
+            !done @boromir #fellowship
+            Expand on breaking of the fellowship detail b.
+
+            % Breaking of the Fellowship detail B detail B
+            !done @boromir #fellowship
+            Expand on breaking of the fellowship detail b.
+
+% The Two Towers
+!inprogress @aragorn #rohan
+[ ] Track the Uruk-hai
+[ ] Aid Rohan's defense
+[ ] Navigate toward Mordor
+[ ] Coordinate with allies
+Pursue the orcs, defend Rohan, and continue the quest.
+
+    % Ride to Edoras
+    !inprogress @aragorn #rohan
+    Aid Theoden and prepare for war.
+
+        % Ride to Edoras detail A
+        !inprogress @aragorn #rohan
+        Expand on ride to edoras.
+
+            % Ride to Edoras detail A detail A
+            !inprogress @aragorn #rohan
+            Expand on ride to edoras detail a.
+
+            % Ride to Edoras detail A detail B
+            !inprogress @aragorn #rohan
+            Expand on ride to edoras detail a.
+
+        % Ride to Edoras detail B
+        !inprogress @aragorn #rohan
+        Expand on ride to edoras.
+
+            % Ride to Edoras detail B detail A
+            !inprogress @aragorn #rohan
+            Expand on ride to edoras detail b.
+
+            % Ride to Edoras detail B detail B
+            !inprogress @aragorn #rohan
+            Expand on ride to edoras detail b.
+
+    % Helm's Deep
+    !todo @gimli #rohan
+    Hold the fortress against Saruman.
+
+        % Helm's Deep detail A
+        !todo @gimli #rohan
+        Expand on helm's deep.
+
+            % Helm's Deep detail A detail A
+            !todo @gimli #rohan
+            Expand on helm's deep detail a.
+
+            % Helm's Deep detail A detail B
+            !todo @gimli #rohan
+            Expand on helm's deep detail a.
+
+        % Helm's Deep detail B
+        !todo @gimli #rohan
+        Expand on helm's deep.
+
+            % Helm's Deep detail B detail A
+            !todo @gimli #rohan
+            Expand on helm's deep detail b.
+
+            % Helm's Deep detail B detail B
+            !todo @gimli #rohan
+            Expand on helm's deep detail b.
+
+    % Frodo and Sam in Ithilien
+    !inprogress @sam #mordor
+    Navigate Gollum's guidance.
+
+        % Frodo and Sam in Ithilien detail A
+        !inprogress @sam #mordor
+        Expand on frodo and sam in ithilien.
+
+            % Frodo and Sam in Ithilien detail A detail A
+            !inprogress @sam #mordor
+            Expand on frodo and sam in ithilien detail a.
+
+            % Frodo and Sam in Ithilien detail A detail B
+            !inprogress @sam #mordor
+            Expand on frodo and sam in ithilien detail a.
+
+        % Frodo and Sam in Ithilien detail B
+        !inprogress @sam #mordor
+        Expand on frodo and sam in ithilien.
+
+            % Frodo and Sam in Ithilien detail B detail A
+            !inprogress @sam #mordor
+            Expand on frodo and sam in ithilien detail b.
+
+            % Frodo and Sam in Ithilien detail B detail B
+            !inprogress @sam #mordor
+            Expand on frodo and sam in ithilien detail b.
+
+% The Return of the King
+!todo @aragorn #gondor
+[ ] Rally Gondor
+[ ] March on the Black Gate
+[ ] Distract Sauron's gaze
+[ ] Support the Ringbearer
+Reclaim the throne and distract Sauron.
+
+    % Paths of the Dead
+    !todo @aragorn #gondor
+    Muster the Dead Men.
+
+        % Paths of the Dead detail A
+        !todo @aragorn #gondor
+        Expand on paths of the dead.
+
+            % Paths of the Dead detail A detail A
+            !todo @aragorn #gondor
+            Expand on paths of the dead detail a.
+
+            % Paths of the Dead detail A detail B
+            !todo @aragorn #gondor
+            Expand on paths of the dead detail a.
+
+        % Paths of the Dead detail B
+        !todo @aragorn #gondor
+        Expand on paths of the dead.
+
+            % Paths of the Dead detail B detail A
+            !todo @aragorn #gondor
+            Expand on paths of the dead detail b.
+
+            % Paths of the Dead detail B detail B
+            !todo @aragorn #gondor
+            Expand on paths of the dead detail b.
+
+    % Siege of Minas Tirith
+    !todo @gandalf #gondor
+    Defend the city and rally allies.
+
+        % Siege of Minas Tirith detail A
+        !todo @gandalf #gondor
+        Expand on siege of minas tirith.
+
+            % Siege of Minas Tirith detail A detail A
+            !todo @gandalf #gondor
+            Expand on siege of minas tirith detail a.
+
+            % Siege of Minas Tirith detail A detail B
+            !todo @gandalf #gondor
+            Expand on siege of minas tirith detail a.
+
+        % Siege of Minas Tirith detail B
+        !todo @gandalf #gondor
+        Expand on siege of minas tirith.
+
+            % Siege of Minas Tirith detail B detail A
+            !todo @gandalf #gondor
+            Expand on siege of minas tirith detail b.
+
+            % Siege of Minas Tirith detail B detail B
+            !todo @gandalf #gondor
+            Expand on siege of minas tirith detail b.
+
+    % Mount Doom
+    !todo @frodo #mordor
+    Destroy the Ring.
+
+        % Mount Doom detail A
+        !todo @frodo #mordor
+        Expand on mount doom.
+
+            % Mount Doom detail A detail A
+            !todo @frodo #mordor
+            Expand on mount doom detail a.
+
+            % Mount Doom detail A detail B
+            !todo @frodo #mordor
+            Expand on mount doom detail a.
+
+        % Mount Doom detail B
+        !todo @frodo #mordor
+        Expand on mount doom.
+
+            % Mount Doom detail B detail A
+            !todo @frodo #mordor
+            Expand on mount doom detail b.
+
+            % Mount Doom detail B detail B
+            !todo @frodo #mordor
+            Expand on mount doom detail b.

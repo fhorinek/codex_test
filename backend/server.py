@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 import re
 import time
 from pathlib import Path
@@ -7,18 +8,22 @@ from urllib.parse import parse_qs
 
 from typing import Any, Dict, List, Optional, Tuple
 
+import y_py as Y
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
-from ypy_websocket import WebsocketServer
+from ypy_websocket import WebsocketServer, YRoom
 from ypy_websocket.asgi_server import ASGIServer
+from ypy_websocket.ystore import FileYStore
 import uvicorn
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = ROOT_DIR / "frontend"
 SPACES_DIR = Path(__file__).resolve().parent / "spaces"
 SPACES_DIR.mkdir(parents=True, exist_ok=True)
+YSTORE_DIR = Path(__file__).resolve().parent / "ystore"
+YSTORE_DIR.mkdir(parents=True, exist_ok=True)
 USERS_FILE = Path(__file__).resolve().parent / "users.txt"
 
 if not USERS_FILE.exists():
@@ -26,6 +31,8 @@ if not USERS_FILE.exists():
 
 PRESENCE_TTL = 40
 presence: Dict[str, Dict[str, float]] = {}
+space_save_tasks: Dict[str, asyncio.Task] = {}
+SPACE_SAVE_DELAY = 0.5
 
 
 def sanitize_space(space_id: str) -> str:
@@ -91,6 +98,82 @@ def space_path(space_id: str) -> Path:
     return SPACES_DIR / f"{safe}.txt"
 
 
+def ystore_path(space_id: str) -> Path:
+    safe = sanitize_space(space_id)
+    return YSTORE_DIR / f"{safe}.ystore"
+
+
+def room_name(space_id: str) -> str:
+    return f"/ws/{sanitize_space(space_id)}"
+
+
+def ydoc_to_text(ydoc: Y.YDoc) -> str:
+    text = ydoc.get_text("content")
+    return json.loads(text.to_json())
+
+
+def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
+    text = ydoc.get_text("content")
+
+    def apply(txn):
+        if len(text):
+            text.delete_range(txn, 0, len(text))
+        if content:
+            text.insert(txn, 0, content)
+
+    ydoc.transact(apply)
+
+
+def schedule_space_snapshot(space_id: str, room) -> None:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        content = ydoc_to_text(room.ydoc)
+        space_path(space_id).write_text(content, encoding="utf-8")
+        return
+
+    if space_id in space_save_tasks:
+        space_save_tasks[space_id].cancel()
+
+    async def _save():
+        try:
+            await asyncio.sleep(SPACE_SAVE_DELAY)
+            content = ydoc_to_text(room.ydoc)
+            space_path(space_id).write_text(content, encoding="utf-8")
+        except asyncio.CancelledError:
+            return
+        finally:
+            space_save_tasks.pop(space_id, None)
+
+    space_save_tasks[space_id] = asyncio.create_task(_save())
+
+
+async def hydrate_room_from_storage(space_id: str, room) -> None:
+    store_path = ystore_path(space_id)
+    if store_path.exists():
+        await room.ystore.apply_updates(room.ydoc)
+    else:
+        content_path = space_path(space_id)
+        if content_path.exists():
+            content = content_path.read_text(encoding="utf-8")
+            if content:
+                replace_ydoc_text(room.ydoc, content)
+                await room.ystore.encode_state_as_update(room.ydoc)
+    room.ready = True
+    schedule_space_snapshot(space_id, room)
+
+
+def attach_snapshot_hook(space_id: str, room) -> None:
+    if getattr(room, "_snapshot_hook", False):
+        return
+
+    def _after_txn(*_args, **_kwargs):
+        schedule_space_snapshot(space_id, room)
+
+    room.ydoc.observe_after_transaction(_after_txn)
+    room._snapshot_hook = True
+
+
 app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
@@ -127,6 +210,14 @@ def write_space(
 ) -> Dict[str, Any]:
     path = space_path(space_id)
     path.write_text(content, encoding="utf-8")
+    room = websocket_server.rooms.get(room_name(space_id))
+    if room:
+        replace_ydoc_text(room.ydoc, content)
+        schedule_space_snapshot(space_id, room)
+    else:
+        store_path = ystore_path(space_id)
+        if store_path.exists():
+            store_path.unlink()
     return {"ok": True}
 
 
@@ -144,6 +235,9 @@ def delete_space(space_id: str, user: str = Depends(require_auth)) -> Dict[str, 
     path = space_path(space_id)
     if path.exists():
         path.unlink()
+    store_path = ystore_path(space_id)
+    if store_path.exists():
+        store_path.unlink()
     presence.pop(space_id, None)
     return {"ok": True}
 
@@ -169,6 +263,14 @@ def rename_space(
     if target.exists():
         raise HTTPException(status_code=409, detail="Space already exists.")
     source.rename(target)
+    source_store = ystore_path(space_id)
+    target_store = ystore_path(target_id)
+    if source_store.exists():
+        source_store.rename(target_store)
+    room = websocket_server.rooms.get(room_name(space_id))
+    if room:
+        websocket_server.rename_room(to_name=room_name(target_id), from_room=room)
+        schedule_space_snapshot(target_id, room)
     if space_id in presence:
         presence[target_id] = presence.pop(space_id)
     return {"ok": True, "id": target_id}
@@ -249,7 +351,24 @@ async def on_connect(_message: Dict[str, Any], scope: Dict[str, Any]) -> bool:
     return False
 
 
-websocket_server = WebsocketServer()
+class PersistentWebsocketServer(WebsocketServer):
+    async def get_room(self, name: str):
+        if name not in self.rooms.keys():
+            space_id = space_from_path(name)
+            if space_id:
+                store = FileYStore(str(ystore_path(space_id)))
+                room = YRoom(ready=False, ystore=store, log=self.log)
+                self.rooms[name] = room
+                await hydrate_room_from_storage(space_id, room)
+                attach_snapshot_hook(space_id, room)
+            else:
+                self.rooms[name] = YRoom(ready=self.rooms_ready, log=self.log)
+        room = self.rooms[name]
+        await self.start_room(room)
+        return room
+
+
+websocket_server = PersistentWebsocketServer()
 app.mount("/ws", ASGIServer(websocket_server, on_connect=on_connect))
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 

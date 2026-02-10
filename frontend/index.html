@@ -7,6 +7,7 @@
   <title>Task Script Board</title>
   <link rel="stylesheet" href="styles/styles.css" />
   <link rel="stylesheet" href="node_modules/@fortawesome/fontawesome-free/css/all.min.css" />
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
 </head>
 
 <body>
@@ -49,10 +50,8 @@
         </div>
       </header>
       <div class="editor-wrapper">
-        <div id="line-numbers" class="line-numbers" aria-hidden="true"></div>
-        <pre id="highlight-layer" aria-hidden="true"></pre>
-        <textarea id="task-editor" spellcheck="false"></textarea>
-        <div id="suggestions" class="suggestions hidden" role="listbox"></div>
+        <textarea id="task-editor" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
+        <div id="code-editor" class="code-editor" aria-label="Task script editor"></div>
       </div>
     </section>
     <div class="divider" id="divider" role="separator" aria-orientation="vertical"></div>
@@ -72,6 +71,9 @@
             <label><input type="checkbox" id="search-person" checked /> Person</label>
           </div>
         </div>
+        <div id="task-trash" class="task-trash" role="button" aria-label="Delete task" aria-hidden="true">
+          <i class="fa-solid fa-trash-can" aria-hidden="true"></i>
+        </div>
         <div class="graph-footer">
           <button id="clear-filters" class="toolbar-button">Clear Highlights</button>
         </div>
@@ -87,18 +89,20 @@
         </div>
       </div>
       <div id="kanban-divider" class="kanban-divider" role="separator" aria-orientation="horizontal"></div>
-      <div id="kanban-board" class="kanban-board" aria-label="Kanban board"></div>
-      <div class="kanban-group-float" aria-label="Kanban swimlane grouping">
-        <div id="kanban-group" class="kanban-group" role="radiogroup" aria-label="Kanban swimlane grouping">
-          <button type="button" class="kanban-group-button" data-kanban-group="none" role="radio" aria-checked="true">
-            No grouping
-          </button>
-          <button type="button" class="kanban-group-button" data-kanban-group="person" role="radio" aria-checked="false">
-            Person
-          </button>
-          <button type="button" class="kanban-group-button" data-kanban-group="tag" role="radio" aria-checked="false">
-            Tag
-          </button>
+      <div id="kanban-board" class="kanban-board" aria-label="Kanban board">
+        <div id="kanban-content" class="kanban-content"></div>
+        <div class="kanban-group-float" aria-label="Kanban swimlane grouping">
+          <div id="kanban-group" class="kanban-group" role="radiogroup" aria-label="Kanban swimlane grouping">
+            <button type="button" class="kanban-group-button" data-kanban-group="none" role="radio" aria-checked="true">
+              No grouping
+            </button>
+            <button type="button" class="kanban-group-button" data-kanban-group="person" role="radio" aria-checked="false">
+              Person
+            </button>
+            <button type="button" class="kanban-group-button" data-kanban-group="tag" role="radio" aria-checked="false">
+              Tag
+            </button>
+          </div>
         </div>
       </div>
     </section>
@@ -174,6 +178,63 @@
     </div>
   </div>
 
+  <div id="task-delete-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="task-delete-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="task-delete-title">Remove Task</h2>
+      </div>
+      <div class="modal-body">
+        <div id="task-delete-message" class="modal-help"></div>
+        <div class="modal-actions">
+          <button id="task-delete-confirm" class="toolbar-button danger" type="button">Remove</button>
+          <button id="task-delete-confirm-all" class="toolbar-button danger" type="button">Remove with all subtasks</button>
+          <button id="task-delete-cancel" class="toolbar-button" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="task-edit-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="task-edit-title-label">
+    <div class="modal-card task-edit-card">
+      <div class="modal-header task-edit-header">
+        <label class="modal-field task-edit-title-field">
+          <span id="task-edit-title-label">Title</span>
+          <input id="task-edit-title-input" type="text" />
+        </label>
+      </div>
+      <div class="modal-body task-edit-body">
+        <div class="task-edit-layout">
+          <div class="task-edit-main">
+            <div id="task-edit-preview" class="task-edit-preview"></div>
+            <div class="task-edit-code">
+              <textarea id="task-edit-code" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
+              <div id="task-edit-code-editor" class="code-editor task-edit-code-editor" aria-label="Task editor"></div>
+            </div>
+          </div>
+          <aside id="task-edit-side" class="task-edit-side" aria-label="Task tokens">
+            <div class="task-edit-list">
+              <h3>State</h3>
+              <div id="task-edit-states" class="modal-token-list"></div>
+            </div>
+            <div class="task-edit-list">
+              <h3>People</h3>
+              <div id="task-edit-people" class="modal-token-list"></div>
+            </div>
+            <div class="task-edit-list">
+              <h3>Tags</h3>
+              <div id="task-edit-tags" class="modal-token-list"></div>
+            </div>
+          </aside>
+        </div>
+        <div id="task-edit-error" class="modal-error hidden"></div>
+        <div class="modal-actions">
+          <button id="task-edit-cancel" class="toolbar-button" type="button">Cancel</button>
+          <button id="task-edit-save" class="toolbar-button success" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script type="importmap">
     {
       "imports": {
@@ -204,7 +265,20 @@
         "lib0/webcrypto": "/node_modules/lib0/webcrypto.js",
         "y-protocols/awareness": "/node_modules/y-protocols/awareness.js",
         "y-protocols/auth": "/node_modules/y-protocols/auth.js",
-        "y-protocols/sync": "/node_modules/y-protocols/sync.js"
+        "y-protocols/sync": "/node_modules/y-protocols/sync.js",
+        "@codemirror/state": "/node_modules/@codemirror/state/dist/index.js",
+        "@codemirror/view": "/node_modules/@codemirror/view/dist/index.js",
+        "@codemirror/commands": "/node_modules/@codemirror/commands/dist/index.js",
+        "@codemirror/autocomplete": "/node_modules/@codemirror/autocomplete/dist/index.js",
+        "@codemirror/search": "/node_modules/@codemirror/search/dist/index.js",
+        "@codemirror/language": "/node_modules/@codemirror/language/dist/index.js",
+        "@marijn/find-cluster-break": "/node_modules/@marijn/find-cluster-break/src/index.js",
+        "crelt": "/node_modules/crelt/index.js",
+        "style-mod": "/node_modules/style-mod/src/style-mod.js",
+        "w3c-keyname": "/node_modules/w3c-keyname/index.js",
+        "@lezer/common": "/node_modules/@lezer/common/dist/index.js",
+        "@lezer/highlight": "/node_modules/@lezer/highlight/dist/index.js",
+        "@lezer/lr": "/node_modules/@lezer/lr/dist/index.js"
       }
     }
   </script>
