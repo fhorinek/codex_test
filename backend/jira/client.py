@@ -12,6 +12,7 @@ import uuid
 
 logger = logging.getLogger("server")
 
+LOG_BORDER_WIDTH = 60
 
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
 _UNDERLINE_RE = re.compile(r"__([^_]+)__")
@@ -19,7 +20,9 @@ _HIGHLIGHT_RE = re.compile(r"==([^=]+)==")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*]+)\*(?!\*)")
 _REFERENCE_RE = re.compile(r"\{([^}]+)\}")
 _REFERENCE_PREFIX = "https://task.local/"
+_JIRA_BROWSE_PREFIX = "https://frantisek-horinek.atlassian.net/browse/"
 _HIGHLIGHT_COLOR = "#FFAB00"
+_JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
 
 def _parse_inline(text: str) -> List[Dict[str, Any]]:
@@ -50,14 +53,19 @@ def _parse_inline(text: str) -> List[Dict[str, Any]]:
             nodes.append({"type": "text", "text": text[index:earliest.start()]})
         inner = earliest.group(1)
         if earliest_kind == "reference":
+            ref_target = inner.strip()
+            if _JIRA_KEY_RE.match(ref_target):
+                href = f"{_JIRA_BROWSE_PREFIX}{url_quote(ref_target)}"
+            else:
+                href = f"{_REFERENCE_PREFIX}{url_quote(ref_target)}"
             nodes.append(
                 {
                     "type": "text",
-                    "text": inner,
+                    "text": ref_target,
                     "marks": [
                         {
                             "type": "link",
-                            "attrs": {"href": f"{_REFERENCE_PREFIX}{url_quote(inner)}"},
+                            "attrs": {"href": href},
                         }
                     ],
                 }
@@ -103,7 +111,7 @@ def _build_task_items(values: Iterable[Tuple[bool, str]]) -> List[Dict[str, Any]
                     "localId": str(uuid.uuid4()),
                     "state": "DONE" if checked else "TODO",
                 },
-                "content": [_paragraph(text)],
+                "content": [{"type": "text", "text": text}],
             }
         )
     return items
@@ -154,6 +162,8 @@ def to_adf(text: str) -> Dict[str, Any]:
             list_items.append(item_text)
             continue
         flush_list()
+        if raw == "":
+            continue
         content.append(_paragraph(raw))
 
     flush_list()
@@ -186,12 +196,13 @@ def _apply_marks(text: str, marks: List[Dict[str, Any]]) -> str:
     if link_attrs and isinstance(link_attrs, dict):
         href = link_attrs.get("href", "")
         if isinstance(href, str) and (
-            href.startswith("task://") or href.startswith(_REFERENCE_PREFIX)
+            href.startswith(_REFERENCE_PREFIX)
+            or href.startswith(_JIRA_BROWSE_PREFIX)
         ):
             if href.startswith(_REFERENCE_PREFIX):
                 ref = url_unquote(href[len(_REFERENCE_PREFIX):])
             else:
-                ref = url_unquote(href[len("task://"):])
+                ref = url_unquote(href[len(_JIRA_BROWSE_PREFIX):])
             return f"{{{ref}}}"
         if href:
             return f"[{text}]({href})"
@@ -221,8 +232,11 @@ def _collect_references(node: Any, refs: List[str]) -> None:
                 continue
             attrs = mark.get("attrs") or {}
             href = attrs.get("href") if isinstance(attrs, dict) else None
-            if isinstance(href, str) and href.startswith("task://"):
-                refs.append(url_unquote(href[len("task://"):]))
+            if isinstance(href, str):
+                if href.startswith(_REFERENCE_PREFIX):
+                    refs.append(url_unquote(href[len(_REFERENCE_PREFIX):]))
+                elif href.startswith(_JIRA_BROWSE_PREFIX):
+                    refs.append(url_unquote(href[len(_JIRA_BROWSE_PREFIX):]))
         return
     for child in node.get("content", []) or []:
         _collect_references(child, refs)
@@ -314,6 +328,34 @@ class JiraClient:
             "Content-Type": "application/json",
         }
 
+    def _summarize_payload(self, payload: Optional[Dict[str, Any]]) -> str:
+        if payload is None:
+            return "(none)"
+        try:
+            rendered = json.dumps(payload, ensure_ascii=True)
+        except Exception:
+            rendered = str(payload)
+        if len(rendered) > 2000:
+            rendered = rendered[:1997] + "..."
+        return rendered
+
+    def _format_payload(self, payload: Any) -> str:
+        if payload is None:
+            return "(none)"
+        if isinstance(payload, str):
+            return payload
+        try:
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        except Exception:
+            return str(payload)
+
+    def _format_block(self, title: str, body: str) -> str:
+        prefix = f"=== {title} "
+        width = max(LOG_BORDER_WIDTH, len(prefix) + 1)
+        line = prefix + ("=" * (width - len(prefix)))
+        border = "=" * len(line)
+        return f"{line}\n{body}\n{border}"
+
     def _request(
         self, method: str, path: str, payload: Optional[Dict[str, Any]] = None
     ) -> Tuple[Any, int]:
@@ -338,6 +380,32 @@ class JiraClient:
                 path,
                 exc.code,
                 preview,
+            )
+            logger.error(
+                "Jira API request failed: method=%s url=%s payload=%s",
+                method,
+                url,
+                self._summarize_payload(payload),
+            )
+            error_payload: Any = None
+            if error_body:
+                try:
+                    error_payload = json.loads(error_body)
+                except Exception:
+                    error_payload = error_body
+            logger.error(
+                "%s",
+                self._format_block(
+                    "calling JIRA API",
+                    "\n".join(
+                        [
+                            f"{method} {url}",
+                            self._format_payload(payload),
+                            f"RESPONSE {exc.code} - ERROR",
+                            self._format_payload(error_payload),
+                        ]
+                    ),
+                ),
             )
             raise RuntimeError(f"Jira API error {exc.code}: {preview}") from exc
         if not raw:
@@ -380,6 +448,20 @@ class JiraClient:
             payload["fields"]["assignee"] = {"accountId": assignee_id}
         try:
             result, status = self._request("POST", "/rest/api/3/issue", payload)
+            logger.info(
+                "%s",
+                self._format_block(
+                    "calling JIRA API",
+                    "\n".join(
+                        [
+                            f"POST {self.base_url}/rest/api/3/issue",
+                            self._format_payload(payload),
+                            f"RESPONSE {status} - OK",
+                            self._format_payload(result),
+                        ]
+                    ),
+                ),
+            )
             key = result.get("key") if isinstance(result, dict) else None
             return key, status, result if isinstance(result, dict) else None
         except Exception:
@@ -389,22 +471,39 @@ class JiraClient:
     def update_issue(
         self,
         key: str,
-        summary: str,
-        description: str,
-        labels: Optional[List[str]],
+        summary: Optional[str] = None,
+        description: Optional[str] = None,
+        labels: Optional[List[str]] = None,
         assignee_id: Optional[str] = None,
+        clear_assignee: bool = False,
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]]]:
-        payload = {
-            "fields": {
-                "summary": summary,
-                "description": to_adf(description),
-                "labels": labels or [],
-            }
-        }
-        if assignee_id:
+        payload = {"fields": {}}
+        if summary is not None:
+            payload["fields"]["summary"] = summary
+        if description is not None:
+            payload["fields"]["description"] = to_adf(description)
+        if labels is not None:
+            payload["fields"]["labels"] = labels
+        if clear_assignee:
+            payload["fields"]["assignee"] = None
+        elif assignee_id:
             payload["fields"]["assignee"] = {"accountId": assignee_id}
         try:
             result, status = self._request("PUT", f"/rest/api/3/issue/{key}", payload)
+            logger.info(
+                "%s",
+                self._format_block(
+                    "calling JIRA API",
+                    "\n".join(
+                        [
+                            f"PUT {self.base_url}/rest/api/3/issue/{key}",
+                            self._format_payload(payload),
+                            f"RESPONSE {status} - OK",
+                            self._format_payload(result),
+                        ]
+                    ),
+                ),
+            )
             return status, result if isinstance(result, dict) else None
         except Exception:
             logger.exception("Failed to update Jira issue %s", key)
@@ -476,6 +575,20 @@ class JiraClient:
         try:
             result, status = self._request(
                 "POST", f"/rest/api/3/issue/{key}/transitions", payload
+            )
+            logger.info(
+                "%s",
+                self._format_block(
+                    "calling JIRA API",
+                    "\n".join(
+                        [
+                            f"POST {self.base_url}/rest/api/3/issue/{key}/transitions",
+                            self._format_payload(payload),
+                            f"RESPONSE {status} - OK",
+                            self._format_payload(result),
+                        ]
+                    ),
+                ),
             )
             return status, result if isinstance(result, dict) else None
         except Exception:

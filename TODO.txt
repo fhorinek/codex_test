@@ -1,0 +1,25 @@
+From JIRA -> SPACE
+    title 
+    description
+    formating
+    list 
+    checkbox
+    reference
+    assignee (XXX not clearing)
+    state
+    tags
+
+From SPACE -> JIRA
+    title 
+    description
+    formating
+    list 
+    XXX checkbox
+    XXX reference
+    assignee (XXX not clearing)
+    state
+    tags
+
+Structure
+    XXX parenting
+    

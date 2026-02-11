@@ -3,19 +3,39 @@ Board:
         frantisek-horinek:
             name: František Horínek
             mail: frantisekhorinek@gmail.com
-
-% [JIRA:KAN-34] jira format test
-!in-review #unknown @frantisek-horinek
-{new task 2}
+    states:
+        done:
+            name: Done
+            jira: Done
+        in-progress:
+            name: In Progress
+            jira: In Progress
+        in-review:
+            name: In Review
+            jira: In Review
+        to-do:
+            name: To Do
+            jira: To Do
 
 % [JIRA:KAN-35] new task 2
-!done @frantisek-horinek #hovno
-basic **format**
+!done @frantisek-horinek
+basic **format *****sdgfsdfg***
 - asdf
 - asdfa
 - ffasdasd
-{jira format test}
+- hgfxdhtdr
+[x] desfg
+[x] sdfg
+[x] sdf
+[x] g
 
-% [JIRA:KAN-36] Epic
-!todo
+% [JIRA:KAN-38] test2
+!to-do @frantisek-horinek
+Hello world
+[ ] asdf
+[ ] asdf
+- asdf
+- sdzdfgsfd
+- asdf
+
 
