@@ -1,7 +1,7 @@
 {
   "name": "codex_test",
   "version": "1.0.0",
-  "description": "Task Script Board turns a simple text script into an interactive graph and kanban board. Edit the text on the left and watch the board update live on the right.",
+  "description": "Task Script Board is a script-first planner with live code, graph, and kanban views, collaborative spaces/folders, role-based user management, Jira/profile settings, slug rename tools, and persistent sessions.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

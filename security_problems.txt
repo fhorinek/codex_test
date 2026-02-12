@@ -1,0 +1,46 @@
+Security findings (static code review)
+
+1) [CRITICAL] Jira API token committed in plaintext
+- File: backend/jira/jira_config.json:4
+- Risk: immediate Jira account/API compromise if repo is shared or leaked.
+- Recommended fix: revoke/rotate token now, remove from git history, store in env/secret manager.
+
+2) [HIGH] Password hashing uses MD5
+- Files: backend/server.py:153, backend/server.py:158, backend/server.py:230
+- Risk: hashes are fast to crack if users config is leaked.
+- Recommended fix: migrate to argon2id/bcrypt/scrypt with proper cost, use constant-time compare.
+
+3) [HIGH] Credentials sent in URL query params (WS + auth fallback)
+- Files: frontend/scripts/app.js:5076, frontend/scripts/app.js:5078, backend/server.py:1908, backend/server.py:1955, backend/server.py:906
+- Risk: passwords can leak via logs, proxies, browser/network tooling.
+- Recommended fix: remove query-param auth; use session cookie or Authorization header only.
+
+4) [HIGH] Session cookie is not Secure
+- File: backend/server.py:1319
+- Risk: cookie can be sent over plain HTTP and intercepted on insecure networks.
+- Recommended fix: set secure=True in production and enforce HTTPS.
+
+5) [MEDIUM] Hardcoded/default credentials present
+- Files: backend/server.py:53, backend/server.py:54, backend/jira/space.py:15, backend/jira/space.py:16
+- Risk: predictable credentials can be abused if defaults remain active.
+- Recommended fix: require first-run password setup, move secrets to env vars.
+
+6) [MEDIUM] Password changes do not revoke existing sessions
+- Files: backend/server.py:1367, backend/server.py:1464, backend/server.py:1491, backend/server.py:1532
+- Risk: stolen session cookies remain valid after password reset.
+- Recommended fix: revoke all sessions for that user on password change (except optional current session).
+
+7) [MEDIUM] No login throttling/rate limiting
+- File: backend/server.py:1298
+- Risk: brute-force credential attempts.
+- Recommended fix: rate-limit by IP + username, add lockout/backoff.
+
+8) [LOW] Session tokens stored in plaintext on disk
+- Files: backend/server.py:261, backend/server.py:316
+- Risk: local file read can hijack active sessions.
+- Recommended fix: protect file permissions and/or store only hashed session tokens.
+
+9) [LOW] Jira token returned by API responses
+- Files: backend/server.py:1678, backend/server.py:1696
+- Risk: token exposed to browser runtime/XSS surface.
+- Recommended fix: return masked token only; keep token write-only for clients.

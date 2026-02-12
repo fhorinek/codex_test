@@ -11,10 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import sys
 import unicodedata
 
-import y_py as Y
-import websockets
 from websockets.exceptions import ConnectionClosed
-from ypy_websocket.websocket_provider import WebsocketProvider
 
 logger = logging.getLogger("jira-worker")
 
@@ -22,13 +19,34 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if __package__ in (None, ""):
     sys.path.append(str(BACKEND_DIR))
     from jira.client import JiraClient, from_adf
+    from jira.config import JiraConfig, load_jira_config
+    from jira.space import (
+        SpaceSession,
+        apply_linked_references,
+        extract_linked_keys,
+        format_token_line,
+        normalize_reference_to_key,
+        open_space_session,
+        read_ydoc_text,
+        replace_ydoc_text,
+        scrub_body_tokens,
+    )
 else:
     from .client import JiraClient, from_adf
+    from .config import JiraConfig, load_jira_config
+    from .space import (
+        SpaceSession,
+        apply_linked_references,
+        extract_linked_keys,
+        format_token_line,
+        normalize_reference_to_key,
+        open_space_session,
+        read_ydoc_text,
+        replace_ydoc_text,
+        scrub_body_tokens,
+    )
 SPACES_DIR = BACKEND_DIR / "spaces"
 
-JIRA_BASE_URL = "https://frantisek-horinek.atlassian.net"
-JIRA_USER_EMAIL = "frantisekhorinek@gmail.com"
-JIRA_API_TOKEN = "ATATT3xFfGF0gNsO7dTjDTs9h-ABRV7tPEfsvf6numTSsD0BgwFVwonJlyYSPDfoSlMhT5RZCD6aym42fbtgvURLSfghBI1M23MJUb98ndEagdA_3S_rOguc_uPY-cN-XMrxiBq0l7M0FpYXutx79CILZq9mZ8PPYBJU7i4v61azwcpDTuXAQys=5471EAAC"
 JIRA_PROJECTS: Dict[str, str] = {
     "jira_test": "KAN",
 }
@@ -52,10 +70,7 @@ JIRA_MARKER_RE = re.compile(r"\[JIRA:([A-Z][A-Z0-9]+(?:-\d+)?)\]")
 space_entity_cache: Dict[str, Dict[str, Any]] = {}
 jira_entity_cache: Dict[str, Dict[str, Any]] = {}
 JIRA_ACCOUNT_ID_BY_EMAIL: Dict[str, str] = {}
-WS_BASE_URL = "ws://localhost:5000/ws"
 LOG_BORDER_WIDTH = 60
-SERVER_USER = "user"
-SERVER_PASSWORD = "devtoken"
 
 TASK_LINE_RE = re.compile(r"^(\s*)%\s+(.*)$")
 TOKEN_LINE_RE = re.compile(r"(^|\s)[#!@]")
@@ -125,13 +140,8 @@ class SpaceTask:
     parent_index: Optional[int] = None
 
 
-def jira_enabled() -> bool:
-    return (
-        JIRA_BASE_URL
-        and JIRA_USER_EMAIL
-        and JIRA_API_TOKEN
-        and "your-" not in JIRA_API_TOKEN
-    )
+def jira_enabled(config: JiraConfig) -> bool:
+    return config.enabled
 
 
 def get_jira_project(space_id: str) -> Optional[str]:
@@ -573,24 +583,6 @@ def build_reference_maps(
     return key_to_title, title_to_key
 
 
-def extract_references(text: str) -> List[str]:
-    refs: List[str] = []
-    for match in REFERENCE_RE.finditer(text or ""):
-        ref = match.group(1).strip()
-        if ref:
-            refs.append(ref)
-    return refs
-
-
-def normalize_reference_to_key(ref: str, title_to_key: Dict[str, str]) -> Optional[str]:
-    cleaned = ref.strip()
-    if not cleaned:
-        return None
-    if re.fullmatch(r"[A-Z][A-Z0-9]+-\d+", cleaned, flags=re.IGNORECASE):
-        return cleaned.upper()
-    return title_to_key.get(cleaned.lower())
-
-
 def normalize_description_for_space(
     description: str, key_to_title: Dict[str, str]
 ) -> str:
@@ -630,18 +622,6 @@ def convert_description_to_jira(
         return f"{{{ref}}}"
 
     return REFERENCE_RE.sub(repl, description).rstrip()
-
-
-def extract_linked_keys(
-    description: str, title_to_key: Dict[str, str]
-) -> List[str]:
-    refs = extract_references(description)
-    keys: List[str] = []
-    for ref in refs:
-        key = normalize_reference_to_key(ref, title_to_key)
-        if key:
-            keys.append(key)
-    return _normalize_list(keys)
 
 
 SYNC_FIELDS = ["title", "state", "tags", "owner", "description", "linked"]
@@ -831,46 +811,6 @@ def build_jira_entity(
     return entity, state_changed, people_changed
 
 
-def apply_linked_references(
-    description: str,
-    linked_keys: List[str],
-    key_to_title: Dict[str, str],
-    title_to_key: Dict[str, str],
-) -> str:
-    if not description:
-        description = ""
-    desired_keys = {key.upper() for key in linked_keys}
-    seen: set = set()
-    lines = description.split("\n") if description else []
-    new_lines: List[str] = []
-
-    def repl(match: re.Match) -> str:
-        ref = match.group(1).strip()
-        key = normalize_reference_to_key(ref, title_to_key)
-        if key and key.upper() in desired_keys:
-            seen.add(key.upper())
-            ref_text = key_to_title.get(key.upper(), ref)
-            return f"{{{ref_text}}}"
-        return ""
-
-    for line in lines:
-        if line.strip() == "":
-            new_lines.append(line)
-            continue
-        updated = REFERENCE_RE.sub(repl, line)
-        if updated.strip() == "":
-            continue
-        new_lines.append(updated.rstrip())
-
-    for key in _normalize_list([key.upper() for key in linked_keys]):
-        if key in seen:
-            continue
-        ref_text = key_to_title.get(key, key)
-        new_lines.append(f"{{{ref_text}}}")
-
-    return "\n".join(new_lines).rstrip()
-
-
 def parse_tasks(lines: List[str]) -> List[ParsedTask]:
     tasks: List[ParsedTask] = []
     for index, line in enumerate(lines):
@@ -947,22 +887,6 @@ def find_task_by_line(tasks: List[ParsedTask], line_index: int) -> Optional[Pars
     return None
 
 
-def append_missing_references(description: str, refs: List[str]) -> str:
-    if not refs:
-        return description
-    existing = set(re.findall(r"\{([^}]+)\}", description))
-    missing = []
-    for ref in refs:
-        if ref in existing or ref in missing:
-            continue
-        missing.append(ref)
-    if not missing:
-        return description
-    lines = description.split("\n") if description else []
-    lines.extend([f"{{{ref}}}" for ref in missing])
-    return "\n".join(lines)
-
-
 def extract_issue_link_refs(issue: Dict[str, Any]) -> List[str]:
     fields = issue.get("fields", {}) if isinstance(issue, dict) else {}
     links = fields.get("issuelinks") or []
@@ -996,17 +920,6 @@ def insert_jira_key(lines: List[str], task: ParsedTask, jira_key: str) -> None:
 
 def set_task_name(lines: List[str], task: ParsedTask, name: str) -> None:
     lines[task.line_index] = build_task_line(task.indent, name, task.jira_key)
-
-
-def format_token_line(state: Optional[str], tags: List[str], people: List[str]) -> str:
-    tokens: List[str] = []
-    if state:
-        tokens.append(f"!{state}")
-    for tag in _normalize_list(tags):
-        tokens.append(f"#{tag}")
-    for person in _normalize_list(people):
-        tokens.append(f"@{person}")
-    return " ".join(tokens).strip()
 
 
 def ensure_task_tokens(
@@ -1277,51 +1190,6 @@ def format_sync_status(
     return f"{direction}({','.join(parts)})"
 
 
-def scrub_body_tokens(
-    description: str,
-    desired_state: Optional[str],
-    desired_tags: List[str],
-    desired_people: List[str],
-) -> str:
-    if not description:
-        return ""
-    tag_set = {tag.lower() for tag in _normalize_list(desired_tags)}
-    people_set = {person.lower() for person in _normalize_list(desired_people)}
-    state_value = (desired_state or "").lower()
-    cleaned_lines: List[str] = []
-    for raw_line in description.split("\n"):
-        parts = re.split(r"(\s+)", raw_line)
-        kept: List[str] = []
-        for part in parts:
-            if not part or part.isspace():
-                kept.append(part)
-                continue
-            tag_match = TAG_TOKEN_RE.fullmatch(part)
-            if tag_match:
-                tag = tag_match.group(2).lower()
-                if tag in tag_set:
-                    kept.append(part)
-                continue
-            person_match = PERSON_TOKEN_RE.fullmatch(part)
-            if person_match:
-                person = person_match.group(2).lower()
-                if person in people_set:
-                    kept.append(part)
-                continue
-            state_match = STATE_TOKEN_RE.fullmatch(part)
-            if state_match:
-                state = state_match.group(2).lower()
-                if state_value and state == state_value:
-                    kept.append(part)
-                continue
-            kept.append(part)
-        line = "".join(kept).strip()
-        if line == "":
-            continue
-        cleaned_lines.append(line)
-    return "\n".join(cleaned_lines).rstrip()
-
-
 def render_space_change_log(
     space_id: str, old_lines: List[str], new_lines: List[str]
 ) -> Optional[str]:
@@ -1553,148 +1421,6 @@ async def resolve_owner_account_id(
     if not config.mail:
         return None
     return await resolve_account_id(client, config.mail)
-
-
-class WebsocketAdapter:
-    def __init__(self, websocket, path: str) -> None:
-        self._websocket = websocket
-        self._path = path
-
-    @property
-    def path(self) -> str:
-        return self._path
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self) -> bytes:
-        try:
-            return await self.recv()
-        except Exception:
-            raise StopAsyncIteration()
-
-    async def send(self, message: bytes) -> None:
-        await self._websocket.send(message)
-
-    async def recv(self) -> bytes:
-        message = await self._websocket.recv()
-        if isinstance(message, bytes):
-            return message
-        return message.encode("utf-8")
-
-
-@dataclass
-class SpaceSession:
-    space_id: str
-    websocket: Any
-    provider: WebsocketProvider
-    ydoc: Y.YDoc
-    provider_task: asyncio.Task
-    last_change: float = 0.0
-    ignore_until: float = 0.0
-    last_content_len: int = -1
-    pending_change: bool = False
-    last_content: str = ""
-
-    async def close(self) -> None:
-        try:
-            await self.provider.stop()
-        except Exception:
-            logger.debug("Failed stopping provider for %s", self.space_id)
-        try:
-            await asyncio.wait_for(self.provider_task, timeout=2)
-        except Exception:
-            logger.debug("Failed waiting for provider task for %s", self.space_id)
-        try:
-            await self.websocket.close()
-        except Exception:
-            logger.debug("Failed closing websocket for %s", self.space_id)
-
-
-async def open_space_session(space_id: str) -> SpaceSession:
-    url = f"{WS_BASE_URL}/{space_id}?user={SERVER_USER}&password={SERVER_PASSWORD}"
-    logger.debug("Connecting to space %s via %s", space_id, url)
-    try:
-        ws = await asyncio.wait_for(
-            websockets.connect(
-                url,
-                max_size=8 * 1024 * 1024,
-                open_timeout=5,
-                ping_interval=20,
-                ping_timeout=20,
-            ),
-            timeout=6,
-        )
-    except TimeoutError:
-        logger.error("Timed out opening websocket to %s", url)
-        raise
-    except Exception:
-        logger.exception("Failed to connect to %s", url)
-        raise
-    logger.debug("Websocket connected for space %s", space_id)
-    adapter = WebsocketAdapter(ws, path=f"/ws/{space_id}")
-    ydoc = Y.YDoc()
-    provider_logger = logging.getLogger("jira-worker.yjs")
-    provider_logger.setLevel(logging.WARNING)
-    provider = WebsocketProvider(ydoc, adapter, log=provider_logger)
-    logger.debug("Starting Yjs provider for space %s", space_id)
-    provider_task = asyncio.create_task(provider.start())
-    try:
-        await asyncio.wait_for(provider.started.wait(), timeout=5)
-    except TimeoutError:
-        logger.error("Timed out waiting for Yjs provider to start for %s", space_id)
-        provider_task.cancel()
-        await ws.close()
-        raise
-    logger.info("Yjs provider started for space %s", space_id)
-    await asyncio.sleep(0.2)
-    session = SpaceSession(
-        space_id=space_id,
-        websocket=ws,
-        provider=provider,
-        ydoc=ydoc,
-        provider_task=provider_task,
-    )
-
-    def _after_txn(*_args, **_kwargs):
-        session.pending_change = True
-
-    ydoc.observe_after_transaction(_after_txn)
-    logger.info("Connected to space %s via Yjs", space_id)
-    return session
-
-
-def ydoc_to_text(ydoc: Y.YDoc) -> str:
-    text = ydoc.get_text("content")
-    raw = text.to_json()
-    if isinstance(raw, str):
-        if len(raw) >= 2 and raw[0] == raw[-1] == '"':
-            return raw[1:-1]
-        return raw
-    return str(raw)
-
-
-def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
-    text = ydoc.get_text("content")
-
-    def apply(txn):
-        if len(text):
-            text.delete_range(txn, 0, len(text))
-        if content:
-            text.insert(txn, 0, content)
-
-    ydoc.transact(apply)
-
-
-async def read_ydoc_text(ydoc: Y.YDoc, retries: int = 5) -> str:
-    for attempt in range(retries):
-        try:
-            return ydoc_to_text(ydoc)
-        except RuntimeError:
-            if attempt == retries - 1:
-                raise
-            await asyncio.sleep(0.05)
-    return ""
 
 
 async def sync_space_with_jira(
@@ -2303,37 +2029,57 @@ async def sync_space_with_jira(
 async def jira_sync_loop(
     one_shot: bool = False, force_direction: Optional[str] = None
 ) -> None:
-    if not jira_enabled():
-        logger.info("Jira sync disabled. Configure JIRA_* constants to enable.")
-        return
     SPACES_DIR.mkdir(parents=True, exist_ok=True)
-    client = JiraClient(JIRA_BASE_URL, JIRA_USER_EMAIL, JIRA_API_TOKEN)
     logger.info("Jira worker started. Polling every %ss", JIRA_SYNC_INTERVAL)
     sessions: Dict[str, SpaceSession] = {}
+    client: Optional[JiraClient] = None
+    active_config = JiraConfig()
+    config_missing_logged = False
     while True:
         try:
             logger.info("-" * 40 + " tick")
-            for path in SPACES_DIR.glob("*.txt"):
-                space_id = path.stem
-                project_key = get_jira_project(space_id)
-                if not project_key:
-                    logger.debug("No Jira project mapping for space %s", space_id)
-                    continue
-                logger.debug("Syncing space %s -> project %s", space_id, project_key)
-                session = sessions.get(space_id)
-                if not session:
-                    try:
-                        session = await open_space_session(space_id)
-                    except TimeoutError:
-                        logger.warning("Skipping space %s due to connection timeout", space_id)
+            config = load_jira_config()
+            enabled = jira_enabled(config)
+            if not enabled:
+                if not config_missing_logged:
+                    logger.info(
+                        "Jira sync disabled. Configure Jira in the UI to enable."
+                    )
+                    config_missing_logged = True
+            else:
+                config_missing_logged = False
+                if config != active_config or client is None:
+                    active_config = config
+                    client = JiraClient(
+                        config.base_url, config.email, config.token
+                    )
+            if enabled and client:
+                for path in SPACES_DIR.glob("*.txt"):
+                    space_id = path.stem
+                    project_key = get_jira_project(space_id)
+                    if not project_key:
+                        logger.debug("No Jira project mapping for space %s", space_id)
                         continue
-                    sessions[space_id] = session
-                await sync_space_with_jira(
-                    client,
-                    session,
-                    project_key,
-                    force_direction=force_direction,
-                )
+                    logger.debug(
+                        "Syncing space %s -> project %s", space_id, project_key
+                    )
+                    session = sessions.get(space_id)
+                    if not session:
+                        try:
+                            session = await open_space_session(space_id)
+                        except TimeoutError:
+                            logger.warning(
+                                "Skipping space %s due to connection timeout",
+                                space_id,
+                            )
+                            continue
+                        sessions[space_id] = session
+                    await sync_space_with_jira(
+                        client,
+                        session,
+                        project_key,
+                        force_direction=force_direction,
+                    )
         except ConnectionClosed:
             logger.warning("Websocket disconnected; will reconnect")
             for session in sessions.values():

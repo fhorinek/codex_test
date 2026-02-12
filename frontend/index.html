@@ -62,6 +62,10 @@
         <div id="graph-minimap" class="graph-minimap" aria-hidden="true">
           <svg id="minimap-svg" class="minimap-svg"></svg>
         </div>
+        <button id="graph-add-task" class="toolbar-button graph-add-task" type="button" aria-label="Add task">
+          <i class="fa-solid fa-plus" aria-hidden="true"></i>
+          <span>Add Task</span>
+        </button>
         <div class="graph-search">
           <input id="search-input" type="text" placeholder="Search tasks" />
           <div class="search-options">
@@ -124,12 +128,8 @@
             <input id="login-username" type="text" autocomplete="username" placeholder="username" />
           </label>
           <label class="modal-field">
-            <span>Display name (optional)</span>
-            <input id="login-displayname" type="text" autocomplete="nickname" placeholder="Display name" />
-          </label>
-          <label class="modal-field">
             <span>Password</span>
-            <input id="login-password" type="password" autocomplete="current-password" value="devtoken" />
+            <input id="login-password" type="password" autocomplete="current-password" />
           </label>
         </div>
         <div id="login-error" class="modal-error hidden">Invalid credentials.</div>
@@ -143,22 +143,287 @@
   <div id="spaces-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="spaces-modal-title">
     <div class="modal-card">
       <div class="modal-header">
-        <h2 id="spaces-modal-title">Spaces</h2>
+        <h2 id="spaces-modal-title">Choose project space</h2>
         <div class="modal-header-actions">
-          <button id="logout-button" class="toolbar-button" type="button">Logout</button>
-          <button id="spaces-modal-close" class="toolbar-icon" type="button" aria-label="Close">
+          <button id="spaces-logout" class="toolbar-icon danger-icon" type="button" aria-label="Logout" title="Logout">
+            <i class="fa-solid fa-right-from-bracket" aria-hidden="true"></i>
+          </button>
+          <button id="spaces-modal-close" class="toolbar-icon danger-icon" type="button" aria-label="Close">
             <i class="fa-solid fa-xmark" aria-hidden="true"></i>
           </button>
         </div>
       </div>
       <div class="modal-body">
-        <div class="modal-help">Select a space to collaborate on.</div>
-        <div class="space-create">
-          <input id="space-new" type="text" placeholder="New space name" />
-          <button id="space-create" class="toolbar-button" type="button">Add space</button>
+        <div class="spaces-tabs" role="tablist" aria-label="Spaces navigation">
+          <button id="spaces-tab-current" class="spaces-tab active" type="button" role="tab" aria-selected="true" disabled>Spaces</button>
+          <button id="profile-button" class="spaces-tab" type="button" role="tab" aria-selected="false">Profile</button>
+          <button id="jira-config-button" class="spaces-tab" type="button" role="tab" aria-selected="false">Jira</button>
+          <button id="users-button" class="spaces-tab" type="button" role="tab" aria-selected="false">User management</button>
+        </div>
+        <div class="space-toolbar">
+          <button id="space-open-create" class="toolbar-icon" type="button" aria-label="Add space" title="Add space">
+            <i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i>
+          </button>
+          <button id="space-open-folder-create" class="toolbar-icon" type="button" aria-label="Add folder" title="Add folder">
+            <i class="fa-solid fa-folder-plus" aria-hidden="true"></i>
+          </button>
         </div>
         <div id="space-error" class="modal-error hidden"></div>
         <div id="space-list" class="space-list"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="space-create-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="space-create-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="space-create-title">Add Space</h2>
+        <button id="space-create-close" class="toolbar-icon" type="button" aria-label="Close">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-fields">
+          <label class="modal-field">
+            <span>Space name</span>
+            <input id="space-new" type="text" placeholder="New space name" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="space-create-cancel" class="toolbar-button" type="button">Cancel</button>
+          <button id="space-create" class="toolbar-button success" type="button">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="space-folder-create-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="space-folder-create-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="space-folder-create-title">Add Folder</h2>
+        <button id="space-folder-create-close" class="toolbar-icon" type="button" aria-label="Close">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-fields">
+          <label class="modal-field">
+            <span>Folder name</span>
+            <input id="space-folder-new" type="text" placeholder="New folder name" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="space-folder-create-cancel" class="toolbar-button" type="button">Cancel</button>
+          <button id="space-folder-create" class="toolbar-button success" type="button">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="folder-delete-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="folder-delete-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="folder-delete-title">Delete Folder</h2>
+      </div>
+      <div class="modal-body">
+        <div id="folder-delete-message" class="modal-help"></div>
+        <div class="modal-actions">
+          <button id="folder-delete-cancel" class="toolbar-button" type="button">Cancel</button>
+          <button id="folder-delete-confirm" class="toolbar-button danger" type="button">Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="jira-config-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="jira-config-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="jira-config-title">Jira Configuration</h2>
+        <button id="jira-config-close" class="toolbar-icon" type="button" aria-label="Close">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-help">Configure Jira connection settings for sync.</div>
+        <div class="modal-fields">
+          <label class="modal-field">
+            <span>Base URL</span>
+            <input id="jira-config-base-url" type="text" placeholder="https://your-domain.atlassian.net" />
+          </label>
+          <label class="modal-field">
+            <span>Email</span>
+            <input id="jira-config-email" type="email" placeholder="you@example.com" />
+          </label>
+          <label class="modal-field">
+            <span>API Token</span>
+            <input id="jira-config-token" type="password" placeholder="Your Jira API token" />
+          </label>
+        </div>
+        <div id="jira-config-error" class="modal-error hidden"></div>
+        <div class="modal-actions">
+          <button id="jira-config-cancel" class="toolbar-button" type="button">Cancel</button>
+          <button id="jira-config-save" class="toolbar-button success" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="profile-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="profile-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="profile-title">My Profile</h2>
+        <button id="profile-close" class="toolbar-icon" type="button" aria-label="Close">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-help">Update your display name and password.</div>
+        <div class="modal-fields">
+          <label class="modal-field">
+            <span>Display name</span>
+            <input id="profile-display-name" type="text" placeholder="Display name" />
+          </label>
+          <label class="modal-field">
+            <span>Current password</span>
+            <input id="profile-current-password" type="password" placeholder="Current password" />
+          </label>
+          <label class="modal-field">
+            <span>New password</span>
+            <input id="profile-password" type="password" placeholder="Leave empty to keep" />
+          </label>
+          <label class="modal-field">
+            <span>Confirm new password</span>
+            <input id="profile-password-confirm" type="password" placeholder="Repeat new password" />
+          </label>
+        </div>
+        <div id="profile-error" class="modal-error hidden"></div>
+        <div class="modal-actions">
+          <button id="profile-save" class="toolbar-button success" type="button" title="Save profile" aria-label="Save profile">
+            <i class="fa-solid fa-floppy-disk" aria-hidden="true"></i>
+            <span>Save</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="profile-logout-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="profile-logout-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="profile-logout-title">Logout</h2>
+      </div>
+      <div class="modal-body">
+        <div class="modal-help">Do you want to logout?</div>
+        <div class="modal-actions">
+          <button id="profile-logout-cancel" class="toolbar-button" type="button">Cancel</button>
+          <button id="profile-logout-confirm" class="toolbar-button danger" type="button">Logout</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="users-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="users-title">
+    <div class="modal-card users-card">
+      <div class="modal-header">
+        <h2 id="users-title">User management</h2>
+        <button id="users-close" class="toolbar-icon" type="button" aria-label="Close">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="modal-body users-body">
+        <div class="modal-help">Manage user accounts and access.</div>
+        <section id="users-admin-section" class="users-section hidden">
+          <div class="users-header-row">
+            <h3>User Management</h3>
+            <button id="user-open-create" class="toolbar-button success" type="button" title="Add user" aria-label="Add user">
+              <i class="fa-solid fa-user-plus" aria-hidden="true"></i>
+            </button>
+          </div>
+          <div id="users-list" class="users-list"></div>
+        </section>
+        <div id="users-error" class="modal-error hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="user-delete-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="user-delete-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="user-delete-title">Delete User</h2>
+      </div>
+      <div class="modal-body">
+        <div id="user-delete-message" class="modal-help"></div>
+        <div class="modal-actions">
+          <button id="user-delete-cancel" class="toolbar-button" type="button">Cancel</button>
+          <button id="user-delete-confirm" class="toolbar-button danger" type="button">Delete User</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="user-create-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="user-create-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="user-create-title">Add User</h2>
+        <button id="user-create-close" class="toolbar-icon" type="button" aria-label="Close">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div class="users-create-grid">
+          <input id="user-new-username" type="text" placeholder="Username" />
+          <input id="user-new-display-name" type="text" placeholder="Display name" />
+          <input id="user-new-password" type="password" placeholder="Password" />
+          <input id="user-new-password-confirm" type="password" placeholder="Confirm password" />
+          <select id="user-new-role">
+            <option value="user">user</option>
+            <option value="manager">manager</option>
+            <option value="admin">admin</option>
+          </select>
+        </div>
+        <label id="user-new-spaces-field" class="modal-field">
+          <span>Access Paths (user role only)</span>
+          <div id="user-new-spaces" class="space-picker-host"></div>
+        </label>
+        <div id="user-create-error" class="modal-error hidden"></div>
+        <div class="modal-actions">
+          <button id="user-create" class="toolbar-button success" type="button" title="Add user" aria-label="Add user">
+            <i class="fa-solid fa-user-plus" aria-hidden="true"></i>
+            <span>Add User</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="user-password-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="user-password-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="user-password-title">Change Password</h2>
+        <button id="user-password-close" class="toolbar-icon" type="button" aria-label="Close">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div id="user-password-message" class="modal-help"></div>
+        <div class="modal-fields">
+          <label class="modal-field">
+            <span>New password</span>
+            <input id="user-password-new" type="password" placeholder="New password" />
+          </label>
+          <label class="modal-field">
+            <span>Repeat new password</span>
+            <input id="user-password-repeat" type="password" placeholder="Repeat new password" />
+          </label>
+        </div>
+        <div id="user-password-error" class="modal-error hidden"></div>
+        <div class="modal-actions">
+          <button id="user-password-cancel" class="toolbar-button" type="button">Cancel</button>
+          <button id="user-password-save" class="toolbar-button success" type="button">
+            <i class="fa-solid fa-key" aria-hidden="true"></i>
+            <span>Change Password</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -233,6 +498,34 @@
         <div class="modal-actions">
           <button id="task-edit-cancel" class="toolbar-button" type="button">Cancel</button>
           <button id="task-edit-save" class="toolbar-button success" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="slug-rename-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="slug-rename-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="slug-rename-title">Rename Slug</h2>
+        <button id="slug-rename-close" class="toolbar-icon" type="button" aria-label="Close">
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <div id="slug-rename-message" class="modal-help"></div>
+        <div class="modal-fields">
+          <label class="modal-field">
+            <span>Current slug</span>
+            <input id="slug-rename-current" type="text" readonly />
+          </label>
+          <label class="modal-field">
+            <span>New slug</span>
+            <input id="slug-rename-new" type="text" placeholder="new_slug" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="slug-rename-cancel" class="toolbar-button" type="button">Cancel</button>
+          <button id="slug-rename-save" class="toolbar-button success" type="button">Rename</button>
         </div>
       </div>
     </div>

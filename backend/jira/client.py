@@ -20,7 +20,6 @@ _HIGHLIGHT_RE = re.compile(r"==([^=]+)==")
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*]+)\*(?!\*)")
 _REFERENCE_RE = re.compile(r"\{([^}]+)\}")
 _REFERENCE_PREFIX = "https://task.local/"
-_JIRA_BROWSE_PREFIX = "https://frantisek-horinek.atlassian.net/browse/"
 _HIGHLIGHT_COLOR = "#FFAB00"
 _JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
@@ -54,20 +53,11 @@ def _parse_inline(text: str) -> List[Dict[str, Any]]:
         inner = earliest.group(1)
         if earliest_kind == "reference":
             ref_target = inner.strip()
-            if _JIRA_KEY_RE.match(ref_target):
-                href = f"{_JIRA_BROWSE_PREFIX}{url_quote(ref_target)}"
-            else:
-                href = f"{_REFERENCE_PREFIX}{url_quote(ref_target)}"
             nodes.append(
                 {
                     "type": "text",
                     "text": ref_target,
-                    "marks": [
-                        {
-                            "type": "link",
-                            "attrs": {"href": href},
-                        }
-                    ],
+                    "marks": [{"type": "underline"}],
                 }
             )
         else:
@@ -195,14 +185,8 @@ def _apply_marks(text: str, marks: List[Dict[str, Any]]) -> str:
     link_attrs = attrs_by_type.get("link")
     if link_attrs and isinstance(link_attrs, dict):
         href = link_attrs.get("href", "")
-        if isinstance(href, str) and (
-            href.startswith(_REFERENCE_PREFIX)
-            or href.startswith(_JIRA_BROWSE_PREFIX)
-        ):
-            if href.startswith(_REFERENCE_PREFIX):
-                ref = url_unquote(href[len(_REFERENCE_PREFIX):])
-            else:
-                ref = url_unquote(href[len(_JIRA_BROWSE_PREFIX):])
+        if isinstance(href, str) and href.startswith(_REFERENCE_PREFIX):
+            ref = url_unquote(href[len(_REFERENCE_PREFIX):])
             return f"{{{ref}}}"
         if href:
             return f"[{text}]({href})"
@@ -232,11 +216,8 @@ def _collect_references(node: Any, refs: List[str]) -> None:
                 continue
             attrs = mark.get("attrs") or {}
             href = attrs.get("href") if isinstance(attrs, dict) else None
-            if isinstance(href, str):
-                if href.startswith(_REFERENCE_PREFIX):
-                    refs.append(url_unquote(href[len(_REFERENCE_PREFIX):]))
-                elif href.startswith(_JIRA_BROWSE_PREFIX):
-                    refs.append(url_unquote(href[len(_JIRA_BROWSE_PREFIX):]))
+            if isinstance(href, str) and href.startswith(_REFERENCE_PREFIX):
+                refs.append(url_unquote(href[len(_REFERENCE_PREFIX):]))
         return
     for child in node.get("content", []) or []:
         _collect_references(child, refs)

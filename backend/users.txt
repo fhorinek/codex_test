@@ -1,3 +1,0 @@
-# username:password
-user:devtoken
-user2:devtoken

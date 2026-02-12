@@ -39,3 +39,44 @@ Hello world
 - asdf
 
 
+Board:
+    people:
+        frantisek-horinek:
+            name: František Horínek
+            mail: frantisekhorinek@gmail.com
+    states:
+        done:
+            name: Done
+            jira: Done
+        in-progress:
+            name: In Progress
+            jira: In Progress
+        in-review:
+            name: In Review
+            jira: In Review
+        to-do:
+            name: To Do
+            jira: To Do
+
+% [JIRA:KAN-35] new task 2
+!done @frantisek-horinek
+basic **format *****sdgfsdfg***
+- asdf
+- asdfa
+- ffasdasd
+- hgfxdhtdr
+[x] desfg
+[x] sdfg
+[x] sdf
+[x] g
+
+% [JIRA:KAN-38] test2
+!to-do @frantisek-horinek
+Hello world
+[ ] asdf
+[ ] asdf
+- asdf
+- sdzdfgsfd
+- asdf
+
+

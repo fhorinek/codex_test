@@ -20,3 +20,4 @@ coverage/
 Thumbs.db
 __pycache__
 .ystore
+backend/jira/jira_config.json

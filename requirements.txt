@@ -1,98 +1,225 @@
-Project requirements
+Project functional requirements
 
-Overview
-- Single-page split-pane app: editor on the left, graph on the right, kanban below the graph.
-- The task script is the single source of truth; edits update graph/kanban live.
-- Vertical divider resizes editor/graph; horizontal divider resizes kanban and can collapse it while keeping the legend visible.
-- Keep this document updated whenever project behavior or UI changes.
+Purpose
+- This file defines product behavior and UX requirements.
+- It is not the Python dependency file (`backend/requirements.txt` is used for backend packages).
+- Keep this file aligned with implemented behavior.
 
-Config header
-- Optional header appears before the first task line.
-- Board name in the header sets the left-pane title and the HTML document title.
-- Header sections: `states`, `people`, `tags`.
-- Each entry can define `name` and `color`.
-- If `states` are omitted, defaults are `todo`, `inprogress`, `done`.
-- Header order is preserved in legends/kanban; newly discovered items append after.
-- Tags/people/states get automatic colors when no color is provided.
+Application overview
+- Single-page app with a split layout:
+  - Left: code editor
+  - Right top: graph
+  - Right bottom: kanban
+- Task script is the source of truth; graph/kanban are derived and stay in sync.
+- Collaboration is real-time via Yjs/WebSocket per selected space.
+
+Runtime requirements
+- Python 3.8+ for backend
+- Node.js + npm for frontend assets
+- Start flow:
+  - `bash setup.sh`
+  - `bash run.sh`
+
+Data locations
+- Spaces and folders: `backend/spaces/`
+- Collaboration persistence: `backend/ystore/`
+- User config: `backend/users_config.json`
+- Session store: `backend/sessions.json`
+- Jira config: `backend/jira/jira_config.json`
+
+Authentication and sessions
+- Login uses username + password (not display name).
+- Passwords are stored as salted MD5 hash strings in user config.
+- Server creates persistent session cookie on login.
+- Active sessions are persisted in `backend/sessions.json`.
+- Session tracks last opened space and restores it on reconnect/login.
+- Logout is available from the Spaces modal and must require confirmation.
+
+Roles and authorization
+- Roles:
+  - `admin`
+  - `manager`
+  - `user`
+- `admin` permissions:
+  - Access all spaces
+  - Create/rename/move/delete spaces/folders
+  - Manage users
+  - Manage Jira settings
+- `manager` permissions:
+  - Access all spaces
+  - Manage users
+  - No admin-only Jira/space-admin operations
+- `user` permissions:
+  - Access only assigned path permissions
+  - Always access personal space `personal/<username>`
+- Personal space visibility rules:
+  - User can access own personal space
+  - Other non-admin users cannot access another user personal space
+  - Admin can access all personal spaces
+- Server must enforce authorization, not only UI.
+
+User management
+- User management is a dedicated tab/modal section, separate from My Profile.
+- Current user is not listed in user-management table.
+- Add user flow:
+  - Open Add User modal
+  - Create username/password/role/display name/access
+- Edit user flow:
+  - Edit display name
+  - Edit role
+  - Edit access permissions
+- Delete user flow:
+  - Dedicated red “Delete user” action
+  - Confirmation modal required
+  - If deletion not allowed, close modal and show error toast
+- Password change in user management:
+  - Separate “Change password” button
+  - Opens modal with new password + repeat password
+- Role switching behavior:
+  - When switching user -> manager/admin, keep stored path permissions unchanged
+  - Manager/admin ignore path permissions while in elevated role
+  - Switching back to user restores previous path permissions
+- Save behavior:
+  - Save button turns green when there are unsaved changes
+- Labels/icons:
+  - Save/Delete/Add buttons include icons and text labels
+  - Add-user modal action button includes label
+
+Profile
+- Profile tab allows:
+  - Edit display name
+  - Change password
+- Password change from profile requires:
+  - Current password validation
+  - New password
+  - Confirm new password
+- Eye icon visibility rule:
+  - Show eye toggle on new password fields where configured
+  - Do not show eye icon on confirm password where disabled
+- If display name is empty:
+  - Render username as fallback in UI
+  - Keep display-name field empty in stored/displayed form until user sets it
+
+Jira settings
+- Jira settings are admin-only.
+- Config stored separately in `backend/jira/jira_config.json`.
+- User/session data are stored in backend root JSON files (not Jira config file).
+
+Spaces and folders
+- Spaces are `.txt` files in filesystem under `backend/spaces/`.
+- Folders are filesystem directories (not folder entries in JSON config).
+- Tree view behavior:
+  - File-browser style mixed tree (folders and spaces together)
+  - Collapsible folders
+  - Collapsed by default except active path as needed
+  - Active item highlighted with different background
+  - A folder can be closed even if it is active
+  - Only one folder branch open at a time where configured
+- Root and grouping behavior:
+  - No separate “Ungrouped” synthetic category
+  - Allow dropping spaces to root
+- Create actions:
+  - Round icon buttons on the right side for add folder/add space
+  - Create target is current open folder
+  - Add-folder/add-space open modals
+- Delete folder:
+  - Round remove-folder icon
+  - Confirmation modal required
+- Drag and drop behavior:
+  - Drag space into open or closed folder
+  - Drag space onto another space to move into that target space folder
+  - Drag space to root drop target
+- Move/rename propagation:
+  - Updating space path must update user permission paths
+  - Updating space path must update session `last_space` values
+- Delete space flow:
+  - First disconnect all users from that space
+  - Then remove space file and related Yjs storage
+  - Show toast success/error
+
+Spaces modal UX
+- Title: `Choose project space`
+- Wider modal layout
+- Use tabs for navigation instead of section buttons:
+  - Spaces
+  - Profile
+  - Jira
+  - User management
+- Close behavior:
+  - Do not close modal by outside click
+  - Close only via explicit close button or `Esc`
+- Close buttons styling:
+  - Red and round across modals
+
+Notifications and errors
+- All confirmations/errors are shown via top-right toast notifications.
+- Do not duplicate success/error text inside modal bodies.
+- Toast style:
+  - Filled background color (not border-only)
+  - Larger visual size (~150%)
+- Example messages:
+  - Success: “Space 'X' created”, “Display name updated”, “Permission updated”, “Password changed”
+  - Error: “Wrong password”, “Folder not empty”, etc.
 
 Task script syntax
-- Task line: `% Task name`.
+- Task line starts with `%`.
 - Subtasks are indented by 4 spaces per level.
-- Task description follows until a blank line or the next task line.
-- Preferred token line is directly under the task line: `!state @person #tag #tag`.
-- Tags: `#tag`, people: `@person`, references: `{Task name}`.
-- State tokens use `!state`; the first state per task is used, extra states are invalid and highlighted in the editor.
-- Checkbox syntax: `[ ]` or `[x]` (no leading `-`).
-- Markdown in descriptions supports bold, italic, underline, highlight, lists, tables, images, and links.
+- Description lines follow task line until next task at same/outer indentation.
+- Token types:
+  - State: `!state`
+  - Person: `@person`
+  - Tag: `#tag`
+  - Reference: `{Task Name}`
+- Optional config header exists before first task with:
+  - board title
+  - `states:`
+  - `people:`
+  - `tags:`
+- If states are not configured, default states are `todo`, `inprogress`, `done`.
 
-Editor
-- Monospace editor with line numbers and syntax highlighting.
-- Tab/Shift+Tab indent and unindent; Enter keeps indentation and repeats list/checkbox markers.
-- Suggestions for `#`, `@`, `!`, `{}` tokens; navigable with arrows, accept with Enter/Tab.
-- Fold gutter for config headers and task blocks.
-- Extra `!state` tokens are underlined and their lines are highlighted as errors.
-- Undo/redo supported via textarea history and toolbar buttons.
+Editor interactions
+- Double-click task name in code opens task edit card/modal.
+- Double-click on `#tag`, `@person`, `!state` opens slug mass-rename modal.
+- Slug rename triggers in:
+  - Main editor code
+  - Config header slug definitions
+  - Task editor code view
+- Slug rename behavior:
+  - Rename slug occurrences across the file
+  - Preserve auto-assigned color behavior
+  - Do not write color into config as side-effect of rename
+  - Do not keep changed lines selected after mass rename
+- Double-click checkbox token in code toggles `[ ]` / `[x]`.
+- Task search:
+  - `Esc` clears search input
 
-Formatting
-- Format removes extra blank lines and trailing whitespace.
-- Format moves the first `!state` token to the first description line and makes it the first token on that line.
-- Formatting must preserve indentation and not reorder non-state tokens.
+Task identity and mapping
+- Visual task objects use stable UUID identity.
+- Keep mapping between UUID and task full path.
+- Full path is required (names are not unique).
+- On source changes, remap UUIDs using heuristics before recreating:
+  - Exact/substring checks against unpaired tasks
+  - Reverse substring checks
+  - Progressive parent trimming:
+    - `main/sub/subsub`
+    - `sub/subsub`
+    - `subsub`
+  - Final fallback: if exactly one unpaired UUID and one unpaired task remain, pair them
+  - If no valid match, recreate task visual object
+- Renaming task title updates task references in code.
 
-Toolbar & files
-- Toolbar shows board name plus undo, redo, load, save, format, theme, fullscreen.
-- Load opens a `.txt` file from disk; save downloads the current script as `.txt`.
-- Connect button opens a modal listing remote spaces to join.
+Graph and kanban
+- Live graph and kanban are synchronized with script edits.
+- Graph includes floating top-left Add Task button:
+  - Opens task edit modal
+  - Creates task on save
+- Divider behavior:
+  - Vertical code|graph divider can be dragged fully left/right
+  - Divider snaps near edges
+  - On right snap, hide legend to avoid tag overflow leakage
+- Kanban/cards/graph interactions remain consistent with source script edits.
 
-Graph view
-- Tasks render as cards connected by curved lines.
-- Layout uses measured node sizes to avoid overlaps; first child aligns with parent, siblings stack with gaps.
-- Pan and zoom supported; focus centers the selected task with animation.
-- Nodes render title, state pill (border + text color only), description markdown, and inline pills.
-- Checkboxes can be toggled directly on the graph and update the editor text.
-- Subtasks can be collapsed/expanded with a right-aligned toggle showing `+`/`–` and a count.
-- A minimap in the top-right shows the full graph and the current viewport.
-- Drag a task onto another task to reparent it as a subtask (append after existing children).
-- Double-click a task to open the edit modal.
-- Drag a task to the trash icon to remove it; modal offers remove-only (promote subtasks) or remove-with-subtasks.
-
-Kanban view
-- Kanban board sits below the graph.
-- Columns are ordered by header states, then any dynamically detected states.
-- Cards show task name, first person, and tags.
-- Drag cards across columns to change `!state` in the editor.
-- Drag a kanban card onto the graph to clear its `!state`.
-- Grouping switch supports none/person/tag; empty groups are hidden.
-- Selected task is highlighted in the kanban board.
-
-Drag and drop tokens
-- Drag tag/person pills from the legend or other tasks onto a task to add them.
-- Drag pills out of a task to remove them.
-- Drag a state pill out of a task to clear its `!state`.
-- When adding tokens via drag, insert into the first description line under the task (reuse the line if present).
-- State must remain the first token on the first description line.
-- If no token line exists, inserting tokens creates one under the task and leaves a blank line after it.
-- Removing tokens cleans up an empty leading token line.
-
-Task edit modal
-- Open by double-clicking a graph node or kanban card.
-- Title field updates the task name; preview shows rendered markdown.
-- Inline pills in the preview can be dragged out to remove tokens.
-- State/people/tag palettes show display names and colors; drag into the preview to add.
-- Checkboxes in the preview update the editor text.
-
-Filters & search
-- Legend toggles tag/people filters; non-matching tasks are dimmed.
-- When filters are active, connecting lines also dim if either endpoint does not match.
-- Search filters/highlights tasks by name, description, tags, or people with toggleable scope.
-- Search highlights matching tasks in the kanban board.
-
-Collaboration
-- Uses Yjs with a websocket server mounted at `/ws`.
-- REST backend at `/api` lists available spaces and saves text content.
-- Authentication is Basic auth using credentials in `backend/users.txt`.
-- Each space maps to a single `.txt` document on the backend.
-- Yjs updates are persisted to disk and restored after server restarts.
-
-Misc
-- Clear Highlights resets tag/person filters and search input.
-- Selecting a task in the graph focuses the corresponding editor line, and editor selection updates graph focus.
+Security and operational expectations
+- Server-side checks must guard operations by role and path access.
+- Client-side hiding is not sufficient for security controls.
+- Consistent success/error responses should map to toast messages.

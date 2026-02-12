@@ -10,7 +10,7 @@ import { formatTaskScript, normalizeContent } from "./formatter.js";
 
 const REMOTE_BASE = window.location.origin;
 const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
-const AUTH_TOKEN = "devtoken";
+const AUTH_TOKEN = "";
 const COLLAB_LIBS = {
   yjs: "yjs",
   ywebsocket: "y-websocket",
@@ -71,6 +71,53 @@ function createJiraTitlePill(key) {
     copyToClipboard(key);
   });
   return pill;
+}
+
+function ensureSecretVisibilityToggle(input) {
+  if (!input || input.dataset.secretToggle === "true") {
+    return;
+  }
+  if (input.tagName !== "INPUT") {
+    return;
+  }
+  const parent = input.parentNode;
+  if (!parent) {
+    return;
+  }
+  const wrapper = document.createElement("div");
+  wrapper.className = "password-with-toggle";
+  parent.insertBefore(wrapper, input);
+  wrapper.appendChild(input);
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "password-toggle";
+  button.setAttribute("aria-label", "Show value");
+  button.title = "Show value";
+  wrapper.appendChild(button);
+
+  const icon = document.createElement("i");
+  icon.setAttribute("aria-hidden", "true");
+  button.appendChild(icon);
+
+  const refresh = () => {
+    const visible = input.type === "text";
+    icon.className = `fa-solid ${visible ? "fa-eye-slash" : "fa-eye"}`;
+    const label = visible ? "Hide value" : "Show value";
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    button.disabled = Boolean(input.disabled);
+  };
+
+  button.addEventListener("click", () => {
+    input.type = input.type === "password" ? "text" : "password";
+    refresh();
+  });
+
+  input.addEventListener("input", refresh);
+  input.addEventListener("blur", refresh);
+  input.dataset.secretToggle = "true";
+  refresh();
 }
 
 function updateTaskEditJiraPill(key) {
@@ -136,6 +183,7 @@ const dom = {
   graphLines: document.getElementById("graph-lines"),
   graphMinimap: document.getElementById("graph-minimap"),
   minimapSvg: document.getElementById("minimap-svg"),
+  graphAddTask: document.getElementById("graph-add-task"),
   searchInput: document.getElementById("search-input"),
   searchName: document.getElementById("search-name"),
   searchDescription: document.getElementById("search-description"),
@@ -155,13 +203,64 @@ const dom = {
   loginModal: document.getElementById("login-modal"),
   loginModalClose: document.getElementById("login-modal-close"),
   loginUsername: document.getElementById("login-username"),
-  loginDisplayName: document.getElementById("login-displayname"),
   loginPassword: document.getElementById("login-password"),
   loginSubmit: document.getElementById("login-submit"),
   loginError: document.getElementById("login-error"),
   spacesModal: document.getElementById("spaces-modal"),
   spacesModalClose: document.getElementById("spaces-modal-close"),
-  logoutButton: document.getElementById("logout-button"),
+  spacesLogout: document.getElementById("spaces-logout"),
+  spacesTabCurrent: document.getElementById("spaces-tab-current"),
+  profileButton: document.getElementById("profile-button"),
+  jiraConfigButton: document.getElementById("jira-config-button"),
+  usersButton: document.getElementById("users-button"),
+  profileModal: document.getElementById("profile-modal"),
+  profileClose: document.getElementById("profile-close"),
+  profileError: document.getElementById("profile-error"),
+  profileDisplayName: document.getElementById("profile-display-name"),
+  profileCurrentPassword: document.getElementById("profile-current-password"),
+  profilePassword: document.getElementById("profile-password"),
+  profilePasswordConfirm: document.getElementById("profile-password-confirm"),
+  profileLogoutModal: document.getElementById("profile-logout-modal"),
+  profileLogoutCancel: document.getElementById("profile-logout-cancel"),
+  profileLogoutConfirm: document.getElementById("profile-logout-confirm"),
+  profileSave: document.getElementById("profile-save"),
+  jiraConfigModal: document.getElementById("jira-config-modal"),
+  jiraConfigClose: document.getElementById("jira-config-close"),
+  jiraConfigBaseUrl: document.getElementById("jira-config-base-url"),
+  jiraConfigEmail: document.getElementById("jira-config-email"),
+  jiraConfigToken: document.getElementById("jira-config-token"),
+  jiraConfigSave: document.getElementById("jira-config-save"),
+  jiraConfigCancel: document.getElementById("jira-config-cancel"),
+  jiraConfigError: document.getElementById("jira-config-error"),
+  usersModal: document.getElementById("users-modal"),
+  usersClose: document.getElementById("users-close"),
+  usersError: document.getElementById("users-error"),
+  usersAdminSection: document.getElementById("users-admin-section"),
+  usersList: document.getElementById("users-list"),
+  userOpenCreate: document.getElementById("user-open-create"),
+  userNewUsername: document.getElementById("user-new-username"),
+  userNewDisplayName: document.getElementById("user-new-display-name"),
+  userNewPassword: document.getElementById("user-new-password"),
+  userNewPasswordConfirm: document.getElementById("user-new-password-confirm"),
+  userNewRole: document.getElementById("user-new-role"),
+  userNewSpacesField: document.getElementById("user-new-spaces-field"),
+  userNewSpaces: document.getElementById("user-new-spaces"),
+  userCreateModal: document.getElementById("user-create-modal"),
+  userCreateClose: document.getElementById("user-create-close"),
+  userCreateError: document.getElementById("user-create-error"),
+  userCreate: document.getElementById("user-create"),
+  userPasswordModal: document.getElementById("user-password-modal"),
+  userPasswordClose: document.getElementById("user-password-close"),
+  userPasswordMessage: document.getElementById("user-password-message"),
+  userPasswordNew: document.getElementById("user-password-new"),
+  userPasswordRepeat: document.getElementById("user-password-repeat"),
+  userPasswordError: document.getElementById("user-password-error"),
+  userPasswordCancel: document.getElementById("user-password-cancel"),
+  userPasswordSave: document.getElementById("user-password-save"),
+  userDeleteModal: document.getElementById("user-delete-modal"),
+  userDeleteMessage: document.getElementById("user-delete-message"),
+  userDeleteCancel: document.getElementById("user-delete-cancel"),
+  userDeleteConfirm: document.getElementById("user-delete-confirm"),
   taskEditModal: document.getElementById("task-edit-modal"),
   taskEditTitleInput: document.getElementById("task-edit-title-input"),
   taskEditJiraPill: document.getElementById("task-edit-jira-pill"),
@@ -175,14 +274,35 @@ const dom = {
   taskEditCancel: document.getElementById("task-edit-cancel"),
   taskEditSave: document.getElementById("task-edit-save"),
   taskEditError: document.getElementById("task-edit-error"),
+  slugRenameModal: document.getElementById("slug-rename-modal"),
+  slugRenameClose: document.getElementById("slug-rename-close"),
+  slugRenameMessage: document.getElementById("slug-rename-message"),
+  slugRenameCurrent: document.getElementById("slug-rename-current"),
+  slugRenameNew: document.getElementById("slug-rename-new"),
+  slugRenameCancel: document.getElementById("slug-rename-cancel"),
+  slugRenameSave: document.getElementById("slug-rename-save"),
   taskTrash: document.getElementById("task-trash"),
   taskDeleteModal: document.getElementById("task-delete-modal"),
   taskDeleteMessage: document.getElementById("task-delete-message"),
   taskDeleteCancel: document.getElementById("task-delete-cancel"),
   taskDeleteConfirm: document.getElementById("task-delete-confirm"),
   taskDeleteConfirmAll: document.getElementById("task-delete-confirm-all"),
+  spaceOpenCreate: document.getElementById("space-open-create"),
+  spaceOpenFolderCreate: document.getElementById("space-open-folder-create"),
+  spaceCreateModal: document.getElementById("space-create-modal"),
+  spaceCreateClose: document.getElementById("space-create-close"),
+  spaceCreateCancel: document.getElementById("space-create-cancel"),
   spaceNew: document.getElementById("space-new"),
   spaceCreate: document.getElementById("space-create"),
+  spaceFolderCreateModal: document.getElementById("space-folder-create-modal"),
+  spaceFolderCreateClose: document.getElementById("space-folder-create-close"),
+  spaceFolderCreateCancel: document.getElementById("space-folder-create-cancel"),
+  spaceFolderNew: document.getElementById("space-folder-new"),
+  spaceFolderCreate: document.getElementById("space-folder-create"),
+  folderDeleteModal: document.getElementById("folder-delete-modal"),
+  folderDeleteMessage: document.getElementById("folder-delete-message"),
+  folderDeleteCancel: document.getElementById("folder-delete-cancel"),
+  folderDeleteConfirm: document.getElementById("folder-delete-confirm"),
   spaceError: document.getElementById("space-error"),
   spaceList: document.getElementById("space-list"),
   deleteModal: document.getElementById("delete-modal"),
@@ -201,6 +321,18 @@ const dom = {
   graphCanvas: document.getElementById("graph-canvas"),
   divider: document.getElementById("divider"),
 };
+
+function initializeSecretToggles() {
+  [
+    dom.loginPassword,
+    dom.jiraConfigToken,
+    dom.profilePassword,
+    dom.userNewPassword,
+    dom.userNewPasswordConfirm,
+    dom.userPasswordNew,
+    dom.userPasswordRepeat,
+  ].forEach((input) => ensureSecretVisibilityToggle(input));
+}
 
 function setButtonIcon(button, icon) {
   if (!button) {
@@ -239,7 +371,7 @@ const state = {
   suggestionIndex: 0,
   suggestionItems: [],
   kanbanGroupBy: "none",
-  taskSignatures: new Map(),
+  taskPathMaps: new Map(),
 };
 
 const KANBAN_GROUPS = new Set(["none", "person", "tag"]);
@@ -291,6 +423,7 @@ function setKanbanGroupBy(value, { persist = true } = {}) {
 
 const collab = {
   spaceId: null,
+  spacePath: "",
   provider: null,
   ydoc: null,
   ytext: null,
@@ -305,15 +438,175 @@ const collab = {
   synced: false,
   syncScheduled: false,
   modules: null,
+  spaceIds: [],
+  spaceFolders: [],
+  spaceAccessOptions: [],
+  openSpaceFolderId: null,
+  openSpaceFolderInitialized: false,
   identity: getCollabIdentity(),
   username: "",
   displayName: "",
+  role: "user",
+  permissions: {
+    can_manage_spaces: false,
+    can_manage_jira: false,
+    can_manage_users: false,
+    can_assign_space_access: false,
+  },
   authToken: AUTH_TOKEN,
   isAuthenticated: false,
   connectionStatus: "disconnected",
 };
 
 let pendingDeleteSpace = null;
+let pendingDeleteFolder = null;
+let pendingDeleteUser = null;
+let pendingPasswordUser = null;
+let pendingSlugRename = null;
+let createUserSpacesPicker = null;
+let toastContainer = null;
+let lastToast = { message: "", kind: "", at: 0 };
+
+function ensureToastContainer() {
+  if (toastContainer && document.body.contains(toastContainer)) {
+    return toastContainer;
+  }
+  toastContainer = document.createElement("div");
+  toastContainer.className = "toast-container";
+  toastContainer.setAttribute("aria-live", "polite");
+  toastContainer.setAttribute("aria-atomic", "false");
+  document.body.appendChild(toastContainer);
+  return toastContainer;
+}
+
+function showToast(message, kind = "success", durationMs = 3200) {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (!text) {
+    return;
+  }
+  const normalizedKind = kind === "error" ? "error" : "success";
+  const now = Date.now();
+  if (
+    lastToast.message === text
+    && lastToast.kind === normalizedKind
+    && now - lastToast.at < 400
+  ) {
+    return;
+  }
+  lastToast = { message: text, kind: normalizedKind, at: now };
+  const container = ensureToastContainer();
+  const toast = document.createElement("div");
+  toast.className = `toast-item ${normalizedKind}`;
+  toast.textContent = text;
+  container.appendChild(toast);
+  requestAnimationFrame(() => {
+    toast.classList.add("show");
+  });
+  const closeToast = () => {
+    if (!toast.parentElement) {
+      return;
+    }
+    toast.classList.remove("show");
+    setTimeout(() => {
+      toast.remove();
+    }, 180);
+  };
+  setTimeout(closeToast, Math.max(1200, durationMs));
+}
+
+function normalizePermissions(value) {
+  if (!value || typeof value !== "object") {
+    return {
+      can_manage_spaces: false,
+      can_manage_jira: false,
+      can_manage_users: false,
+      can_assign_space_access: false,
+    };
+  }
+  return {
+    can_manage_spaces: Boolean(value.can_manage_spaces),
+    can_manage_jira: Boolean(value.can_manage_jira),
+    can_manage_users: Boolean(value.can_manage_users),
+    can_assign_space_access: Boolean(value.can_assign_space_access),
+  };
+}
+
+function normalizeOptionalDisplayName(displayName, username) {
+  const normalizedDisplayName =
+    typeof displayName === "string" ? displayName.trim() : "";
+  const normalizedUsername = typeof username === "string" ? username.trim() : "";
+  if (!normalizedDisplayName) {
+    return "";
+  }
+  if (normalizedUsername && normalizedDisplayName === normalizedUsername) {
+    return "";
+  }
+  return normalizedDisplayName;
+}
+
+function applySessionFromServer(data) {
+  if (!data || typeof data !== "object") {
+    return;
+  }
+  const serverUser = data.user && typeof data.user === "object" ? data.user : null;
+  if (serverUser) {
+    const username =
+      typeof serverUser.username === "string" && serverUser.username.trim()
+        ? serverUser.username.trim()
+        : collab.username;
+    const displayName = normalizeOptionalDisplayName(
+      serverUser.display_name,
+      username
+    );
+    const role = typeof serverUser.role === "string" ? serverUser.role.trim().toLowerCase() : "user";
+    if (username) {
+      collab.username = username;
+    }
+    collab.displayName = displayName;
+    collab.role = role || "user";
+    if (dom.loginUsername && collab.username) {
+      dom.loginUsername.value = collab.username;
+    }
+  }
+  collab.permissions = normalizePermissions(data.permissions);
+  const displayLabel = collab.displayName || collab.username || "user";
+  collab.identity = getCollabIdentity(displayLabel);
+  updateRoleVisibility();
+}
+
+function updateRoleVisibility() {
+  if (dom.jiraConfigButton) {
+    dom.jiraConfigButton.classList.toggle("hidden", !collab.permissions.can_manage_jira);
+  }
+  if (dom.profileButton) {
+    dom.profileButton.classList.toggle("hidden", !collab.isAuthenticated);
+  }
+  if (dom.usersButton) {
+    dom.usersButton.classList.toggle(
+      "hidden",
+      !collab.isAuthenticated || !collab.permissions.can_manage_users
+    );
+  }
+  const canCreate = collab.permissions.can_manage_spaces;
+  if (dom.spaceOpenCreate) {
+    dom.spaceOpenCreate.classList.toggle("hidden", !canCreate);
+  }
+  if (dom.spaceOpenFolderCreate) {
+    dom.spaceOpenFolderCreate.classList.toggle("hidden", !canCreate);
+  }
+  if (!canCreate) {
+    if (dom.spaceNew) {
+      dom.spaceNew.value = "";
+    }
+    if (dom.spaceFolderNew) {
+      dom.spaceFolderNew.value = "";
+    }
+    closeSpaceCreateModal();
+    closeSpaceFolderCreateModal();
+  }
+  updateCreateSpaceButton();
+  updateCreateFolderButton();
+}
 
 function getStoredAuth() {
   try {
@@ -325,8 +618,6 @@ function getStoredAuth() {
     if (parsed && typeof parsed === "object") {
       return {
         username: typeof parsed.username === "string" ? parsed.username : "",
-        displayName: typeof parsed.displayName === "string" ? parsed.displayName : "",
-        authToken: typeof parsed.authToken === "string" ? parsed.authToken : AUTH_TOKEN,
       };
     }
   } catch {
@@ -345,21 +636,21 @@ function persistAuth(auth) {
 
 function readAuthInputs() {
   const username = dom.loginUsername?.value?.trim() || "";
-  const displayName = dom.loginDisplayName?.value?.trim() || "";
   const authToken = dom.loginPassword?.value || AUTH_TOKEN;
-  return { username, displayName, authToken };
+  return { username, authToken };
 }
 
 function applyAuthFromInputs({ store = true, markDirty = true } = {}) {
-  const { username, displayName, authToken } = readAuthInputs();
+  const { username, authToken } = readAuthInputs();
   const safeUsername = username || "user";
-  const displayLabel = displayName || safeUsername;
   collab.username = safeUsername;
-  collab.displayName = displayName;
   collab.authToken = authToken || AUTH_TOKEN;
-  collab.identity = getCollabIdentity(displayLabel);
+  collab.identity = getCollabIdentity(collab.displayName || safeUsername);
   if (markDirty) {
     collab.isAuthenticated = false;
+    collab.displayName = "";
+    collab.role = "user";
+    collab.permissions = normalizePermissions(null);
   }
   if (collab.bindingOptions) {
     collab.bindingOptions.clientName = collab.identity.name;
@@ -380,10 +671,9 @@ function applyAuthFromInputs({ store = true, markDirty = true } = {}) {
   if (store) {
     persistAuth({
       username: safeUsername,
-      displayName,
-      authToken: collab.authToken,
     });
   }
+  updateRoleVisibility();
 }
 
 function initializeAuthInputs() {
@@ -391,13 +681,10 @@ function initializeAuthInputs() {
   if (dom.loginUsername) {
     dom.loginUsername.value = stored?.username || dom.loginUsername.value || "user";
   }
-  if (dom.loginDisplayName) {
-    dom.loginDisplayName.value =
-      stored?.displayName || dom.loginDisplayName.value || "";
-  }
   if (dom.loginPassword) {
-    dom.loginPassword.value = stored?.authToken || dom.loginPassword.value || AUTH_TOKEN;
+    dom.loginPassword.value = "";
   }
+  collab.displayName = "";
   applyAuthFromInputs({ store: false, markDirty: false });
 }
 
@@ -456,9 +743,10 @@ function updateBoardConnectionLabel() {
   if (collab.spaceId) {
     const status = collab.connectionStatus || "disconnected";
     const statusLabel = STATUS_LABELS[status] || STATUS_LABELS.disconnected;
+    const spaceRef = collab.spacePath || collab.spaceId;
     dom.boardConnection.textContent = "";
     const text = document.createElement("span");
-    text.textContent = `${collab.username}@${getServerLabel()}/${collab.spaceId}`;
+    text.textContent = `${collab.username}@${getServerLabel()}/${spaceRef}`;
     const pill = document.createElement("span");
     pill.className = `connection-status ${status}`;
     pill.textContent = statusLabel;
@@ -557,6 +845,16 @@ editorController = createEditor({
     }
     updateCollabSelection(start, end, true);
   },
+  onTaskTitleDoubleClick: ({ lineIndex }) => {
+    const task = state.allTasks.find((item) => item.lineIndex === lineIndex);
+    if (!task) {
+      return;
+    }
+    openTaskEditModal(task);
+  },
+  onTokenDoubleClick: (token) => {
+    openSlugRenameModal(token);
+  },
 });
 
 const canvasController = createCanvas({
@@ -627,8 +925,13 @@ function dispatchEditorInput() {
   editorController.dispatchInput();
 }
 
-function forceEditorRefresh(value) {
+function forceEditorRefresh(value, { collapseSelection = false } = {}) {
   applyEditorValue(value);
+  if (collapseSelection) {
+    const selection = editorController.getSelectionRange();
+    const caret = Number.isFinite(selection?.end) ? selection.end : 0;
+    editorController.setSelectionRange(caret, caret);
+  }
   syncEditorState();
   dispatchEditorInput();
 }
@@ -729,7 +1032,7 @@ function sync() {
     peopleMeta,
     stateMeta,
   } = parseTasks(editorController.getValue());
-  applyStableTaskIds({ allTasks, lines });
+  applyStableTaskIds({ allTasks });
   state.tasks = tasks;
   state.allTasks = allTasks;
   state.tags = tags;
@@ -781,6 +1084,7 @@ function updateTaskToken(task, token, action) {
 let editingTaskRange = null;
 let editingTaskIndent = "";
 let editingTaskJiraKey = null;
+let creatingTask = false;
 let modalEditorController = null;
 let modalEditorState = null;
 let pendingDeleteTask = null;
@@ -844,6 +1148,106 @@ function parseTaskBody(text) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+const SLUG_KIND_LABELS = {
+  tag: "Tag",
+  person: "Person",
+  state: "State",
+};
+
+const SLUG_SECTION_BY_KIND = {
+  tag: "tags",
+  person: "people",
+  state: "states",
+};
+
+const SLUG_VALUE_RE = /^[A-Za-z0-9_-]+$/;
+
+function normalizeSlugInput(value, prefix) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return "";
+  }
+  if (raw.startsWith(prefix)) {
+    return raw.slice(prefix.length).trim();
+  }
+  return raw.replace(/^[@#!]/, "").trim();
+}
+
+function slugKindLabel(kind) {
+  return SLUG_KIND_LABELS[kind] || "Token";
+}
+
+function replaceSlugTokenOccurrences(text, oldToken, newToken) {
+  const pattern = new RegExp(`(^|\\s)${escapeRegExp(oldToken)}(?=\\s|$)`, "gm");
+  let count = 0;
+  const nextText = text.replace(pattern, (match, leading) => {
+    count += 1;
+    return `${leading}${newToken}`;
+  });
+  return { text: nextText, count };
+}
+
+function renameSlugConfigEntries(lines, { kind, oldSlug, newSlug }) {
+  const targetSection = SLUG_SECTION_BY_KIND[kind];
+  if (!targetSection || !Array.isArray(lines) || !lines.length) {
+    return { changed: false };
+  }
+  let currentSection = "";
+  let changed = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index] || "";
+    if (/^\s*%/.test(raw)) {
+      break;
+    }
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const indent = raw.match(/^\s*/)?.[0].length || 0;
+    if (indent === 4 && trimmed.endsWith(":")) {
+      currentSection = trimmed.slice(0, -1).trim().toLowerCase();
+      continue;
+    }
+    if (currentSection !== targetSection || indent !== 8) {
+      continue;
+    }
+    const entryMatch = trimmed.match(/^([^\s:]+)(\s*:.*)?$/);
+    if (!entryMatch || entryMatch[1] !== oldSlug) {
+      continue;
+    }
+
+    lines[index] = raw.replace(
+      /^(\s*)([^\s:]+)(\s*:.*)?$/,
+      `$1${newSlug}$3`
+    );
+    changed = true;
+  }
+  return { changed };
+}
+
+function renameSlugInWholeFile(text, { kind, prefix, oldSlug, newSlug }) {
+  const oldToken = `${prefix}${oldSlug}`;
+  const newToken = `${prefix}${newSlug}`;
+  const tokenResult = replaceSlugTokenOccurrences(text, oldToken, newToken);
+  const lines = tokenResult.text.split("\n");
+  const configResult = renameSlugConfigEntries(lines, {
+    kind,
+    oldSlug,
+    newSlug,
+  });
+  const nextText =
+    configResult.changed
+      ? lines.join("\n")
+      : tokenResult.text;
+  return {
+    oldToken,
+    newToken,
+    text: nextText,
+    changed: nextText !== text,
+    replacements: tokenResult.count,
+  };
 }
 
 function insertTokenIntoBody(text, token) {
@@ -1221,6 +1625,9 @@ function ensureTaskEditEditor() {
       onLocalChange: () => true,
       onSelectionChange: () => {},
       onFocusChange: () => {},
+      onTokenDoubleClick: (token) => {
+        openSlugRenameModal(token);
+      },
     });
   }
   return modalEditorController;
@@ -1230,6 +1637,7 @@ function openTaskEditModal(task) {
   if (!dom.taskEditModal || !task) {
     return;
   }
+  creatingTask = false;
   const lines = editorController.getValue().split("\n");
   const { start, end } = getTaskBlockRange(lines, task.lineIndex);
   editingTaskRange = { start, end };
@@ -1264,6 +1672,54 @@ function openTaskEditModal(task) {
   }
 }
 
+function getTaskCreateRange(lines) {
+  if (!Array.isArray(lines) || !lines.length) {
+    return { start: 0, end: 0 };
+  }
+  const lastNonEmptyIndex = lines
+    .map((line, index) => ({ line, index }))
+    .filter((entry) => entry.line.trim() !== "")
+    .map((entry) => entry.index)
+    .pop();
+  if (!Number.isFinite(lastNonEmptyIndex)) {
+    return { start: 0, end: lines.length };
+  }
+  const insertIndex = Math.max(0, lastNonEmptyIndex + 1);
+  if (insertIndex < lines.length) {
+    return { start: insertIndex, end: insertIndex + 1 };
+  }
+  return { start: insertIndex, end: insertIndex };
+}
+
+function openTaskCreateModal() {
+  if (!dom.taskEditModal) {
+    return;
+  }
+  creatingTask = true;
+  const lines = editorController.getValue().split("\n");
+  const range = getTaskCreateRange(lines);
+  editingTaskRange = range;
+  editingTaskIndent = "";
+  editingTaskJiraKey = null;
+  if (dom.taskEditError) {
+    dom.taskEditError.classList.add("hidden");
+    dom.taskEditError.textContent = "";
+  }
+  if (dom.taskEditTitleInput) {
+    dom.taskEditTitleInput.value = "";
+  }
+  updateTaskEditJiraPill(null);
+  const modalEditor = ensureTaskEditEditor();
+  if (modalEditor) {
+    dom.taskEditCode.value = "";
+    modalEditor.setValue("");
+  }
+  refreshTaskEditTokenLists();
+  updateTaskEditPreviewFromText("");
+  dom.taskEditModal.classList.remove("hidden");
+  dom.taskEditTitleInput?.focus();
+}
+
 function closeTaskEditModal() {
   if (!dom.taskEditModal) {
     return;
@@ -1272,7 +1728,99 @@ function closeTaskEditModal() {
   editingTaskRange = null;
   editingTaskIndent = "";
   editingTaskJiraKey = null;
+  creatingTask = false;
   updateTaskEditJiraPill(null);
+}
+
+function openSlugRenameModal(token) {
+  if (!dom.slugRenameModal || !token) {
+    return;
+  }
+  const kind = token.type;
+  const prefix = token.prefix;
+  const slug = typeof token.slug === "string" ? token.slug.trim() : "";
+  if (
+    !slug
+    || !["tag", "person", "state"].includes(kind)
+    || !["#", "@", "!"].includes(prefix)
+  ) {
+    return;
+  }
+  pendingSlugRename = {
+    kind,
+    prefix,
+    slug,
+  };
+  if (dom.slugRenameMessage) {
+    dom.slugRenameMessage.textContent = `Rename ${slugKindLabel(kind).toLowerCase()} slug "${prefix}${slug}" in whole file.`;
+  }
+  if (dom.slugRenameCurrent) {
+    dom.slugRenameCurrent.value = `${prefix}${slug}`;
+  }
+  if (dom.slugRenameNew) {
+    dom.slugRenameNew.value = slug;
+  }
+  dom.slugRenameModal.classList.remove("hidden");
+  dom.slugRenameNew?.focus();
+  dom.slugRenameNew?.select();
+}
+
+function closeSlugRenameModal() {
+  if (!dom.slugRenameModal) {
+    return;
+  }
+  dom.slugRenameModal.classList.add("hidden");
+  pendingSlugRename = null;
+}
+
+function submitSlugRename() {
+  if (!pendingSlugRename) {
+    closeSlugRenameModal();
+    return;
+  }
+  const nextSlug = normalizeSlugInput(dom.slugRenameNew?.value || "", pendingSlugRename.prefix);
+  if (!nextSlug) {
+    showToast("New slug is required.", "error");
+    return;
+  }
+  if (!SLUG_VALUE_RE.test(nextSlug)) {
+    showToast("Slug can contain only letters, numbers, '-' and '_'.", "error");
+    return;
+  }
+  if (nextSlug === pendingSlugRename.slug) {
+    closeSlugRenameModal();
+    return;
+  }
+  const original = editorController.getValue();
+  const oldToken = `${pendingSlugRename.prefix}${pendingSlugRename.slug}`;
+  const result = renameSlugInWholeFile(original, {
+    kind: pendingSlugRename.kind,
+    prefix: pendingSlugRename.prefix,
+    oldSlug: pendingSlugRename.slug,
+    newSlug: nextSlug,
+  });
+  if (!result.changed) {
+    showToast(`No '${oldToken}' slug occurrences found.`, "error");
+    return;
+  }
+  forceEditorRefresh(result.text, { collapseSelection: true });
+  if (
+    modalEditorController
+    && dom.taskEditModal
+    && !dom.taskEditModal.classList.contains("hidden")
+  ) {
+    const modalValue = modalEditorController.getValue();
+    const modalRename = replaceSlugTokenOccurrences(
+      modalValue,
+      result.oldToken,
+      result.newToken
+    );
+    if (modalRename.text !== modalValue) {
+      modalEditorController.setValue(modalRename.text);
+    }
+  }
+  showToast(`${slugKindLabel(pendingSlugRename.kind)} slug '${result.oldToken}' renamed to '${result.newToken}'.`);
+  closeSlugRenameModal();
 }
 
 function countSubtasks(task) {
@@ -1487,10 +2035,15 @@ function saveTaskEditModal() {
   const jiraPrefix = jiraKey ? ` [JIRA:${jiraKey}]` : "";
   const nextLines = [`${editingTaskIndent}%${jiraPrefix} ${title}`, ...bodyLines];
   const lines = editorController.getValue().split("\n");
+  const oldTitle = creatingTask ? "" : parseTaskTitleFromLine(lines[editingTaskRange.start] || "");
   lines.splice(editingTaskRange.start, editingTaskRange.end - editingTaskRange.start, ...nextLines);
+  renameTaskReferencesInLines(lines, oldTitle, title);
   applyEditorValue(lines.join("\n"));
   syncEditorState();
   handleEditorSelection(editingTaskRange.start);
+  if (creatingTask) {
+    showToast(`Task '${title}' created.`);
+  }
   closeTaskEditModal();
 }
 
@@ -1525,6 +2078,37 @@ function moveTaskAsSubtask(sourceTask, targetTask) {
   syncEditorState();
 }
 
+function parseTaskTitleFromLine(line) {
+  const raw = typeof line === "string" ? line : "";
+  const match = raw.match(/^\s*%\s*(.*)$/);
+  if (!match) {
+    return "";
+  }
+  const parsed = parseJiraTitle(match[1]);
+  return parsed.title || "";
+}
+
+function renameTaskReferencesInLines(lines, oldTitle, newTitle) {
+  if (!Array.isArray(lines)) {
+    return false;
+  }
+  const from = typeof oldTitle === "string" ? oldTitle.trim() : "";
+  const to = typeof newTitle === "string" ? newTitle.trim() : "";
+  if (!from || !to || from === to) {
+    return false;
+  }
+  const refPattern = new RegExp(`\\{\\s*${escapeRegExp(from)}\\s*\\}`, "g");
+  let changed = false;
+  lines.forEach((line, index) => {
+    const updated = (line || "").replace(refPattern, `{${to}}`);
+    if (updated !== line) {
+      lines[index] = updated;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 function findTaskByName(name) {
   return state.allTasks.find((task) => task.name === name);
 }
@@ -1557,38 +2141,140 @@ function findTaskBlock(lines, lineIndex) {
   return { start: lineIndex, end, depth, indent };
 }
 
-function buildTaskSignature(lines, task) {
-  const parts = [task.name, ...task.description];
-  const signature = parts.join("\n").trim();
-  if (signature) {
-    return signature;
-  }
-  return `${task.name}|${task.lineIndex}`;
+function createTaskVisualId() {
+  const randomId =
+    globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  return `task/${randomId}`;
 }
 
-function applyStableTaskIds({ allTasks, lines }) {
-  const previous = state.taskSignatures;
-  if (previous && previous.size) {
-    const remaining = new Map();
-    previous.forEach((list, signature) => {
-      remaining.set(signature, list.slice());
-    });
-    allTasks.forEach((task) => {
-      const signature = buildTaskSignature(lines, task);
-      const candidates = remaining.get(signature);
-      if (candidates && candidates.length) {
-        task.id = candidates.shift();
+function normalizeTaskPathPart(name) {
+  const text = typeof name === "string" ? name.trim().replace(/\s+/g, " ").toLowerCase() : "";
+  return text || "_";
+}
+
+function buildTaskNamePath(task) {
+  const segments = [];
+  let current = task;
+  while (current) {
+    segments.push(normalizeTaskPathPart(current.name));
+    current = current.parent;
+  }
+  return segments.reverse().join("/");
+}
+
+function buildTaskPathSuffixes(path) {
+  const segments = String(path || "")
+    .split("/")
+    .filter(Boolean);
+  const suffixes = [];
+  for (let index = 0; index < segments.length; index += 1) {
+    const suffix = segments.slice(index).join("/");
+    if (suffix) {
+      suffixes.push(suffix);
+    }
+  }
+  return suffixes;
+}
+
+function findHeuristicTaskMatch(previousPath, currentEntries) {
+  if (!previousPath || !Array.isArray(currentEntries) || !currentEntries.length) {
+    return -1;
+  }
+  const suffixes = buildTaskPathSuffixes(previousPath);
+  for (const suffix of suffixes) {
+    let index = currentEntries.findIndex((entry) => entry.path.includes(suffix));
+    if (index >= 0) {
+      return index;
+    }
+    index = currentEntries.findIndex((entry) => suffix.includes(entry.path));
+    if (index >= 0) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function getTaskPathMapKey() {
+  const spaceRef = (
+    typeof collab.spacePath === "string" && collab.spacePath.trim()
+      ? collab.spacePath.trim()
+      : (typeof collab.spaceId === "string" ? collab.spaceId.trim() : "")
+  );
+  return spaceRef ? `space:${spaceRef}` : "local";
+}
+
+function applyStableTaskIds({ allTasks }) {
+  const mapKey = getTaskPathMapKey();
+  const previousMap = state.taskPathMaps.get(mapKey) || new Map();
+
+  const previousEntries = [];
+  previousMap.forEach((ids, path) => {
+    (Array.isArray(ids) ? ids : []).forEach((id) => {
+      if (typeof id === "string" && id.trim()) {
+        previousEntries.push({ path, id });
       }
     });
-  }
-  const nextSignatures = new Map();
-  allTasks.forEach((task) => {
-    const signature = buildTaskSignature(lines, task);
-    const list = nextSignatures.get(signature) || [];
-    list.push(task.id);
-    nextSignatures.set(signature, list);
   });
-  state.taskSignatures = nextSignatures;
+
+  const previousByPath = new Map();
+  previousEntries.forEach((entry) => {
+    const list = previousByPath.get(entry.path) || [];
+    list.push(entry.id);
+    previousByPath.set(entry.path, list);
+  });
+
+  const unpairedCurrent = [];
+  allTasks.forEach((task) => {
+    const path = buildTaskNamePath(task);
+    const candidates = previousByPath.get(path);
+    if (candidates && candidates.length) {
+      task.id = candidates.shift();
+      return;
+    }
+    unpairedCurrent.push({ task, path });
+  });
+
+  const unpairedPrevious = [];
+  previousByPath.forEach((ids, path) => {
+    ids.forEach((id) => {
+      unpairedPrevious.push({ path, id });
+    });
+  });
+
+  for (let index = 0; index < unpairedPrevious.length; index += 1) {
+    const previous = unpairedPrevious[index];
+    const matchIndex = findHeuristicTaskMatch(previous.path, unpairedCurrent);
+    if (matchIndex < 0) {
+      continue;
+    }
+    const match = unpairedCurrent[matchIndex];
+    match.task.id = previous.id;
+    unpairedCurrent.splice(matchIndex, 1);
+    unpairedPrevious.splice(index, 1);
+    index -= 1;
+  }
+
+  // Last-resort recovery before creating a new visual object.
+  if (unpairedPrevious.length === 1 && unpairedCurrent.length === 1) {
+    unpairedCurrent[0].task.id = unpairedPrevious[0].id;
+    unpairedCurrent.length = 0;
+    unpairedPrevious.length = 0;
+  }
+
+  unpairedCurrent.forEach(({ task }) => {
+    task.id = createTaskVisualId();
+  });
+
+  const nextMap = new Map();
+  allTasks.forEach((task) => {
+    const path = buildTaskNamePath(task);
+    const list = nextMap.get(path) || [];
+    list.push(task.id);
+    nextMap.set(path, list);
+  });
+  state.taskPathMaps.set(mapKey, nextMap);
 }
 
 function adjustIndent(line, deltaSpaces) {
@@ -1705,13 +2391,63 @@ async function loadCollabModules() {
   return collab.modules;
 }
 
-function authHeaders() {
+function authHeaders({ includeBasic = false } = {}) {
+  if (!includeBasic) {
+    return {};
+  }
   const user = collab.username || "user";
   const pass = collab.authToken || AUTH_TOKEN;
   const token = btoa(`${user}:${pass}`);
   return {
     Authorization: `Basic ${token}`,
   };
+}
+
+async function loginRequest(username, password) {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/login`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ username, password }),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (response.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    throw new Error("Unable to login.");
+  }
+  return response.json();
+}
+
+async function verifyCurrentPassword(password) {
+  const username = (collab.username || "").trim();
+  if (!username || !password) {
+    throw new Error("Current password is required.");
+  }
+  try {
+    await loginRequest(username, password);
+  } catch (error) {
+    if (error instanceof Error && error.message === "Unauthorized") {
+      throw new Error("Current password is incorrect.");
+    }
+    throw error;
+  }
+}
+
+async function logoutRequest() {
+  try {
+    await fetch(`${REMOTE_BASE}/api/logout`, {
+      method: "POST",
+    });
+  } catch {
+    // ignore
+  }
 }
 
 async function fetchSpaces() {
@@ -1730,45 +2466,554 @@ async function fetchSpaces() {
     throw new Error("Unable to fetch spaces.");
   }
   const data = await response.json();
-  if (!Array.isArray(data.spaces)) {
-    return [];
-  }
-  return data.spaces
+  const spaces = Array.isArray(data.spaces)
+    ? data.spaces
     .map((space) => {
       if (typeof space === "string") {
-        return { id: space, users: [] };
+        const id = space.trim();
+        return {
+          id,
+          users: [],
+          folder: "",
+          personal: false,
+          path: buildSpacePath(id, ""),
+        };
       }
       if (space && typeof space === "object") {
         const id = space.id || space.name || space.space || "";
         const users = Array.isArray(space.users) ? space.users : [];
-        return { id, users };
+        const folder = typeof space.folder === "string" ? space.folder.trim() : "";
+        const personal = Boolean(space.personal);
+        const explicitPath = typeof space.path === "string" ? space.path.trim() : "";
+        const path = explicitPath || buildSpacePath(id, folder);
+        return { id, users, folder, personal, path };
       }
-      return { id: "", users: [] };
+      return { id: "", users: [], folder: "", personal: false, path: "" };
     })
-    .filter((space) => space.id);
+    .filter((space) => space.id)
+    : [];
+  const folders = Array.isArray(data.folders)
+    ? data.folders
+      .filter((folder) => typeof folder === "string" && folder.trim())
+      .map((folder) => folder.trim())
+    : [];
+  return {
+    spaces,
+    folders,
+    user: data.user && typeof data.user === "object" ? data.user : null,
+    permissions:
+      data.permissions && typeof data.permissions === "object" ? data.permissions : null,
+  };
 }
 
-function renderSpaceList(spaces) {
+async function createSpaceFolderRequest(name) {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/space-folders`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ name }),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (!response.ok) {
+    throw new Error(spaceResponseError(response, "Unable to create folder."));
+  }
+  return response.json();
+}
+
+async function deleteSpaceFolderRequest(folderId) {
+  const trimmed = String(folderId || "").trim();
+  if (!trimmed) {
+    throw new Error("Invalid folder name.");
+  }
+  let response;
+  try {
+    response = await fetch(
+      `${REMOTE_BASE}/api/space-folders/${encodeURIComponent(trimmed)}`,
+      {
+        method: "DELETE",
+        headers: authHeaders(),
+      }
+    );
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (!response.ok) {
+    if (response.status === 404) {
+      throw new Error("Folder not found.");
+    }
+    if (response.status === 409) {
+      throw new Error("Folder is not empty.");
+    }
+    if (response.status === 400) {
+      throw new Error("Invalid folder name.");
+    }
+    throw new Error("Unable to delete folder.");
+  }
+  return response.json();
+}
+
+async function moveSpaceToFolderRequest(spaceId, folder) {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/folder`, {
+      method: "PUT",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ folder }),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (!response.ok) {
+    throw new Error(spaceResponseError(response, "Unable to move space."));
+  }
+  return response.json();
+}
+
+async function fetchJiraConfig() {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/jira-config`, {
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (response.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    throw new Error("Unable to fetch Jira configuration.");
+  }
+  const data = await response.json();
+  return {
+    baseUrl: typeof data.base_url === "string" ? data.base_url : "",
+    email: typeof data.email === "string" ? data.email : "",
+    token: typeof data.token === "string" ? data.token : "",
+  };
+}
+
+async function saveJiraConfig(payload) {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/jira-config`, {
+      method: "PUT",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload || {}),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (response.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    throw new Error("Unable to save Jira configuration.");
+  }
+  const data = await response.json();
+  return {
+    baseUrl: typeof data.base_url === "string" ? data.base_url : "",
+    email: typeof data.email === "string" ? data.email : "",
+    token: typeof data.token === "string" ? data.token : "",
+  };
+}
+
+async function fetchMe() {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/me`, {
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (response.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    throw new Error("Unable to load user profile.");
+  }
+  return response.json();
+}
+
+async function saveMyProfile(payload) {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/me`, {
+      method: "PUT",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload || {}),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (response.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const data = await response.json();
+      detail = typeof data?.detail === "string" ? data.detail : "";
+    } catch {
+      // ignore
+    }
+    throw new Error(detail || "Unable to update profile.");
+  }
+  return response.json();
+}
+
+async function fetchUsers() {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/users`, {
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (response.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    throw new Error("Unable to fetch users.");
+  }
+  return response.json();
+}
+
+async function createUserRequest(payload) {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/users`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload || {}),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (!response.ok) {
+    throw new Error(userResponseError(response, "Unable to create user."));
+  }
+  return response.json();
+}
+
+async function updateUserRequest(username, payload) {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/users/${encodeURIComponent(username)}`, {
+      method: "PUT",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload || {}),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (!response.ok) {
+    throw new Error(userResponseError(response, "Unable to update user."));
+  }
+  return response.json();
+}
+
+async function deleteUserRequest(username) {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/users/${encodeURIComponent(username)}`, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (!response.ok) {
+    throw new Error(userResponseError(response, "Unable to remove user."));
+  }
+  return response.json();
+}
+
+function sortFolderIds(folders) {
+  const names = Array.from(
+    new Set(
+      (Array.isArray(folders) ? folders : [])
+        .filter((item) => typeof item === "string")
+        .map((item) => item.trim())
+        .filter(Boolean)
+    )
+  );
+  const hasPersonal = names.includes("personal");
+  const filtered = names.filter((name) => name !== "personal");
+  filtered.sort((a, b) => a.localeCompare(b));
+  return hasPersonal ? ["personal", ...filtered] : filtered;
+}
+
+function folderLabel(folderId) {
+  if (folderId === "personal") {
+    return "Personal";
+  }
+  if (!folderId) {
+    return "Root";
+  }
+  return folderId;
+}
+
+function normalizeSpaceFolder(folder) {
+  if (typeof folder !== "string") {
+    return "";
+  }
+  return folder.trim().replace(/^\/+|\/+$/g, "");
+}
+
+function buildSpacePath(spaceId, folder = "") {
+  const id = typeof spaceId === "string" ? spaceId.trim() : "";
+  if (!id) {
+    return "";
+  }
+  const normalizedFolder = normalizeSpaceFolder(folder);
+  return normalizedFolder ? `${normalizedFolder}/${id}` : id;
+}
+
+function resolveSpacePath(space) {
+  if (!space || typeof space !== "object") {
+    return "";
+  }
+  const explicit = typeof space.path === "string" ? space.path.trim() : "";
+  if (explicit) {
+    return explicit;
+  }
+  return buildSpacePath(space.id, space.folder);
+}
+
+function getAssignableSpaces() {
+  return [...new Set(collab.spaceAccessOptions || [])].sort((a, b) => a.localeCompare(b));
+}
+
+function isPersonalFolderPath(path) {
+  const normalized = typeof path === "string" ? path.trim() : "";
+  return normalized === "personal" || normalized.startsWith("personal/");
+}
+
+function buildAssignableAccessOptions(spaces = [], folders = []) {
+  const options = new Set();
+  (Array.isArray(folders) ? folders : []).forEach((folder) => {
+    const normalized = typeof folder === "string" ? folder.trim() : "";
+    if (!normalized || isPersonalFolderPath(normalized)) {
+      return;
+    }
+    options.add(`${normalized}/*`);
+  });
+  (Array.isArray(spaces) ? spaces : []).forEach((space) => {
+    if (!space || typeof space !== "object") {
+      return;
+    }
+    if (space.personal) {
+      return;
+    }
+    const id = typeof space.id === "string" ? space.id.trim() : "";
+    if (!id) {
+      return;
+    }
+    const folder = typeof space.folder === "string" ? space.folder.trim() : "";
+    if (folder && !isPersonalFolderPath(folder)) {
+      options.add(`${folder}/${id}`);
+      return;
+    }
+    options.add(id);
+  });
+  return [...options].sort((a, b) => a.localeCompare(b));
+}
+
+function isPersonalFolderId(folderId) {
+  const normalized = typeof folderId === "string" ? folderId.trim() : "";
+  return normalized === "personal" || normalized.startsWith("personal/");
+}
+
+function renderSpaceList(spaces, folders = []) {
   if (!dom.spaceList) {
     return;
   }
+  const canManageSpaces = collab.permissions.can_manage_spaces;
   dom.spaceList.innerHTML = "";
-  if (!spaces.length) {
-    const empty = document.createElement("div");
-    empty.className = "modal-help";
-    empty.textContent = "No spaces yet. Create one above.";
-    dom.spaceList.appendChild(empty);
-    return;
+  const allSpaces = Array.isArray(spaces)
+    ? [...spaces].sort((a, b) => resolveSpacePath(a).localeCompare(resolveSpacePath(b)))
+    : [];
+  const grouped = new Map();
+  allSpaces.forEach((space) => {
+    const folderId = typeof space.folder === "string" ? space.folder.trim() : "";
+    const key = folderId || "";
+    if (!grouped.has(key)) {
+      grouped.set(key, []);
+    }
+    grouped.get(key).push(space);
+  });
+  const folderSources = [
+    ...(Array.isArray(folders) ? folders : []),
+    ...Array.from(grouped.keys()).filter(Boolean),
+  ];
+  const orderedFolders = sortFolderIds(folderSources);
+  const folderSet = new Set();
+  orderedFolders.forEach((folderId) => {
+    const parts = folderId.split("/").filter(Boolean);
+    let current = "";
+    parts.forEach((part) => {
+      current = current ? `${current}/${part}` : part;
+      folderSet.add(current);
+    });
+  });
+  const folderMeta = new Map();
+  folderSet.forEach((folderId) => {
+    const parts = folderId.split("/");
+    const name = parts[parts.length - 1] || folderId;
+    const parentId = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
+    folderMeta.set(folderId, { id: folderId, name, parentId });
+  });
+  const childrenByParent = new Map();
+  folderMeta.forEach((folder) => {
+    const parent = folder.parentId || "";
+    if (!childrenByParent.has(parent)) {
+      childrenByParent.set(parent, []);
+    }
+    childrenByParent.get(parent).push(folder);
+  });
+  childrenByParent.forEach((items) => {
+    items.sort((a, b) => {
+      if (a.id === "personal") {
+        return -1;
+      }
+      if (b.id === "personal") {
+        return 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+  });
+
+  const activeSpaceId = typeof collab.spaceId === "string" ? collab.spaceId.trim() : "";
+  const activeSpacePath = typeof collab.spacePath === "string" ? collab.spacePath.trim() : "";
+  const activeSpaceEntry = activeSpacePath
+    ? allSpaces.find((space) => resolveSpacePath(space) === activeSpacePath)
+    : (activeSpaceId ? allSpaces.find((space) => space.id === activeSpaceId) : null);
+  const activeFolderCandidate =
+    activeSpaceEntry && typeof activeSpaceEntry.folder === "string"
+      ? activeSpaceEntry.folder.trim()
+      : "";
+  const activeFolderId = activeSpaceEntry && folderMeta.has(activeFolderCandidate)
+    ? activeFolderCandidate
+    : null;
+  const knownFolders = new Set(folderMeta.keys());
+  if (!collab.openSpaceFolderInitialized) {
+    if (activeFolderId !== null && knownFolders.has(activeFolderId)) {
+      collab.openSpaceFolderId = activeFolderId;
+    } else {
+      collab.openSpaceFolderId = null;
+    }
+    collab.openSpaceFolderInitialized = true;
+  } else if (
+    typeof collab.openSpaceFolderId === "string"
+    && !knownFolders.has(collab.openSpaceFolderId)
+  ) {
+    collab.openSpaceFolderId = null;
   }
-  spaces.forEach((space) => {
+
+  const isExpandedFolder = (folderId) => {
+    if (!collab.openSpaceFolderId) {
+      return false;
+    }
+    return (
+      collab.openSpaceFolderId === folderId
+      || collab.openSpaceFolderId.startsWith(`${folderId}/`)
+    );
+  };
+
+  const renderSpaceRow = (space, container) => {
     const row = document.createElement("div");
     row.className = "space-item";
+    const spacePath = resolveSpacePath(space);
+    const isActiveSpace = (
+      (collab.spacePath && collab.spacePath === spacePath)
+      || (!collab.spacePath && collab.spaceId === space.id)
+    );
+    if (isActiveSpace) {
+      row.classList.add("active-space");
+    }
+    const isPersonal = Boolean(space.personal);
+    if (canManageSpaces && !isPersonal) {
+      row.draggable = true;
+      row.addEventListener("dragstart", (event) => {
+        row.classList.add("dragging");
+        event.dataTransfer?.setData("text/x-space-id", space.id);
+        event.dataTransfer?.setData("text/x-space-path", spacePath);
+        event.dataTransfer?.setData("text/plain", spacePath || space.id);
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+        }
+      });
+      row.addEventListener("dragend", () => {
+        row.classList.remove("dragging");
+      });
+    }
+    const targetFolder = typeof space.folder === "string" ? space.folder.trim() : "";
+    if (canManageSpaces && !isPersonalFolderId(targetFolder)) {
+      row.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        row.classList.add("drag-over");
+      });
+      row.addEventListener("dragleave", () => {
+        row.classList.remove("drag-over");
+      });
+      row.addEventListener("drop", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        row.classList.remove("drag-over");
+        const draggedSpaceId = event.dataTransfer?.getData("text/x-space-id") || "";
+        const draggedSpacePath = event.dataTransfer?.getData("text/x-space-path") || draggedSpaceId;
+        if (
+          !draggedSpaceId
+          || (draggedSpaceId === space.id && draggedSpacePath === spacePath)
+        ) {
+          return;
+        }
+        try {
+          await moveSpaceToFolderRequest(draggedSpaceId, targetFolder);
+          clearSpaceError();
+          await loadSpaceList({ showLoading: false });
+          const movedPath = buildSpacePath(draggedSpaceId, targetFolder);
+          showToast(`Space '${draggedSpacePath}' moved to '${movedPath}'.`);
+        } catch (error) {
+          setSpaceError(formatSpaceError(error, "Unable to move space."));
+        }
+      });
+    }
     const header = document.createElement("div");
     header.className = "space-row";
 
     const label = document.createElement("span");
     label.className = "space-label";
-    label.textContent = space.id;
+    const labelIcon = document.createElement("i");
+    labelIcon.className = "fa-solid fa-file-lines space-label-icon";
+    labelIcon.setAttribute("aria-hidden", "true");
+    const labelText = document.createElement("span");
+    labelText.textContent = spacePath || space.id;
+    label.append(labelIcon, labelText);
 
     const input = document.createElement("input");
     input.type = "text";
@@ -1781,13 +3026,13 @@ function renderSpaceList(spaces) {
     const connectButton = document.createElement("button");
     connectButton.type = "button";
     connectButton.className = "toolbar-button space-connect";
-    connectButton.textContent = collab.spaceId === space.id ? "Active" : "Connect";
-    connectButton.disabled = collab.spaceId === space.id;
-    if (collab.spaceId === space.id) {
+    connectButton.textContent = isActiveSpace ? "Active" : "Connect";
+    connectButton.disabled = isActiveSpace;
+    if (isActiveSpace) {
       connectButton.classList.add("space-active");
     }
     connectButton.addEventListener("click", () => {
-      connectToSpace(space.id);
+      connectToSpace(space.id, spacePath);
     });
 
     const rename = document.createElement("button");
@@ -1796,12 +3041,17 @@ function renderSpaceList(spaces) {
     rename.innerHTML = '<i class="fa-solid fa-pen-to-square" aria-hidden="true"></i>';
     rename.title = "Rename";
     rename.setAttribute("aria-label", "Rename");
-    rename.addEventListener("click", () => {
-      row.classList.add("editing");
-      input.value = space.id;
-      input.focus();
-      input.select();
-    });
+    if (canManageSpaces && !isPersonal) {
+      rename.addEventListener("click", () => {
+        row.classList.add("editing");
+        input.value = space.id;
+        input.focus();
+        input.select();
+      });
+    } else {
+      rename.disabled = true;
+      rename.classList.add("hidden");
+    }
 
     const save = document.createElement("button");
     save.type = "button";
@@ -1816,12 +3066,14 @@ function renderSpaceList(spaces) {
         return;
       }
       try {
+        const newSpacePath = buildSpacePath(trimmed, space.folder || "");
         await renameSpace(space.id, trimmed);
         clearSpaceError();
         row.classList.remove("editing");
         await loadSpaceList({ showLoading: false });
-        if (collab.spaceId === space.id) {
-          connectToSpace(trimmed);
+        showToast(`Space '${spacePath}' renamed to '${newSpacePath}'.`);
+        if (isActiveSpace) {
+          connectToSpace(trimmed, newSpacePath);
         }
       } catch (error) {
         setSpaceError(formatSpaceError(error, "Unable to rename space."));
@@ -1857,14 +3109,25 @@ function renderSpaceList(spaces) {
     remove.innerHTML = '<i class="fa-solid fa-trash" aria-hidden="true"></i>';
     remove.title = "Delete";
     remove.setAttribute("aria-label", "Delete");
-    remove.addEventListener("click", async () => {
-      openDeleteModal(space.id);
-    });
+    if (canManageSpaces && !isPersonal) {
+      remove.addEventListener("click", async () => {
+        openDeleteModal({
+          id: space.id,
+          folder: space.folder || "",
+          path: spacePath,
+        });
+      });
+    } else {
+      remove.disabled = true;
+      remove.classList.add("hidden");
+    }
 
     actions.appendChild(connectButton);
     actions.appendChild(rename);
-    actions.appendChild(save);
-    actions.appendChild(cancel);
+    if (canManageSpaces && !isPersonal) {
+      actions.appendChild(save);
+      actions.appendChild(cancel);
+    }
     actions.appendChild(remove);
     header.appendChild(label);
     header.appendChild(input);
@@ -1872,8 +3135,9 @@ function renderSpaceList(spaces) {
 
     const users = document.createElement("div");
     users.className = "space-users";
-    if (space.users.length) {
-      space.users.forEach((user) => {
+    const connectedUsers = Array.isArray(space.users) ? space.users : [];
+    if (connectedUsers.length) {
+      connectedUsers.forEach((user) => {
         const pill = document.createElement("span");
         pill.className = "space-user-pill";
         pill.textContent = user;
@@ -1888,8 +3152,190 @@ function renderSpaceList(spaces) {
 
     row.appendChild(header);
     row.appendChild(users);
-    dom.spaceList.appendChild(row);
+    container.appendChild(row);
+  };
+
+  const renderFolder = (folderId, parentId, container) => {
+    const folderSpaces = grouped.get(folderId) || [];
+    const childFolders = childrenByParent.get(folderId) || [];
+    if (!canManageSpaces && folderSpaces.length === 0 && childFolders.length === 0) {
+      return;
+    }
+    const isOpen = isExpandedFolder(folderId);
+
+    const folderBlock = document.createElement("div");
+    folderBlock.className = "space-folder";
+    if (isPersonalFolderId(folderId)) {
+      folderBlock.classList.add("personal");
+    }
+    if (folderId === activeFolderId) {
+      folderBlock.classList.add("active-folder");
+    }
+    folderBlock.classList.toggle("collapsed", !isOpen);
+
+    const moveSpaceToFolder = async (spaceId, sourcePath = "") => {
+      if (!spaceId) {
+        return;
+      }
+      try {
+        await moveSpaceToFolderRequest(spaceId, folderId);
+        clearSpaceError();
+        await loadSpaceList({ showLoading: false });
+        const fromPath = sourcePath || spaceId;
+        const toPath = buildSpacePath(spaceId, folderId);
+        showToast(`Space '${fromPath}' moved to '${toPath}'.`);
+      } catch (error) {
+        setSpaceError(formatSpaceError(error, "Unable to move space."));
+      }
+    };
+
+    const attachDropTarget = (targetEl) => {
+      if (!targetEl || !canManageSpaces || isPersonalFolderId(folderId)) {
+        return;
+      }
+      targetEl.addEventListener("dragover", (event) => {
+        event.preventDefault();
+        folderBlock.classList.add("drag-over");
+      });
+      targetEl.addEventListener("dragleave", () => {
+        folderBlock.classList.remove("drag-over");
+      });
+      targetEl.addEventListener("drop", async (event) => {
+        event.preventDefault();
+        folderBlock.classList.remove("drag-over");
+        const draggedSpaceId = event.dataTransfer?.getData("text/x-space-id") || "";
+        const draggedSpacePath = event.dataTransfer?.getData("text/x-space-path") || draggedSpaceId;
+        await moveSpaceToFolder(draggedSpaceId, draggedSpacePath);
+      });
+    };
+
+    const folderHeader = document.createElement("button");
+    folderHeader.type = "button";
+    folderHeader.className = "space-folder-header";
+    folderHeader.setAttribute("aria-expanded", String(isOpen));
+    if (folderId === activeFolderId) {
+      folderHeader.setAttribute("aria-current", "true");
+    }
+    const folderToggle = document.createElement("i");
+    folderToggle.className = "fa-solid fa-chevron-right space-folder-toggle";
+    folderToggle.setAttribute("aria-hidden", "true");
+    const folderIcon = document.createElement("i");
+    folderIcon.className = "fa-solid fa-folder";
+    folderIcon.setAttribute("aria-hidden", "true");
+    const folderTitle = document.createElement("span");
+    folderTitle.className = "space-folder-title";
+    const meta = folderMeta.get(folderId);
+    folderTitle.textContent =
+      folderId === "personal"
+        ? "Personal"
+        : (meta?.name || folderId);
+    const folderCount = document.createElement("span");
+    folderCount.className = "space-folder-count";
+    folderCount.textContent = `${folderSpaces.length + childFolders.length}`;
+    folderHeader.append(folderToggle, folderIcon, folderTitle, folderCount);
+    folderHeader.addEventListener("click", () => {
+      collab.openSpaceFolderId =
+        collab.openSpaceFolderId === folderId ? (parentId || null) : folderId;
+      renderSpaceList(spaces, folders);
+    });
+    attachDropTarget(folderHeader);
+
+    const folderHeaderRow = document.createElement("div");
+    folderHeaderRow.className = "space-folder-header-row";
+    folderHeaderRow.appendChild(folderHeader);
+    if (canManageSpaces && !isPersonalFolderId(folderId)) {
+      const removeFolder = document.createElement("button");
+      removeFolder.type = "button";
+      removeFolder.className = "toolbar-icon space-folder-remove";
+      removeFolder.title = "Delete folder";
+      removeFolder.setAttribute("aria-label", "Delete folder");
+      removeFolder.innerHTML = '<i class="fa-solid fa-folder-minus" aria-hidden="true"></i>';
+      removeFolder.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openFolderDeleteModal(folderId);
+      });
+      folderHeaderRow.appendChild(removeFolder);
+    }
+
+    const folderBody = document.createElement("div");
+    folderBody.className = "space-folder-body";
+    attachDropTarget(folderBody);
+
+    if (!isOpen) {
+      folderBlock.append(folderHeaderRow, folderBody);
+      container.appendChild(folderBlock);
+      return;
+    }
+
+    childFolders.forEach((child) => {
+      renderFolder(child.id, folderId, folderBody);
+    });
+
+    folderSpaces.forEach((space) => {
+      renderSpaceRow(space, folderBody);
+    });
+
+    if (!folderSpaces.length && !childFolders.length) {
+      const emptyFolder = document.createElement("div");
+      emptyFolder.className = "space-folder-empty";
+      emptyFolder.textContent = canManageSpaces && !isPersonalFolderId(folderId)
+        ? "Drop spaces here"
+        : "Folder is empty";
+      folderBody.appendChild(emptyFolder);
+    }
+
+    folderBlock.append(folderHeaderRow, folderBody);
+    container.appendChild(folderBlock);
+  };
+
+  if (canManageSpaces) {
+    const rootDrop = document.createElement("div");
+    rootDrop.className = "space-root-drop";
+    rootDrop.innerHTML = '<i class="fa-solid fa-house" aria-hidden="true"></i><span>Root</span>';
+    rootDrop.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      rootDrop.classList.add("drag-over");
+    });
+    rootDrop.addEventListener("dragleave", () => {
+      rootDrop.classList.remove("drag-over");
+    });
+    rootDrop.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      rootDrop.classList.remove("drag-over");
+      const draggedSpaceId = event.dataTransfer?.getData("text/x-space-id") || "";
+      const draggedSpacePath = event.dataTransfer?.getData("text/x-space-path") || draggedSpaceId;
+      if (!draggedSpaceId) {
+        return;
+      }
+      try {
+        await moveSpaceToFolderRequest(draggedSpaceId, "");
+        clearSpaceError();
+        await loadSpaceList({ showLoading: false });
+        showToast(`Space '${draggedSpacePath}' moved to '${draggedSpaceId}'.`);
+      } catch (error) {
+        setSpaceError(formatSpaceError(error, "Unable to move space."));
+      }
+    });
+    dom.spaceList.appendChild(rootDrop);
+  }
+
+  const rootFolders = childrenByParent.get("") || [];
+  rootFolders.forEach((folder) => {
+    renderFolder(folder.id, "", dom.spaceList);
   });
+  const rootSpaces = grouped.get("") || [];
+  rootSpaces.forEach((space) => {
+    renderSpaceRow(space, dom.spaceList);
+  });
+
+  if (!dom.spaceList.childElementCount) {
+    const empty = document.createElement("div");
+    empty.className = "modal-help";
+    empty.textContent = canManageSpaces
+      ? "No spaces yet. Use the add icons."
+      : "No spaces available for this account.";
+    dom.spaceList.appendChild(empty);
+  }
 }
 
 async function loadSpaceList({ showLoading = true } = {}) {
@@ -1904,15 +3350,47 @@ async function loadSpaceList({ showLoading = true } = {}) {
     dom.spaceList.appendChild(loading);
   }
   try {
-    const spaces = await fetchSpaces();
+    const result = await fetchSpaces();
+    applySessionFromServer(result);
+    updateCreateSpaceButton();
+    updateCreateFolderButton();
+    const spaces = result.spaces || [];
+    const folders = sortFolderIds(result.folders || []);
+    if (collab.spaceId) {
+      const currentByPath = collab.spacePath
+        ? spaces.find((space) => resolveSpacePath(space) === collab.spacePath)
+        : null;
+      const currentById = spaces.find((space) => space.id === collab.spaceId);
+      const current = currentByPath || currentById || null;
+      const nextPath = current ? resolveSpacePath(current) : (collab.spacePath || collab.spaceId);
+      if (nextPath !== collab.spacePath) {
+        collab.spacePath = nextPath;
+        updateBoardConnectionLabel();
+      }
+    }
+    collab.spaceIds = spaces.map((space) => space.id).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    collab.spaceFolders = folders;
+    collab.spaceAccessOptions = buildAssignableAccessOptions(spaces, folders);
+    if (createUserSpacesPicker) {
+      createUserSpacesPicker.refreshOptions();
+    }
     const snapshot = JSON.stringify(
-      spaces.map((space) => ({ id: space.id, users: [...space.users].sort() }))
+      {
+        spaces: spaces.map((space) => ({
+          id: space.id,
+          users: [...space.users].sort(),
+          folder: space.folder || "",
+          path: resolveSpacePath(space),
+          personal: Boolean(space.personal),
+        })),
+        folders,
+      }
     );
     if (snapshot === collab.lastSpaceSnapshot) {
       return;
     }
     collab.lastSpaceSnapshot = snapshot;
-    renderSpaceList(spaces);
+    renderSpaceList(spaces, folders);
   } catch (error) {
     if (showLoading) {
       dom.spaceList.innerHTML = "";
@@ -1922,16 +3400,21 @@ async function loadSpaceList({ showLoading = true } = {}) {
       dom.spaceList.appendChild(message);
     }
     collab.isAuthenticated = false;
+    collab.permissions = normalizePermissions(null);
+    updateRoleVisibility();
     updateConnectButtonLabel();
   }
 }
 
 function setSpaceError(message) {
-  if (!dom.spaceError) {
-    return;
+  const text = typeof message === "string" ? message.trim() : "";
+  if (dom.spaceError) {
+    dom.spaceError.textContent = "";
+    dom.spaceError.classList.add("hidden");
   }
-  dom.spaceError.textContent = message;
-  dom.spaceError.classList.remove("hidden");
+  if (text) {
+    showToast(text, "error");
+  }
 }
 
 function clearSpaceError() {
@@ -1942,20 +3425,1155 @@ function clearSpaceError() {
   dom.spaceError.classList.add("hidden");
 }
 
+function setJiraConfigError(message) {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (dom.jiraConfigError) {
+    dom.jiraConfigError.textContent = "";
+    dom.jiraConfigError.classList.add("hidden");
+  }
+  if (text) {
+    showToast(text, "error");
+  }
+}
+
+function clearJiraConfigError() {
+  if (!dom.jiraConfigError) {
+    return;
+  }
+  dom.jiraConfigError.textContent = "";
+  dom.jiraConfigError.classList.add("hidden");
+}
+
+function fillJiraConfigForm(config) {
+  if (dom.jiraConfigBaseUrl) {
+    dom.jiraConfigBaseUrl.value = config.baseUrl || "";
+  }
+  if (dom.jiraConfigEmail) {
+    dom.jiraConfigEmail.value = config.email || "";
+  }
+  if (dom.jiraConfigToken) {
+    dom.jiraConfigToken.value = config.token || "";
+  }
+}
+
+function readJiraConfigForm() {
+  return {
+    base_url: dom.jiraConfigBaseUrl?.value?.trim() || "",
+    email: dom.jiraConfigEmail?.value?.trim() || "",
+    token: dom.jiraConfigToken?.value || "",
+  };
+}
+
+async function openJiraConfigModal() {
+  if (!dom.jiraConfigModal) {
+    return;
+  }
+  if (!collab.isAuthenticated) {
+    openLoginModal();
+    return;
+  }
+  if (!collab.permissions.can_manage_jira) {
+    setSpaceError("Only admins can change Jira settings.");
+    return;
+  }
+  closeSpacesModal();
+  closeProfileModal({ reopenSpaces: false });
+  closeUsersModal({ reopenSpaces: false });
+  closeSlugRenameModal();
+  clearJiraConfigError();
+  dom.jiraConfigModal.classList.remove("hidden");
+  applyAuthFromInputs({ markDirty: false });
+  try {
+    const config = await fetchJiraConfig();
+    fillJiraConfigForm(config);
+  } catch (error) {
+    setJiraConfigError(formatSpaceError(error, "Unable to load Jira config."));
+  }
+}
+
+function closeJiraConfigModal({ reopenSpaces = true } = {}) {
+  if (!dom.jiraConfigModal) {
+    return;
+  }
+  dom.jiraConfigModal.classList.add("hidden");
+  if (reopenSpaces) {
+    openSpacesModal();
+  }
+}
+
+async function submitJiraConfig() {
+  clearJiraConfigError();
+  try {
+    const payload = readJiraConfigForm();
+    const saved = await saveJiraConfig(payload);
+    fillJiraConfigForm(saved);
+    showToast("Jira configuration saved.");
+    closeJiraConfigModal({ reopenSpaces: true });
+  } catch (error) {
+    setJiraConfigError(formatSpaceError(error, "Unable to save Jira config."));
+  }
+}
+
+function setUsersError(message) {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (dom.usersError) {
+    dom.usersError.textContent = "";
+    dom.usersError.classList.add("hidden");
+  }
+  if (text) {
+    showToast(text, "error");
+  }
+}
+
+function clearUsersError() {
+  if (!dom.usersError) {
+    return;
+  }
+  dom.usersError.textContent = "";
+  dom.usersError.classList.add("hidden");
+}
+
+function setProfileError(message) {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (dom.profileError) {
+    dom.profileError.textContent = "";
+    dom.profileError.classList.add("hidden");
+  }
+  if (text) {
+    showToast(text, "error");
+  }
+}
+
+function clearProfileError() {
+  if (!dom.profileError) {
+    return;
+  }
+  dom.profileError.textContent = "";
+  dom.profileError.classList.add("hidden");
+}
+
+function setUserCreateError(message) {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (dom.userCreateError) {
+    dom.userCreateError.textContent = "";
+    dom.userCreateError.classList.add("hidden");
+  }
+  if (text) {
+    showToast(text, "error");
+  }
+}
+
+function clearUserCreateError() {
+  if (!dom.userCreateError) {
+    return;
+  }
+  dom.userCreateError.textContent = "";
+  dom.userCreateError.classList.add("hidden");
+}
+
+function setUserPasswordError(message) {
+  const text = typeof message === "string" ? message.trim() : "";
+  if (dom.userPasswordError) {
+    dom.userPasswordError.textContent = "";
+    dom.userPasswordError.classList.add("hidden");
+  }
+  if (text) {
+    showToast(text, "error");
+  }
+}
+
+function clearUserPasswordError() {
+  if (!dom.userPasswordError) {
+    return;
+  }
+  dom.userPasswordError.textContent = "";
+  dom.userPasswordError.classList.add("hidden");
+}
+
+function roleUsesSpaces(role) {
+  return String(role || "user").toLowerCase() === "user";
+}
+
+function updateCreateUserSpacesVisibility() {
+  const showSpaces = roleUsesSpaces(dom.userNewRole?.value);
+  if (dom.userNewSpacesField) {
+    dom.userNewSpacesField.classList.toggle("hidden", !showSpaces);
+  }
+  const picker = ensureCreateUserSpacesPicker();
+  if (!picker) {
+    return;
+  }
+  if (!showSpaces) {
+    picker.setValues([]);
+  }
+  picker.setDisabled(!showSpaces || !collab.permissions.can_assign_space_access);
+}
+
+function openUserDeleteModal(userEntry) {
+  if (!dom.userDeleteModal || !dom.userDeleteMessage || !userEntry) {
+    return;
+  }
+  pendingDeleteUser = userEntry;
+  dom.userDeleteMessage.textContent = `Remove user "${userEntry.username}"? This cannot be undone.`;
+  dom.userDeleteModal.classList.remove("hidden");
+}
+
+function closeUserDeleteModal() {
+  if (!dom.userDeleteModal) {
+    return;
+  }
+  dom.userDeleteModal.classList.add("hidden");
+  pendingDeleteUser = null;
+}
+
+function openUserCreateModal() {
+  if (!dom.userCreateModal) {
+    return;
+  }
+  clearUserCreateError();
+  if (dom.userNewUsername) {
+    dom.userNewUsername.value = "";
+  }
+  if (dom.userNewDisplayName) {
+    dom.userNewDisplayName.value = "";
+  }
+  if (dom.userNewPassword) {
+    dom.userNewPassword.value = "";
+  }
+  if (dom.userNewPasswordConfirm) {
+    dom.userNewPasswordConfirm.value = "";
+  }
+  if (dom.userNewRole) {
+    dom.userNewRole.value = "user";
+  }
+  const picker = ensureCreateUserSpacesPicker();
+  if (picker) {
+    picker.setValues([]);
+    picker.refreshOptions();
+  }
+  updateCreateUserSpacesVisibility();
+  dom.userCreateModal.classList.remove("hidden");
+}
+
+function closeUserCreateModal() {
+  if (!dom.userCreateModal) {
+    return;
+  }
+  dom.userCreateModal.classList.add("hidden");
+}
+
+function openUserPasswordModal(userEntry) {
+  if (!dom.userPasswordModal || !userEntry) {
+    return;
+  }
+  pendingPasswordUser = userEntry;
+  clearUsersError();
+  clearUserPasswordError();
+  if (dom.userPasswordMessage) {
+    dom.userPasswordMessage.textContent = `Set a new password for "${userEntry.username}".`;
+  }
+  if (dom.userPasswordNew) {
+    dom.userPasswordNew.value = "";
+  }
+  if (dom.userPasswordRepeat) {
+    dom.userPasswordRepeat.value = "";
+  }
+  dom.userPasswordModal.classList.remove("hidden");
+}
+
+function closeUserPasswordModal() {
+  if (!dom.userPasswordModal) {
+    return;
+  }
+  dom.userPasswordModal.classList.add("hidden");
+  pendingPasswordUser = null;
+  clearUserPasswordError();
+}
+
+async function submitUserPasswordChange() {
+  if (!pendingPasswordUser) {
+    closeUserPasswordModal();
+    return;
+  }
+  const targetUsername = pendingPasswordUser.username;
+  clearUsersError();
+  clearUserPasswordError();
+  const nextPassword = dom.userPasswordNew?.value || "";
+  const repeatPassword = dom.userPasswordRepeat?.value || "";
+  if (!nextPassword || !repeatPassword) {
+    setUserPasswordError("Enter and repeat the new password.");
+    return;
+  }
+  if (nextPassword !== repeatPassword) {
+    setUserPasswordError("Passwords do not match.");
+    return;
+  }
+  try {
+    await updateUserRequest(targetUsername, { password: nextPassword });
+    closeUserPasswordModal();
+    await loadUsersModalData({ refreshSpaces: false });
+    showToast(`Password changed for '${targetUsername}'.`);
+  } catch (error) {
+    setUserPasswordError(formatSpaceError(error, "Unable to change password."));
+  }
+}
+
+async function confirmDeleteUser() {
+  if (!pendingDeleteUser) {
+    closeUserDeleteModal();
+    return;
+  }
+  const targetUsername = pendingDeleteUser.username;
+  clearUsersError();
+  try {
+    await deleteUserRequest(targetUsername);
+    closeUserDeleteModal();
+    await loadUsersModalData({ refreshSpaces: true });
+    showToast(`User '${targetUsername}' deleted.`);
+  } catch (error) {
+    setUsersError(formatSpaceError(error, "Unable to remove user."));
+  }
+}
+
+function normalizeSelectedSpaces(values) {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+  const seen = new Set();
+  const normalized = [];
+  values.forEach((item) => {
+    if (typeof item !== "string") {
+      return;
+    }
+    const trimmed = item.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      return;
+    }
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  });
+  return normalized;
+}
+
+function createSpacePicker({
+  selected = [],
+  getOptions = () => [],
+  placeholder = "Search access paths",
+  onChange = null,
+} = {}) {
+  const root = document.createElement("div");
+  root.className = "space-picker";
+  const tags = document.createElement("div");
+  tags.className = "space-picker-tags";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "space-picker-input";
+  input.placeholder = placeholder;
+  const dropdown = document.createElement("div");
+  dropdown.className = "space-picker-dropdown hidden";
+  root.append(tags, input, dropdown);
+
+  let isOpen = false;
+  let isDisabled = false;
+  let values = normalizeSelectedSpaces(selected);
+  const emitChange = () => {
+    if (typeof onChange === "function") {
+      onChange([...values]);
+    }
+  };
+
+  const options = () =>
+    [...new Set(getOptions().filter((name) => typeof name === "string" && name.trim()))].sort(
+      (a, b) => a.localeCompare(b)
+    );
+
+  const suggestionList = () => {
+    const query = input.value.trim().toLowerCase();
+    return options().filter(
+      (name) =>
+        !values.includes(name) &&
+        (!query || name.toLowerCase().includes(query))
+    );
+  };
+
+  const render = () => {
+    tags.innerHTML = "";
+    values.forEach((name) => {
+      const chip = document.createElement("span");
+      chip.className = "space-picker-chip";
+      const label = document.createElement("span");
+      label.textContent = name;
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "space-picker-chip-remove";
+      remove.innerHTML = '<i class="fa-solid fa-xmark" aria-hidden="true"></i>';
+      remove.setAttribute("aria-label", `Remove ${name}`);
+      remove.disabled = isDisabled;
+      remove.addEventListener("click", (event) => {
+        event.stopPropagation();
+        values = values.filter((item) => item !== name);
+        render();
+        emitChange();
+      });
+      chip.append(label, remove);
+      tags.appendChild(chip);
+    });
+
+    const suggestions = suggestionList();
+    dropdown.innerHTML = "";
+    if (!isDisabled && isOpen) {
+      if (suggestions.length) {
+        suggestions.forEach((name) => {
+          const option = document.createElement("button");
+          option.type = "button";
+          option.className = "space-picker-option";
+          option.textContent = name;
+          option.addEventListener("mousedown", (event) => {
+            event.preventDefault();
+            if (values.includes(name)) {
+              return;
+            }
+            values.push(name);
+            input.value = "";
+            isOpen = true;
+            render();
+            emitChange();
+            input.focus();
+          });
+          dropdown.appendChild(option);
+        });
+      } else {
+        const empty = document.createElement("div");
+        empty.className = "space-picker-empty";
+        empty.textContent = "No matching paths";
+        dropdown.appendChild(empty);
+      }
+    }
+    dropdown.classList.toggle("hidden", !isOpen || isDisabled);
+    input.disabled = isDisabled;
+    root.classList.toggle("disabled", isDisabled);
+  };
+
+  input.addEventListener("focus", () => {
+    if (isDisabled) {
+      return;
+    }
+    isOpen = true;
+    render();
+  });
+  input.addEventListener("input", () => {
+    isOpen = true;
+    render();
+  });
+  input.addEventListener("keydown", (event) => {
+    if (isDisabled) {
+      return;
+    }
+    if (event.key === "Backspace" && !input.value.trim() && values.length) {
+      values = values.slice(0, -1);
+      render();
+      emitChange();
+      return;
+    }
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const first = suggestionList()[0];
+      if (!first) {
+        return;
+      }
+      values.push(first);
+      input.value = "";
+      isOpen = true;
+      render();
+      emitChange();
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      isOpen = false;
+      render();
+    }
+  });
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      isOpen = false;
+      render();
+    }, 120);
+  });
+  root.addEventListener("click", () => {
+    if (isDisabled) {
+      return;
+    }
+    input.focus();
+  });
+
+  render();
+  return {
+    root,
+    getValues() {
+      return [...values];
+    },
+    setValues(nextValues) {
+      values = normalizeSelectedSpaces(nextValues);
+      render();
+      emitChange();
+    },
+    setDisabled(nextDisabled) {
+      isDisabled = Boolean(nextDisabled);
+      if (isDisabled) {
+        isOpen = false;
+      }
+      render();
+    },
+    refreshOptions() {
+      render();
+    },
+  };
+}
+
+function ensureCreateUserSpacesPicker() {
+  if (!dom.userNewSpaces) {
+    return null;
+  }
+  if (!createUserSpacesPicker) {
+    createUserSpacesPicker = createSpacePicker({
+      selected: [],
+      getOptions: getAssignableSpaces,
+      placeholder: "Add path access",
+    });
+    dom.userNewSpaces.innerHTML = "";
+    dom.userNewSpaces.appendChild(createUserSpacesPicker.root);
+  }
+  return createUserSpacesPicker;
+}
+
+function roleOptionsMarkup(selectedRole, allowAdminRoles = true) {
+  const roles = allowAdminRoles ? ["admin", "manager", "user"] : ["user"];
+  return roles
+    .map((role) => `<option value="${role}"${role === selectedRole ? " selected" : ""}>${role}</option>`)
+    .join("");
+}
+
+function renderUsersList(users) {
+  if (!dom.usersList) {
+    return;
+  }
+  dom.usersList.innerHTML = "";
+  const visibleUsers = Array.isArray(users)
+    ? users.filter((entry) => !(entry && entry.self))
+    : [];
+  if (!visibleUsers.length) {
+    const empty = document.createElement("div");
+    empty.className = "modal-help";
+    empty.textContent = "No users found.";
+    dom.usersList.appendChild(empty);
+    return;
+  }
+  const canSetAdminRoles = collab.role === "admin";
+  visibleUsers.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "user-row";
+
+    const info = document.createElement("div");
+    info.className = "user-row-info";
+    info.textContent = `${entry.username}${entry.self ? " (you)" : ""}`;
+
+    const grid = document.createElement("div");
+    grid.className = "users-edit-grid";
+    const displayInput = document.createElement("input");
+    displayInput.type = "text";
+    const entryDisplayName = normalizeOptionalDisplayName(
+      entry.display_name,
+      entry.username
+    );
+    displayInput.value = entryDisplayName;
+    displayInput.placeholder = "Display name";
+    const initialDisplayName = entryDisplayName;
+
+    const roleSelect = document.createElement("select");
+    roleSelect.className = "user-role-select";
+    roleSelect.innerHTML = roleOptionsMarkup(entry.role || "user", canSetAdminRoles);
+    const initialRole = String(entry.role || "user").toLowerCase();
+
+    const spacesField = document.createElement("div");
+    spacesField.className = "user-row-space";
+    spacesField.classList.add("user-permissions-field");
+    const initialSpaces = normalizeSelectedSpaces(
+      Array.isArray(entry.spaces) ? entry.spaces : []
+    );
+    const spacesPicker = createSpacePicker({
+      selected: initialSpaces,
+      getOptions: getAssignableSpaces,
+      placeholder: "Add path access",
+      onChange: () => {
+        refreshSaveButtonState();
+      },
+    });
+    spacesField.appendChild(spacesPicker.root);
+
+    const editable = Boolean(entry.editable);
+    const self = Boolean(entry.self);
+    const allowRoleAndSpaces = editable && !self;
+    const normalizePaths = (paths) =>
+      normalizeSelectedSpaces(paths).sort((a, b) => a.localeCompare(b));
+    const areEqualPaths = (left, right) =>
+      left.length === right.length && left.every((item, index) => item === right[index]);
+
+    let saveBtn = null;
+    const isUserDirty = () => {
+      const displayDirty = (displayInput.value || "").trim() !== initialDisplayName;
+      if (self) {
+        return displayDirty;
+      }
+      const currentRole = String(roleSelect.value || "user").toLowerCase();
+      const roleDirty = currentRole !== initialRole;
+      const baselineSpaces = roleUsesSpaces(initialRole) ? normalizePaths(initialSpaces) : [];
+      const currentSpaces = roleUsesSpaces(currentRole)
+        ? normalizePaths(spacesPicker.getValues())
+        : [];
+      const spacesDirty = !areEqualPaths(currentSpaces, baselineSpaces);
+      return displayDirty || roleDirty || spacesDirty;
+    };
+    function refreshSaveButtonState() {
+      if (!saveBtn) {
+        return;
+      }
+      const dirty = editable && isUserDirty();
+      saveBtn.classList.toggle("success", dirty);
+      saveBtn.disabled = !dirty;
+    }
+
+    displayInput.disabled = !editable;
+    roleSelect.disabled = !allowRoleAndSpaces;
+    const updateSpacesVisibility = () => {
+      const visible = allowRoleAndSpaces && roleUsesSpaces(roleSelect.value);
+      spacesField.classList.toggle("hidden", !visible);
+      spacesPicker.setDisabled(!visible);
+      refreshSaveButtonState();
+    };
+    roleSelect.addEventListener("change", updateSpacesVisibility);
+    displayInput.addEventListener("input", refreshSaveButtonState);
+    updateSpacesVisibility();
+
+    grid.append(displayInput, roleSelect, spacesField);
+
+    const actions = document.createElement("div");
+    actions.className = "user-row-actions";
+    const passwordBtn = document.createElement("button");
+    passwordBtn.type = "button";
+    passwordBtn.className = "toolbar-button";
+    passwordBtn.title = "Change password";
+    passwordBtn.setAttribute("aria-label", "Change password");
+    passwordBtn.innerHTML = '<i class="fa-solid fa-key" aria-hidden="true"></i><span>Change Password</span>';
+    passwordBtn.disabled = !editable;
+    passwordBtn.addEventListener("click", () => {
+      openUserPasswordModal(entry);
+    });
+
+    saveBtn = document.createElement("button");
+    saveBtn.type = "button";
+    saveBtn.className = "toolbar-button user-save";
+    saveBtn.title = "Save";
+    saveBtn.setAttribute("aria-label", "Save");
+    saveBtn.innerHTML = '<i class="fa-solid fa-floppy-disk" aria-hidden="true"></i><span>Save</span>';
+    saveBtn.disabled = true;
+    saveBtn.addEventListener("click", async () => {
+      clearUsersError();
+      const currentDisplayName = (displayInput.value || "").trim();
+      const currentRole = String(roleSelect.value || "user").toLowerCase();
+      const baselineSpaces = roleUsesSpaces(initialRole) ? normalizePaths(initialSpaces) : [];
+      const currentSpaces = roleUsesSpaces(currentRole)
+        ? normalizePaths(spacesPicker.getValues())
+        : [];
+      const displayChanged = currentDisplayName !== initialDisplayName;
+      const roleChanged = !self && currentRole !== initialRole;
+      const permissionsChanged = !self && !areEqualPaths(currentSpaces, baselineSpaces);
+      try {
+        const payload = {
+          display_name: currentDisplayName,
+        };
+        if (!self) {
+          payload.role = currentRole;
+          if (roleUsesSpaces(currentRole)) {
+            payload.spaces = currentSpaces;
+          }
+        }
+        await updateUserRequest(entry.username, payload);
+        if (displayChanged) {
+          showToast("Display name updated.");
+        }
+        if (roleChanged) {
+          showToast("Role updated.");
+        }
+        if (permissionsChanged) {
+          showToast("Permission updated.");
+        }
+        if (!displayChanged && !roleChanged && !permissionsChanged) {
+          showToast("User updated.");
+        }
+        await loadUsersModalData({ refreshSpaces: true });
+      } catch (error) {
+        setUsersError(formatSpaceError(error, "Unable to save user."));
+      }
+    });
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.type = "button";
+    deleteBtn.className = "toolbar-button danger";
+    deleteBtn.title = "Delete user";
+    deleteBtn.setAttribute("aria-label", "Delete user");
+    deleteBtn.innerHTML = '<i class="fa-solid fa-trash" aria-hidden="true"></i><span>Delete User</span>';
+    deleteBtn.disabled = !entry.deletable;
+    deleteBtn.addEventListener("click", () => {
+      openUserDeleteModal(entry);
+    });
+
+    actions.append(passwordBtn, saveBtn, deleteBtn);
+    row.append(info, grid, actions);
+    dom.usersList.appendChild(row);
+    refreshSaveButtonState();
+  });
+}
+
+async function loadUsersModalData({ refreshSpaces = false } = {}) {
+  clearUsersError();
+  const me = await fetchMe();
+  applySessionFromServer(me);
+  collab.isAuthenticated = true;
+  updateConnectButtonLabel();
+  if (collab.permissions.can_assign_space_access) {
+    try {
+      const spacesResult = await fetchSpaces();
+      const fetchedSpaces = spacesResult.spaces || [];
+      const fetchedFolders = sortFolderIds(spacesResult.folders || []);
+      collab.spaceIds = fetchedSpaces
+        .map((space) => space.id)
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      collab.spaceFolders = fetchedFolders;
+      collab.spaceAccessOptions = buildAssignableAccessOptions(
+        fetchedSpaces,
+        fetchedFolders
+      );
+    } catch {
+      // Keep existing options when spaces are temporarily unavailable.
+    }
+  }
+  if (dom.userNewRole) {
+    const allowAdminRoles = collab.role === "admin";
+    dom.userNewRole.innerHTML = roleOptionsMarkup("user", allowAdminRoles);
+    dom.userNewRole.disabled = !collab.permissions.can_manage_users;
+  }
+  updateCreateUserSpacesVisibility();
+  const createPicker = ensureCreateUserSpacesPicker();
+  if (createPicker) {
+    createPicker.refreshOptions();
+  }
+  if (dom.usersAdminSection) {
+    dom.usersAdminSection.classList.toggle("hidden", !collab.permissions.can_manage_users);
+  }
+
+  if (collab.permissions.can_manage_users) {
+    const userData = await fetchUsers();
+    renderUsersList(userData.users || []);
+  } else if (dom.usersList) {
+    dom.usersList.innerHTML = "";
+  }
+  if (refreshSpaces && collab.isAuthenticated) {
+    await loadSpaceList({ showLoading: false });
+  }
+}
+
+async function openUsersModal() {
+  if (!dom.usersModal) {
+    return;
+  }
+  if (!collab.isAuthenticated) {
+    openLoginModal();
+    return;
+  }
+  if (!collab.permissions.can_manage_users) {
+    setSpaceError("You do not have permission to manage users.");
+    return;
+  }
+  closeSpacesModal();
+  closeProfileModal({ reopenSpaces: false });
+  closeJiraConfigModal({ reopenSpaces: false });
+  closeSlugRenameModal();
+  dom.usersModal.classList.remove("hidden");
+  applyAuthFromInputs({ markDirty: false });
+  try {
+    await loadUsersModalData();
+  } catch (error) {
+    setUsersError(formatSpaceError(error, "Unable to load user data."));
+  }
+}
+
+function closeUsersModal({ reopenSpaces = true } = {}) {
+  if (!dom.usersModal) {
+    return;
+  }
+  dom.usersModal.classList.add("hidden");
+  closeUserCreateModal();
+  closeUserPasswordModal();
+  closeUserDeleteModal();
+  if (reopenSpaces) {
+    openSpacesModal();
+  }
+}
+
+function openProfileLogoutModal() {
+  if (!dom.profileLogoutModal) {
+    return;
+  }
+  dom.profileLogoutModal.classList.remove("hidden");
+}
+
+function closeProfileLogoutModal() {
+  if (!dom.profileLogoutModal) {
+    return;
+  }
+  dom.profileLogoutModal.classList.add("hidden");
+}
+
+async function loadProfileModalData() {
+  clearProfileError();
+  const me = await fetchMe();
+  applySessionFromServer(me);
+  collab.isAuthenticated = true;
+  updateConnectButtonLabel();
+  if (dom.profileDisplayName) {
+    dom.profileDisplayName.value = collab.displayName || "";
+  }
+  if (dom.profileCurrentPassword) {
+    dom.profileCurrentPassword.value = "";
+  }
+  if (dom.profilePassword) {
+    dom.profilePassword.value = "";
+  }
+  if (dom.profilePasswordConfirm) {
+    dom.profilePasswordConfirm.value = "";
+  }
+}
+
+async function openProfileModal() {
+  if (!dom.profileModal) {
+    return;
+  }
+  if (!collab.isAuthenticated) {
+    openLoginModal();
+    return;
+  }
+  closeSpacesModal();
+  closeUsersModal({ reopenSpaces: false });
+  closeJiraConfigModal({ reopenSpaces: false });
+  closeProfileLogoutModal();
+  closeSlugRenameModal();
+  dom.profileModal.classList.remove("hidden");
+  applyAuthFromInputs({ markDirty: false });
+  try {
+    await loadProfileModalData();
+  } catch (error) {
+    setProfileError(formatSpaceError(error, "Unable to load profile."));
+  }
+}
+
+function closeProfileModal({ reopenSpaces = true } = {}) {
+  if (!dom.profileModal) {
+    return;
+  }
+  dom.profileModal.classList.add("hidden");
+  closeProfileLogoutModal();
+  if (reopenSpaces) {
+    openSpacesModal();
+  }
+}
+
+async function submitProfileUpdate() {
+  clearProfileError();
+  const previousDisplayName = collab.displayName || "";
+  const payload = {
+    display_name: dom.profileDisplayName?.value?.trim() || "",
+  };
+  const currentPassword = dom.profileCurrentPassword?.value || "";
+  const nextPassword = dom.profilePassword?.value || "";
+  const confirmPassword = dom.profilePasswordConfirm?.value || "";
+  if (nextPassword || confirmPassword) {
+    if (!nextPassword || !confirmPassword) {
+      setProfileError("Enter and confirm the new password.");
+      return;
+    }
+    if (!currentPassword) {
+      setProfileError("Current password is required.");
+      return;
+    }
+    if (nextPassword !== confirmPassword) {
+      setProfileError("Passwords do not match.");
+      return;
+    }
+    payload.current_password = currentPassword;
+    payload.password = nextPassword;
+  }
+  try {
+    const displayChanged = payload.display_name !== previousDisplayName;
+    const passwordChanged = Boolean(payload.password);
+    if (passwordChanged) {
+      await verifyCurrentPassword(currentPassword);
+    }
+    const data = await saveMyProfile(payload);
+    applySessionFromServer(data);
+    persistAuth({
+      username: collab.username,
+    });
+    if (dom.profilePassword) {
+      dom.profilePassword.value = "";
+    }
+    if (dom.profilePasswordConfirm) {
+      dom.profilePasswordConfirm.value = "";
+    }
+    if (dom.profileCurrentPassword) {
+      dom.profileCurrentPassword.value = "";
+    }
+    if (displayChanged) {
+      showToast("Display name updated.");
+    }
+    if (passwordChanged) {
+      showToast("Password changed.");
+    }
+    if (!displayChanged && !passwordChanged) {
+      showToast("Profile updated.");
+    }
+    closeProfileModal({ reopenSpaces: true });
+  } catch (error) {
+    setProfileError(formatSpaceError(error, "Unable to update profile."));
+  }
+}
+
+async function submitCreateUser() {
+  clearUsersError();
+  clearUserCreateError();
+  const username = dom.userNewUsername?.value?.trim() || "";
+  const password = dom.userNewPassword?.value || "";
+  const passwordConfirm = dom.userNewPasswordConfirm?.value || "";
+  if (!username || !password || !passwordConfirm) {
+    setUserCreateError("Username, password, and confirmation are required.");
+    return;
+  }
+  if (password !== passwordConfirm) {
+    setUserCreateError("Passwords do not match.");
+    return;
+  }
+  const payload = {
+    username,
+    display_name: dom.userNewDisplayName?.value?.trim() || username,
+    password,
+    role: dom.userNewRole?.value || "user",
+  };
+  if (roleUsesSpaces(payload.role)) {
+    const picker = ensureCreateUserSpacesPicker();
+    payload.spaces = picker ? picker.getValues() : [];
+  }
+  try {
+    await createUserRequest(payload);
+    if (dom.userNewUsername) {
+      dom.userNewUsername.value = "";
+    }
+    if (dom.userNewDisplayName) {
+      dom.userNewDisplayName.value = "";
+    }
+    if (dom.userNewPassword) {
+      dom.userNewPassword.value = "";
+    }
+    if (dom.userNewPasswordConfirm) {
+      dom.userNewPasswordConfirm.value = "";
+    }
+    const picker = ensureCreateUserSpacesPicker();
+    if (picker) {
+      picker.setValues([]);
+    }
+    updateCreateUserSpacesVisibility();
+    closeUserCreateModal();
+    await loadUsersModalData({ refreshSpaces: true });
+    showToast(`User '${username}' created.`);
+  } catch (error) {
+    setUserCreateError(formatSpaceError(error, "Unable to create user."));
+  }
+}
+
+function openSpaceCreateModal() {
+  if (!dom.spaceCreateModal || !collab.permissions.can_manage_spaces) {
+    return;
+  }
+  clearSpaceError();
+  if (dom.spaceNew) {
+    dom.spaceNew.value = "";
+  }
+  updateCreateSpaceButton();
+  dom.spaceCreateModal.classList.remove("hidden");
+  dom.spaceNew?.focus();
+}
+
+function closeSpaceCreateModal() {
+  if (!dom.spaceCreateModal) {
+    return;
+  }
+  dom.spaceCreateModal.classList.add("hidden");
+}
+
+function openSpaceFolderCreateModal() {
+  if (!dom.spaceFolderCreateModal || !collab.permissions.can_manage_spaces) {
+    return;
+  }
+  clearSpaceError();
+  if (dom.spaceFolderNew) {
+    dom.spaceFolderNew.value = "";
+  }
+  updateCreateFolderButton();
+  dom.spaceFolderCreateModal.classList.remove("hidden");
+  dom.spaceFolderNew?.focus();
+}
+
+function closeSpaceFolderCreateModal() {
+  if (!dom.spaceFolderCreateModal) {
+    return;
+  }
+  dom.spaceFolderCreateModal.classList.add("hidden");
+}
+
 function updateCreateSpaceButton() {
   if (!dom.spaceCreate || !dom.spaceNew) {
+    return;
+  }
+  if (!collab.permissions.can_manage_spaces) {
+    dom.spaceCreate.disabled = true;
     return;
   }
   const hasName = Boolean(dom.spaceNew.value.trim());
   dom.spaceCreate.disabled = !hasName;
 }
 
-function openDeleteModal(spaceId) {
+function updateCreateFolderButton() {
+  if (!dom.spaceFolderCreate || !dom.spaceFolderNew) {
+    return;
+  }
+  if (!collab.permissions.can_manage_spaces) {
+    dom.spaceFolderCreate.disabled = true;
+    return;
+  }
+  const hasName = Boolean(dom.spaceFolderNew.value.trim());
+  dom.spaceFolderCreate.disabled = !hasName;
+}
+
+function getCurrentFolderForCreate() {
+  const folderId =
+    typeof collab.openSpaceFolderId === "string"
+      ? collab.openSpaceFolderId.trim()
+      : "";
+  return folderId || "";
+}
+
+async function submitCreateSpace() {
+  if (!collab.permissions.can_manage_spaces) {
+    return;
+  }
+  const name = dom.spaceNew?.value?.trim() || "";
+  if (!name) {
+    updateCreateSpaceButton();
+    return;
+  }
+  const targetFolder = getCurrentFolderForCreate();
+  if (isPersonalFolderId(targetFolder)) {
+    setSpaceError("Cannot create a shared space in the personal folder.");
+    return;
+  }
+  try {
+    applyAuthFromInputs({ markDirty: false });
+    await createSpace(name);
+    if (targetFolder) {
+      await moveSpaceToFolderRequest(name, targetFolder);
+    }
+    if (dom.spaceNew) {
+      dom.spaceNew.value = "";
+    }
+    clearSpaceError();
+    updateCreateSpaceButton();
+    closeSpaceCreateModal();
+    await loadSpaceList({ showLoading: false });
+    showToast(`Space '${buildSpacePath(name, targetFolder)}' created.`);
+  } catch (error) {
+    setSpaceError(formatSpaceError(error, "Unable to create space."));
+  }
+}
+
+async function submitCreateFolder() {
+  if (!collab.permissions.can_manage_spaces) {
+    return;
+  }
+  const name = dom.spaceFolderNew?.value?.trim() || "";
+  if (!name) {
+    updateCreateFolderButton();
+    return;
+  }
+  const currentFolder = getCurrentFolderForCreate();
+  if (isPersonalFolderId(currentFolder)) {
+    setSpaceError("Cannot create folders inside the personal folder.");
+    return;
+  }
+  const targetName = currentFolder ? `${currentFolder}/${name}` : name;
+  try {
+    applyAuthFromInputs({ markDirty: false });
+    await createSpaceFolderRequest(targetName);
+    collab.openSpaceFolderId = targetName;
+    if (dom.spaceFolderNew) {
+      dom.spaceFolderNew.value = "";
+    }
+    clearSpaceError();
+    updateCreateFolderButton();
+    closeSpaceFolderCreateModal();
+    await loadSpaceList({ showLoading: false });
+    showToast(`Folder '${targetName}' created.`);
+  } catch (error) {
+    setSpaceError(formatSpaceError(error, "Unable to create folder."));
+  }
+}
+
+async function confirmDeleteFolder() {
+  if (!pendingDeleteFolder) {
+    closeFolderDeleteModal();
+    return;
+  }
+  const folderToDelete = pendingDeleteFolder;
+  try {
+    applyAuthFromInputs({ markDirty: false });
+    await deleteSpaceFolderRequest(folderToDelete);
+    closeFolderDeleteModal();
+    clearSpaceError();
+    await loadSpaceList({ showLoading: false });
+    showToast(`Folder '${folderToDelete}' deleted.`);
+  } catch (error) {
+    closeFolderDeleteModal();
+    setSpaceError(formatSpaceError(error, "Unable to delete folder."));
+  }
+}
+
+function openDeleteModal(spaceRef) {
   if (!dom.deleteModal || !dom.deleteModalMessage) {
     return;
   }
-  pendingDeleteSpace = spaceId;
-  dom.deleteModalMessage.textContent = `Delete space "${spaceId}"? This cannot be undone.`;
+  const parsed = (
+    typeof spaceRef === "string"
+      ? { id: spaceRef.trim(), path: spaceRef.trim() }
+      : {
+        id: typeof spaceRef?.id === "string" ? spaceRef.id.trim() : "",
+        path: typeof spaceRef?.path === "string" && spaceRef.path.trim()
+          ? spaceRef.path.trim()
+          : buildSpacePath(spaceRef?.id, spaceRef?.folder),
+      }
+  );
+  if (!parsed.id) {
+    return;
+  }
+  pendingDeleteSpace = parsed;
+  dom.deleteModalMessage.textContent = `Delete space "${parsed.path || parsed.id}"? This cannot be undone.`;
   dom.deleteModal.classList.remove("hidden");
 }
 
@@ -1965,6 +4583,23 @@ function closeDeleteModal() {
   }
   dom.deleteModal.classList.add("hidden");
   pendingDeleteSpace = null;
+}
+
+function openFolderDeleteModal(folderId) {
+  if (!dom.folderDeleteModal || !dom.folderDeleteMessage) {
+    return;
+  }
+  pendingDeleteFolder = folderId;
+  dom.folderDeleteMessage.textContent = `Delete folder "${folderId}"? Only empty folders can be deleted.`;
+  dom.folderDeleteModal.classList.remove("hidden");
+}
+
+function closeFolderDeleteModal() {
+  if (!dom.folderDeleteModal) {
+    return;
+  }
+  dom.folderDeleteModal.classList.add("hidden");
+  pendingDeleteFolder = null;
 }
 
 function formatSpaceError(error, fallback) {
@@ -1997,7 +4632,7 @@ async function loadSpaceText(spaceId) {
     syncEditorState();
     closeSpacesModal();
   } catch {
-    alert("Unable to load space. Check the credentials.");
+    showToast("Unable to load space. Check the credentials.", "error");
   }
 }
 
@@ -2005,32 +4640,75 @@ async function attemptLogin() {
   applyAuthFromInputs({ markDirty: false });
   if (dom.loginError) {
     dom.loginError.classList.add("hidden");
+    dom.loginError.textContent = "";
   }
   try {
-    await fetchSpaces();
+    const credentials = readAuthInputs();
+    if (!credentials.username || !credentials.authToken) {
+      throw new Error("Unauthorized");
+    }
+    const result = await loginRequest(credentials.username, credentials.authToken);
+    applySessionFromServer(result);
     collab.isAuthenticated = true;
+    collab.authToken = "";
+    if (dom.loginPassword) {
+      dom.loginPassword.value = "";
+    }
+    persistAuth({
+      username: collab.username,
+    });
     updateConnectButtonLabel();
     closeLoginModal();
     openSpacesModal();
+    showToast("Logged in.");
   } catch (error) {
     collab.isAuthenticated = false;
+    collab.permissions = normalizePermissions(null);
+    updateRoleVisibility();
     updateConnectButtonLabel();
     if (dom.loginError) {
-      const message =
-        error instanceof Error && error.message === "Unable to reach the backend."
-          ? "Backend is not running."
-          : "Invalid credentials.";
-      dom.loginError.textContent = message;
-      dom.loginError.classList.remove("hidden");
+      dom.loginError.classList.add("hidden");
+      dom.loginError.textContent = "";
     }
+    const message =
+      error instanceof Error && error.message === "Unable to reach the backend."
+        ? "Backend is not running."
+        : "Invalid credentials.";
+    showToast(message, "error");
   }
 }
 
-function logout() {
+async function restoreSessionFromCookie() {
+  try {
+    const me = await fetchMe();
+    applySessionFromServer(me);
+    collab.isAuthenticated = true;
+    collab.authToken = "";
+    updateConnectButtonLabel();
+    const allowedSpaces = Array.isArray(me.spaces)
+      ? me.spaces.filter((spaceId) => typeof spaceId === "string")
+      : [];
+    const lastSpace =
+      typeof me.last_space === "string" ? me.last_space.trim() : "";
+    if (lastSpace && allowedSpaces.includes(lastSpace)) {
+      connectToSpace(lastSpace);
+    }
+  } catch {
+    collab.isAuthenticated = false;
+    collab.permissions = normalizePermissions(null);
+    updateRoleVisibility();
+    updateConnectButtonLabel();
+  }
+}
+
+async function logout() {
+  await logoutRequest();
   disconnectSpace();
   collab.isAuthenticated = false;
   collab.username = "";
   collab.displayName = "";
+  collab.role = "user";
+  collab.permissions = normalizePermissions(null);
   collab.authToken = AUTH_TOKEN;
   collab.identity = getCollabIdentity("user");
   try {
@@ -2039,8 +4717,13 @@ function logout() {
     // Ignore storage failures.
   }
   updateConnectButtonLabel();
+  updateRoleVisibility();
+  closeProfileModal({ reopenSpaces: false });
+  closeJiraConfigModal({ reopenSpaces: false });
+  closeUsersModal({ reopenSpaces: false });
   closeSpacesModal();
   openLoginModal();
+  showToast("Logged out.");
 }
 
 function spaceResponseError(response, fallback) {
@@ -2061,6 +4744,28 @@ function spaceResponseError(response, fallback) {
   }
   if (response.status === 409) {
     return "Space name already exists.";
+  }
+  return fallback;
+}
+
+function userResponseError(response, fallback) {
+  if (!response) {
+    return fallback;
+  }
+  if (response.status === 400) {
+    return "Invalid user data.";
+  }
+  if (response.status === 401) {
+    return "Invalid credentials.";
+  }
+  if (response.status === 403) {
+    return "Not allowed.";
+  }
+  if (response.status === 404) {
+    return "User not found.";
+  }
+  if (response.status === 409) {
+    return "User already exists.";
   }
   return fallback;
 }
@@ -2160,6 +4865,7 @@ function openLoginModal() {
     dom.loginError.classList.add("hidden");
   }
   initializeAuthInputs();
+  closeSlugRenameModal();
   dom.loginModal.classList.remove("hidden");
 }
 
@@ -2180,11 +4886,22 @@ function openSpacesModal() {
   }
   closeLoginModal();
   closeDeleteModal();
+  closeProfileModal({ reopenSpaces: false });
+  closeJiraConfigModal({ reopenSpaces: false });
+  closeUsersModal({ reopenSpaces: false });
+  closeSpaceCreateModal();
+  closeSpaceFolderCreateModal();
+  closeFolderDeleteModal();
+  closeSlugRenameModal();
   dom.spacesModal.classList.remove("hidden");
   applyAuthFromInputs({ markDirty: false });
   clearSpaceError();
+  updateRoleVisibility();
   updateCreateSpaceButton();
+  updateCreateFolderButton();
   collab.lastSpaceSnapshot = "";
+  collab.openSpaceFolderId = null;
+  collab.openSpaceFolderInitialized = false;
   loadSpaceList({ showLoading: true });
   if (collab.spacePoller) {
     clearInterval(collab.spacePoller);
@@ -2199,6 +4916,10 @@ function closeSpacesModal() {
     return;
   }
   dom.spacesModal.classList.add("hidden");
+  closeSlugRenameModal();
+  closeSpaceCreateModal();
+  closeSpaceFolderCreateModal();
+  closeFolderDeleteModal();
   if (collab.spacePoller) {
     clearInterval(collab.spacePoller);
     collab.spacePoller = null;
@@ -2218,6 +4939,7 @@ function updateConnectButtonLabel() {
     dom.connectButton.title = "Login";
     dom.connectButton.setAttribute("aria-label", "Login");
   }
+  updateRoleVisibility();
   updateBoardConnectionLabel();
 }
 
@@ -2237,6 +4959,7 @@ function disconnectSpace() {
     clearTimeout(collab.saveTimer);
   }
   collab.spaceId = null;
+  collab.spacePath = "";
   collab.provider = null;
   collab.ydoc = null;
   collab.ytext = null;
@@ -2331,10 +5054,12 @@ function scheduleCollabSync() {
   });
 }
 
-async function connectToSpace(spaceId) {
+async function connectToSpace(spaceId, spacePath = "") {
   if (!spaceId || !dom.editor) {
     return;
   }
+  const normalizedPath =
+    typeof spacePath === "string" && spacePath.trim() ? spacePath.trim() : spaceId;
   applyAuthFromInputs({ markDirty: false });
   closeSpacesModal();
   const { Y, WebsocketProvider, TextAreaBinding } = await loadCollabModules();
@@ -2347,8 +5072,13 @@ async function connectToSpace(spaceId) {
   collab.synced = false;
   setConnectionStatus("connecting");
   startIdleWatch();
+  const wsParams = {};
+  if (collab.username && collab.authToken) {
+    wsParams.user = collab.username;
+    wsParams.pass = collab.authToken;
+  }
   const provider = new WebsocketProvider(WS_BASE, spaceId, ydoc, {
-    params: { user: collab.username || "user", pass: collab.authToken || AUTH_TOKEN },
+    params: wsParams,
   });
   const identity =
     collab.identity ||
@@ -2373,6 +5103,7 @@ async function connectToSpace(spaceId) {
   }
 
   collab.spaceId = spaceId;
+  collab.spacePath = normalizedPath;
   collab.provider = provider;
   collab.ydoc = ydoc;
   collab.ytext = ytext;
@@ -2545,9 +5276,124 @@ if (dom.loginSubmit) {
   });
 }
 
-if (dom.logoutButton) {
-  dom.logoutButton.addEventListener("click", () => {
+if (dom.profileButton) {
+  dom.profileButton.addEventListener("click", () => {
+    openProfileModal();
+  });
+}
+
+if (dom.jiraConfigButton) {
+  dom.jiraConfigButton.addEventListener("click", () => {
+    openJiraConfigModal();
+  });
+}
+
+if (dom.usersButton) {
+  dom.usersButton.addEventListener("click", () => {
+    openUsersModal();
+  });
+}
+
+if (dom.jiraConfigClose) {
+  dom.jiraConfigClose.addEventListener("click", () => {
+    closeJiraConfigModal({ reopenSpaces: true });
+  });
+}
+
+if (dom.jiraConfigCancel) {
+  dom.jiraConfigCancel.addEventListener("click", () => {
+    closeJiraConfigModal({ reopenSpaces: true });
+  });
+}
+
+if (dom.jiraConfigSave) {
+  dom.jiraConfigSave.addEventListener("click", () => {
+    submitJiraConfig();
+  });
+}
+
+if (dom.usersClose) {
+  dom.usersClose.addEventListener("click", () => {
+    closeUsersModal({ reopenSpaces: true });
+  });
+}
+
+if (dom.profileClose) {
+  dom.profileClose.addEventListener("click", () => {
+    closeProfileModal({ reopenSpaces: true });
+  });
+}
+
+if (dom.profileSave) {
+  dom.profileSave.addEventListener("click", () => {
+    submitProfileUpdate();
+  });
+}
+
+if (dom.profileLogoutCancel) {
+  dom.profileLogoutCancel.addEventListener("click", () => {
+    closeProfileLogoutModal();
+  });
+}
+
+if (dom.profileLogoutConfirm) {
+  dom.profileLogoutConfirm.addEventListener("click", () => {
+    closeProfileLogoutModal();
     logout();
+  });
+}
+
+if (dom.userCreate) {
+  dom.userCreate.addEventListener("click", () => {
+    submitCreateUser();
+  });
+}
+
+if (dom.userOpenCreate) {
+  dom.userOpenCreate.addEventListener("click", () => {
+    openUserCreateModal();
+  });
+}
+
+if (dom.userNewRole) {
+  dom.userNewRole.addEventListener("change", () => {
+    updateCreateUserSpacesVisibility();
+  });
+}
+
+if (dom.userCreateClose) {
+  dom.userCreateClose.addEventListener("click", () => {
+    closeUserCreateModal();
+  });
+}
+
+if (dom.userPasswordClose) {
+  dom.userPasswordClose.addEventListener("click", () => {
+    closeUserPasswordModal();
+  });
+}
+
+if (dom.userPasswordCancel) {
+  dom.userPasswordCancel.addEventListener("click", () => {
+    closeUserPasswordModal();
+  });
+}
+
+if (dom.userPasswordSave) {
+  dom.userPasswordSave.addEventListener("click", () => {
+    submitUserPasswordChange();
+  });
+}
+
+if (dom.userDeleteCancel) {
+  dom.userDeleteCancel.addEventListener("click", () => {
+    closeUserDeleteModal();
+  });
+}
+
+if (dom.userDeleteConfirm) {
+  dom.userDeleteConfirm.addEventListener("click", () => {
+    confirmDeleteUser();
   });
 }
 
@@ -2563,6 +5409,12 @@ if (dom.spacesModalClose) {
   });
 }
 
+if (dom.spacesLogout) {
+  dom.spacesLogout.addEventListener("click", () => {
+    openProfileLogoutModal();
+  });
+}
+
 if (dom.taskEditCancel) {
   dom.taskEditCancel.addEventListener("click", () => {
     closeTaskEditModal();
@@ -2572,6 +5424,39 @@ if (dom.taskEditCancel) {
 if (dom.taskEditSave) {
   dom.taskEditSave.addEventListener("click", () => {
     saveTaskEditModal();
+  });
+}
+
+if (dom.graphAddTask) {
+  dom.graphAddTask.addEventListener("click", () => {
+    openTaskCreateModal();
+  });
+}
+
+if (dom.slugRenameClose) {
+  dom.slugRenameClose.addEventListener("click", () => {
+    closeSlugRenameModal();
+  });
+}
+
+if (dom.slugRenameCancel) {
+  dom.slugRenameCancel.addEventListener("click", () => {
+    closeSlugRenameModal();
+  });
+}
+
+if (dom.slugRenameSave) {
+  dom.slugRenameSave.addEventListener("click", () => {
+    submitSlugRename();
+  });
+}
+
+if (dom.slugRenameNew) {
+  dom.slugRenameNew.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submitSlugRename();
+    }
   });
 }
 
@@ -2651,39 +5536,10 @@ if (dom.taskDeleteCancel) {
 }
 
 if (dom.loginModal) {
-  dom.loginModal.addEventListener("click", (event) => {
-    if (event.target === dom.loginModal) {
-      closeLoginModal();
-    }
-  });
   dom.loginModal.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       attemptLogin();
-    }
-  });
-}
-
-if (dom.spacesModal) {
-  dom.spacesModal.addEventListener("click", (event) => {
-    if (event.target === dom.spacesModal) {
-      closeSpacesModal();
-    }
-  });
-}
-
-if (dom.deleteModal) {
-  dom.deleteModal.addEventListener("click", (event) => {
-    if (event.target === dom.deleteModal) {
-      closeDeleteModal();
-    }
-  });
-}
-
-if (dom.taskDeleteModal) {
-  dom.taskDeleteModal.addEventListener("click", (event) => {
-    if (event.target === dom.taskDeleteModal) {
-      closeTaskDeleteModal();
     }
   });
 }
@@ -2740,8 +5596,18 @@ if (dom.taskTrash) {
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    closeSlugRenameModal();
     closeLoginModal();
     closeSpacesModal();
+    closeSpaceCreateModal();
+    closeSpaceFolderCreateModal();
+    closeFolderDeleteModal();
+    closeProfileModal({ reopenSpaces: false });
+    closeJiraConfigModal({ reopenSpaces: false });
+    closeUsersModal({ reopenSpaces: false });
+    closeUserCreateModal();
+    closeUserPasswordModal();
+    closeUserDeleteModal();
     closeDeleteModal();
     closeTaskEditModal();
     closeTaskDeleteModal();
@@ -2766,32 +5632,50 @@ window.addEventListener("beforeunload", () => {
   }
 });
 
-if (dom.spaceCreate && dom.spaceNew) {
-  dom.spaceCreate.addEventListener("click", async () => {
-    try {
-      applyAuthFromInputs({ markDirty: false });
-      await createSpace(dom.spaceNew.value);
-      dom.spaceNew.value = "";
-      clearSpaceError();
-      updateCreateSpaceButton();
-      await loadSpaceList({ showLoading: false });
-    } catch (error) {
-      setSpaceError(formatSpaceError(error, "Unable to create space."));
-    }
+if (dom.spaceOpenCreate) {
+  dom.spaceOpenCreate.addEventListener("click", () => {
+    openSpaceCreateModal();
   });
-  dom.spaceNew.addEventListener("keydown", async (event) => {
+}
+
+if (dom.spaceOpenFolderCreate) {
+  dom.spaceOpenFolderCreate.addEventListener("click", () => {
+    openSpaceFolderCreateModal();
+  });
+}
+
+if (dom.spaceCreateClose) {
+  dom.spaceCreateClose.addEventListener("click", () => {
+    closeSpaceCreateModal();
+  });
+}
+
+if (dom.spaceCreateCancel) {
+  dom.spaceCreateCancel.addEventListener("click", () => {
+    closeSpaceCreateModal();
+  });
+}
+
+if (dom.spaceFolderCreateClose) {
+  dom.spaceFolderCreateClose.addEventListener("click", () => {
+    closeSpaceFolderCreateModal();
+  });
+}
+
+if (dom.spaceFolderCreateCancel) {
+  dom.spaceFolderCreateCancel.addEventListener("click", () => {
+    closeSpaceFolderCreateModal();
+  });
+}
+
+if (dom.spaceCreate && dom.spaceNew) {
+  dom.spaceCreate.addEventListener("click", () => {
+    submitCreateSpace();
+  });
+  dom.spaceNew.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      try {
-        applyAuthFromInputs({ markDirty: false });
-        await createSpace(dom.spaceNew.value);
-        dom.spaceNew.value = "";
-        clearSpaceError();
-        updateCreateSpaceButton();
-        await loadSpaceList({ showLoading: false });
-      } catch (error) {
-        setSpaceError(formatSpaceError(error, "Unable to create space."));
-      }
+      submitCreateSpace();
     }
   });
   dom.spaceNew.addEventListener("input", () => {
@@ -2801,9 +5685,38 @@ if (dom.spaceCreate && dom.spaceNew) {
   updateCreateSpaceButton();
 }
 
+if (dom.spaceFolderCreate && dom.spaceFolderNew) {
+  dom.spaceFolderCreate.addEventListener("click", () => {
+    submitCreateFolder();
+  });
+  dom.spaceFolderNew.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submitCreateFolder();
+    }
+  });
+  dom.spaceFolderNew.addEventListener("input", () => {
+    clearSpaceError();
+    updateCreateFolderButton();
+  });
+  updateCreateFolderButton();
+}
+
 if (dom.deleteCancel) {
   dom.deleteCancel.addEventListener("click", () => {
     closeDeleteModal();
+  });
+}
+
+if (dom.folderDeleteCancel) {
+  dom.folderDeleteCancel.addEventListener("click", () => {
+    closeFolderDeleteModal();
+  });
+}
+
+if (dom.folderDeleteConfirm) {
+  dom.folderDeleteConfirm.addEventListener("click", () => {
+    confirmDeleteFolder();
   });
 }
 
@@ -2815,8 +5728,9 @@ if (dom.deleteConfirm) {
     }
     const target = pendingDeleteSpace;
     try {
-      await deleteSpace(target);
+      await deleteSpace(target.id);
       clearSpaceError();
+      showToast(`Space '${target.path || target.id}' deleted.`);
     } catch (error) {
       setSpaceError(formatSpaceError(error, "Unable to remove space."));
     }
@@ -2831,13 +5745,6 @@ if (dom.loginUsername) {
   });
 }
 
-if (dom.loginDisplayName) {
-  dom.loginDisplayName.addEventListener("input", () => {
-    applyAuthFromInputs();
-    dom.loginError?.classList.add("hidden");
-  });
-}
-
 if (dom.loginPassword) {
   dom.loginPassword.addEventListener("input", () => {
     applyAuthFromInputs();
@@ -2847,6 +5754,22 @@ if (dom.loginPassword) {
 
 dom.searchInput.addEventListener("input", () => {
   state.searchQuery = dom.searchInput.value;
+  canvasController.renderGraph();
+  buildKanban();
+  updateClearFiltersVisibility();
+});
+
+dom.searchInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") {
+    return;
+  }
+  if (!dom.searchInput.value && !state.searchQuery) {
+    return;
+  }
+  event.preventDefault();
+  event.stopPropagation();
+  dom.searchInput.value = "";
+  state.searchQuery = "";
   canvasController.renderGraph();
   buildKanban();
   updateClearFiltersVisibility();
@@ -2896,6 +5819,33 @@ function scheduleGraphRender() {
   });
 }
 
+function setLegendHiddenForRightSnap(leftPercent, maxPercent) {
+  if (!dom.legend) {
+    return;
+  }
+  const shouldHide = Number.isFinite(leftPercent)
+    && Number.isFinite(maxPercent)
+    && leftPercent >= (maxPercent - 0.01);
+  document.documentElement.toggleAttribute("data-legend-hidden", shouldHide);
+}
+
+function updateLegendHiddenFromLayout() {
+  const rect = document.body.getBoundingClientRect();
+  if (!rect.width) {
+    return;
+  }
+  const dividerWidth = Math.max(1, dom.divider?.offsetWidth || 8);
+  const maxPercent = Math.max(0, ((rect.width - dividerWidth) / rect.width) * 100);
+  const rawLeftWidth = getComputedStyle(document.documentElement)
+    .getPropertyValue("--left-width")
+    .trim();
+  const leftPercent = Number.parseFloat(rawLeftWidth);
+  setLegendHiddenForRightSnap(
+    Number.isFinite(leftPercent) ? leftPercent : 45,
+    maxPercent
+  );
+}
+
 dom.divider.addEventListener("mousedown", () => {
   resizing = true;
   dom.divider.classList.add("dragging");
@@ -2933,9 +5883,20 @@ window.addEventListener("mousemove", (event) => {
     return;
   }
   const rect = document.body.getBoundingClientRect();
-  const percentage = (event.clientX / rect.width) * 100;
-  const clamped = Math.min(70, Math.max(25, percentage));
+  const dividerWidth = Math.max(1, dom.divider?.offsetWidth || 8);
+  const relativeX = event.clientX - rect.left;
+  const percentage = (relativeX / rect.width) * 100;
+  const maxPercent = Math.max(0, ((rect.width - dividerWidth) / rect.width) * 100);
+  const edgeSnapPx = 36;
+  const maxX = Math.max(0, rect.width - dividerWidth);
+  let clamped = Math.min(maxPercent, Math.max(0, percentage));
+  if (relativeX <= edgeSnapPx) {
+    clamped = 0;
+  } else if (relativeX >= maxX - edgeSnapPx) {
+    clamped = maxPercent;
+  }
   document.documentElement.style.setProperty("--left-width", `${clamped}%`);
+  setLegendHiddenForRightSnap(clamped, maxPercent);
   scheduleGraphRender();
 });
 
@@ -2958,10 +5919,16 @@ window.addEventListener("mouseup", () => {
   scheduleGraphRender();
 });
 
-window.addEventListener("resize", scheduleGraphRender);
+window.addEventListener("resize", () => {
+  updateLegendHiddenFromLayout();
+  scheduleGraphRender();
+});
 
 state.kanbanGroupBy = getStoredKanbanGroup();
 updateKanbanGroupButtons();
 
+initializeSecretToggles();
 updateConnectButtonLabel();
+updateLegendHiddenFromLayout();
+restoreSessionFromCookie();
 sync();

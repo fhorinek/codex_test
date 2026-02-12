@@ -409,6 +409,172 @@ function handleEnter(view) {
   return true;
 }
 
+function checkboxTokenAtPosition(doc, pos) {
+  if (!doc || typeof pos !== "number" || pos < 0) {
+    return null;
+  }
+  const safePos = Math.max(0, Math.min(pos, doc.length));
+  const line = doc.lineAt(safePos);
+  const text = line.text;
+  if (!text) {
+    return null;
+  }
+  const checkboxMatch = text.match(/^(\s*)\[([ xX])\](?=\s|$)/);
+  if (!checkboxMatch) {
+    return null;
+  }
+  const tokenStart = checkboxMatch[1].length;
+  const tokenEnd = tokenStart + 3;
+  const relativePos = safePos - line.from;
+  if (relativePos < tokenStart || relativePos >= tokenEnd) {
+    return null;
+  }
+  const nextValue = checkboxMatch[2].toLowerCase() === "x" ? " " : "x";
+  return {
+    from: line.from + tokenStart,
+    to: line.from + tokenEnd,
+    insert: `[${nextValue}]`,
+    cursor: line.from + tokenStart + 1,
+  };
+}
+
+function taskTitleAtPosition(doc, pos) {
+  if (!doc || typeof pos !== "number" || pos < 0) {
+    return null;
+  }
+  const safePos = Math.max(0, Math.min(pos, doc.length));
+  const line = doc.lineAt(safePos);
+  const text = line.text;
+  if (!text) {
+    return null;
+  }
+  const relativePos = safePos - line.from;
+  let cursor = 0;
+  while (cursor < text.length && /\s/.test(text[cursor])) {
+    cursor += 1;
+  }
+  if (text[cursor] !== "%") {
+    return null;
+  }
+  cursor += 1;
+  while (cursor < text.length && /\s/.test(text[cursor])) {
+    cursor += 1;
+  }
+  const jiraMatch = text.slice(cursor).match(/^\[JIRA:[A-Z][A-Z0-9]+-\d+\]/);
+  if (jiraMatch) {
+    cursor += jiraMatch[0].length;
+    while (cursor < text.length && /\s/.test(text[cursor])) {
+      cursor += 1;
+    }
+  }
+  const titleStart = cursor;
+  let titleEnd = text.length;
+  while (titleEnd > titleStart && /\s/.test(text[titleEnd - 1])) {
+    titleEnd -= 1;
+  }
+  if (titleEnd <= titleStart) {
+    return null;
+  }
+  if (relativePos < titleStart || relativePos >= titleEnd) {
+    return null;
+  }
+  return {
+    lineIndex: line.number - 1,
+    from: line.from + titleStart,
+    to: line.from + titleEnd,
+    title: text.slice(titleStart, titleEnd),
+  };
+}
+
+function slugTokenAtPosition(doc, pos) {
+  if (!doc || typeof pos !== "number" || pos < 0) {
+    return null;
+  }
+  const safePos = Math.max(0, Math.min(pos, doc.length));
+  const line = doc.lineAt(safePos);
+  const text = line.text;
+  if (!text) {
+    return null;
+  }
+  const relativePos = safePos - line.from;
+  const probePos = Math.min(Math.max(relativePos, 0), Math.max(0, text.length - 1));
+  const tokenRegex = /(^|\s)([#@!])([A-Za-z0-9_-]+)/g;
+  let match;
+  while ((match = tokenRegex.exec(text)) !== null) {
+    const prefixOffset = match.index + match[1].length;
+    const tokenStart = line.from + prefixOffset;
+    const slugStart = tokenStart + 1;
+    const tokenEnd = slugStart + match[3].length;
+    if (line.from + probePos < slugStart || line.from + probePos >= tokenEnd) {
+      continue;
+    }
+    const prefix = match[2];
+    return {
+      type: prefix === "#" ? "tag" : (prefix === "@" ? "person" : "state"),
+      prefix,
+      slug: match[3],
+      token: `${prefix}${match[3]}`,
+      from: tokenStart,
+      to: tokenEnd,
+    };
+  }
+  const lineIndent = text.match(/^\s*/)?.[0].length || 0;
+  if (lineIndent !== 8) {
+    return null;
+  }
+  let currentSection = "";
+  for (let lineNumber = 1; lineNumber <= line.number; lineNumber += 1) {
+    const configLine = doc.line(lineNumber).text;
+    if (/^\s*%/.test(configLine)) {
+      break;
+    }
+    const trimmed = configLine.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const indent = configLine.match(/^\s*/)?.[0].length || 0;
+    if (indent === 4 && trimmed.endsWith(":")) {
+      currentSection = trimmed.slice(0, -1).trim().toLowerCase();
+    }
+  }
+  let kind = null;
+  let prefix = "";
+  if (currentSection === "tags") {
+    kind = "tag";
+    prefix = "#";
+  } else if (currentSection === "people") {
+    kind = "person";
+    prefix = "@";
+  } else if (currentSection === "states") {
+    kind = "state";
+    prefix = "!";
+  }
+  if (!kind) {
+    return null;
+  }
+  const configSlugMatch = text.match(/^\s*([A-Za-z0-9_-]+)(?=\s*:|$)/);
+  const configSlug = configSlugMatch?.[1] || "";
+  if (!configSlug) {
+    return null;
+  }
+  const slugStart = text.indexOf(configSlug);
+  if (slugStart < 0) {
+    return null;
+  }
+  const slugEnd = slugStart + configSlug.length;
+  if (probePos < slugStart || probePos >= slugEnd) {
+    return null;
+  }
+  return {
+    type: kind,
+    prefix,
+    slug: configSlug,
+    token: `${prefix}${configSlug}`,
+    from: line.from + slugStart,
+    to: line.from + slugEnd,
+  };
+}
+
 export function createEditor({
   state,
   dom,
@@ -417,6 +583,8 @@ export function createEditor({
   onLocalChange,
   onSelectionChange,
   onFocusChange,
+  onTaskTitleDoubleClick,
+  onTokenDoubleClick,
 }) {
   const textarea = dom.editor;
   const host = dom.editorHost;
@@ -578,6 +746,36 @@ export function createEditor({
     if (typeof onFocusChange === "function") {
       onFocusChange(false);
     }
+  });
+
+  view.dom.addEventListener("dblclick", (event) => {
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+    if (typeof pos !== "number") {
+      return;
+    }
+    const checkbox = checkboxTokenAtPosition(view.state.doc, pos);
+    if (checkbox) {
+      event.preventDefault();
+      view.dispatch({
+        changes: { from: checkbox.from, to: checkbox.to, insert: checkbox.insert },
+        selection: { anchor: checkbox.cursor },
+      });
+      return;
+    }
+    const taskTitle = taskTitleAtPosition(view.state.doc, pos);
+    if (taskTitle && typeof onTaskTitleDoubleClick === "function") {
+      event.preventDefault();
+      onTaskTitleDoubleClick(taskTitle);
+      return;
+    }
+    if (typeof onTokenDoubleClick !== "function") {
+      return;
+    }
+    const token = slugTokenAtPosition(view.state.doc, pos);
+    if (!token) {
+      return;
+    }
+    onTokenDoubleClick(token);
   });
 
   const updateSelectedLine = () => {

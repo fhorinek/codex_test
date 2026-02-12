@@ -2,119 +2,154 @@
 
 ## Overview
 
-This app turns a lightweight task script into an interactive graph and kanban board. You edit text on the left, and the right side updates live.
+Task Script Board uses a text-first workflow:
 
-## Editor Toolbar
+- left pane: code editor
+- right pane: graph + kanban
+- collaboration: shared spaces with access control
 
-The top toolbar shows the board name and buttons for undo, redo, load, save, format, theme, and fullscreen.
+Everything is synchronized live.
 
-- Undo/Redo use the editor history.
-- Load opens a `.txt` file from disk.
-- Save downloads the current script as a `.txt` file.
-- Format removes extra blank lines/trailing whitespace and moves the `!state` token to the first position after the task name.
-- Theme toggles light/dark mode and remembers your choice.
-- Connect opens the spaces modal for collaboration.
+## Toolbar
 
-## Folding & Errors
+Top toolbar buttons:
 
-- Config headers and task blocks can be folded using the gutter.
-- If a task contains more than one `!state`, the extras are underlined and the line is highlighted as an error.
+- Undo / Redo
+- Load `.txt` from disk
+- Save current script as `.txt`
+- Format script
+- Connect/Login
+- Theme toggle
+- Fullscreen toggle
 
-## Writing Tasks
+## Login and Sessions
 
-Each task starts with a `%` line. Subtasks are indented by 4 spaces.
+- Click **Connect** and log in with username/password.
+- A persistent session cookie is created.
+- Last opened space is remembered and restored after login.
+- Logout is available from the Spaces modal.
 
-```text
-% Launch sprint board
-    % Define parsing rules
-```
+## Spaces Modal (Tabs)
 
-Descriptions are free-form lines after the task line until a blank line.
+The Spaces modal title is **Choose project space** and includes tabs:
 
-## Tags, People, and References
+- Spaces
+- Profile
+- Jira
+- User management
 
-Add tags, people, and references anywhere in the description lines.
+Modals close with their close button or `Esc`.
 
-```text
-% Launch sprint board
-#productivity #planning !todo
-@maya @luis
-**Goal:** Turn raw task scripts into a visual map. {Refinement}
-```
+## Roles
 
-## Default States
+- `admin`: all spaces, manage spaces, Jira settings, user management.
+- `manager`: all spaces, user management.
+- `user`: only assigned access paths.
 
-If the header does not define states, the board uses these defaults:
+Every user has a personal space in `personal/<username>`.
+Only that user and admins can access it.
 
-- `!todo` labeled `TODO`
-- `!inprogress` labeled `In progress`
-- `!done` labeled `Done`
+## Spaces and Folder Tree
 
-## Automatic Colors
+- Folder tree is filesystem-backed under `backend/spaces/`.
+- Folders are collapsible and only one branch is open at a time.
+- Active folder/space is highlighted.
+- Add-space and add-folder actions create items in the currently open folder.
+- Spaces can be dragged:
+    - into folders (open or closed)
+    - onto another space (moves to that space's folder)
+    - to root via the root drop target
+- Space rename/move updates path-based permissions.
+- Deleting a space disconnects active users first, then removes the space and ystore.
 
-When a tag, person, or state does not have an explicit color, the app assigns one automatically.
+## User Management
 
-## Config Header
+Available to admins and managers.
 
-The optional header appears before the first task and lets you define board name, states, people, and tags.
+- Create user from dedicated modal.
+- Edit display name, role, and access paths.
+- Change password via dedicated modal (new + repeat).
+- Delete user with confirmation modal.
+- Managers can manage only `user` accounts.
+- Your own account is not shown in the user management list.
 
-```text
-Launch board:
-    states:
-        todo:
-            name: TODO
-        inprogress:
-            name: In progress
-        done:
-            name: Done
-    people:
-        bob:
-            name: Bob Dilan
-            color: #ff00bb
-        jesica
-        fero
-```
+For `user` role, permissions are path-based:
 
-If you include a `states:` section, it replaces the defaults.
+- single space path (example: `teamA/roadmap`)
+- folder wildcard path (example: `teamA/*`)
 
-## Drag and Drop
+## Profile
 
-- Drag legend tags/people onto a task to add them.
-- Drag pills out of a task to remove them.
-- Drag tasks between kanban columns to change `!state`.
-- Drag a kanban card onto the graph to clear `!state`.
+- Update display name.
+- Change password (requires current password).
+- New password requires confirmation.
+- Secret fields include show/hide eye toggle where configured.
 
-When a tag, person, or state is added via drag, it is inserted at the start of the first description line under the task. If no token line exists, one is created under the task and a blank line is left for the description.
+## Jira Settings
 
-## Checkboxes
+Admin-only modal:
 
-Checkboxes in task descriptions can be toggled directly on the graph, and the editor text updates accordingly.
-Use `[ ]` or `[x]` for checkbox items.
+- Base URL
+- Email
+- API token
+
+## Task Script Format
+
+- Task line starts with `%`.
+- Subtasks use 4-space indentation.
+- Description lines continue until next task of same/higher level.
+- Optional tokens: `!state`, `#tag`, `@person`.
+- References use `{Task Name}`.
+
+Optional config header before first task:
+
+- board title
+- `states:`
+- `people:`
+- `tags:`
+
+If `states:` is omitted, defaults are `todo`, `inprogress`, `done`.
+
+## Editor Interactions
+
+- Double-click `%` task title in code editor: open task edit modal.
+- Double-click slug (`#tag`, `@person`, `!state`): open slug rename modal.
+- Slug rename also works for config header slugs and in task-edit code view.
+- Double-click checkbox token (`[ ]` / `[x]`) in code editor toggles it.
+- Press `Esc` inside search box to clear search.
+
+When renaming a task title in task edit modal, `{old title}` references are updated across file.
 
 ## Task Edit Modal
 
-Double-click a graph node or kanban card to open the edit modal.
+- Edit title and body code.
+- Live preview of markdown.
+- Token palettes (state/people/tags) with drag-in and drag-out behavior.
+- Save applies changes to script and graph/kanban.
 
-- Title field edits the task name.
-- Preview shows rendered markdown; checkboxes update the code editor.
-- State/people/tags palettes show display names and colors; drag into the preview to add.
-- Drag pills out of the preview to remove tokens.
+## Graph and Kanban
 
-## Kanban Cards
+- Pan/zoom graph.
+- Drag node to task to create subtask.
+- Drag task to trash to delete (with confirmation options).
+- Floating **Add Task** button opens create-task modal.
+- Kanban supports grouping by none/person/tag.
+- Drag kanban cards between columns to change state.
 
-The kanban board sits below the graph.
+## Resizing and Snap Behavior
 
-Each kanban card shows the task name plus pills for the first assigned person and any tags.
+- Vertical code|graph divider supports edge snapping.
+- When snapped to right edge, legend auto-hides to prevent overflow.
+- Horizontal graph|kanban divider resizes kanban and can collapse it.
 
-State pills use the configured state colors when available.
+## Feedback
 
-## Kanban Grouping & Resizing
+All success and error feedback is shown as top-right toasts.
 
-- Use the grouping switch (none/person/tag) to add swimlanes; empty groups are hidden.
-- Drag the horizontal divider to resize the kanban panel; drag to collapse it while keeping the legend visible.
+## Persistence Files
 
-## Deleting Tasks
-
-Drag a task to the trash icon to remove it. The confirmation modal offers:
-- **Remove**: deletes the task and promotes its subtasks.
-- **Remove with all subtasks**: deletes the entire subtree.
+- `backend/users_config.json`: users, roles, access paths
+- `backend/sessions.json`: persistent sessions + last space
+- `backend/jira/jira_config.json`: Jira configuration
+- `backend/spaces/`: space files/folders
+- `backend/ystore/`: collaboration state storage
