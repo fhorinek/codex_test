@@ -52,6 +52,9 @@
       <div class="editor-wrapper">
         <textarea id="task-editor" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
         <div id="code-editor" class="code-editor" aria-label="Task script editor"></div>
+        <button id="spellcheck-toggle-main" class="floating-toggle spellcheck-toggle" type="button" aria-label="Enable spellcheck" title="Enable spellcheck" aria-pressed="false">
+          <i class="fa-solid fa-spell-check" aria-hidden="true"></i>
+        </button>
       </div>
     </section>
     <div class="divider" id="divider" role="separator" aria-orientation="vertical"></div>
@@ -475,8 +478,11 @@
           <div class="task-edit-main">
             <div id="task-edit-preview" class="task-edit-preview"></div>
             <div class="task-edit-code">
-              <textarea id="task-edit-code" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>
+              <textarea id="task-edit-code" spellcheck="true" aria-hidden="true" tabindex="-1"></textarea>
               <div id="task-edit-code-editor" class="code-editor task-edit-code-editor" aria-label="Task editor"></div>
+              <button id="spellcheck-toggle-modal" class="floating-toggle spellcheck-toggle" type="button" aria-label="Enable spellcheck" title="Enable spellcheck" aria-pressed="false">
+                <i class="fa-solid fa-spell-check" aria-hidden="true"></i>
+              </button>
             </div>
           </div>
           <aside id="task-edit-side" class="task-edit-side" aria-label="Task tokens">

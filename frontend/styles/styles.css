@@ -206,6 +206,40 @@ body {
   background: #f6f7ff;
 }
 
+.floating-toggle {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  border: 1px solid #c7ccf0;
+  background: #ffffff;
+  color: #2f3355;
+  box-shadow: 0 12px 24px rgba(12, 24, 64, 0.18);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 4;
+}
+
+.floating-toggle:hover {
+  border-color: #8fa4ff;
+  background: #f6f8ff;
+}
+
+.floating-toggle.active {
+  border-color: #2f54eb;
+  color: #2f54eb;
+  background: #e9eeff;
+}
+
+.floating-toggle:focus-visible {
+  outline: 2px solid #2f54eb;
+  outline-offset: 2px;
+}
+
 .nameTag {
   border-radius: 999px;
   padding: 2px 8px;
@@ -328,9 +362,48 @@ body {
   color: #b45309;
 }
 
+.code-editor .cm-reference-token-invalid {
+  color: #d92d20;
+}
+
+.code-editor.modifier-nav-active .cm-tag-token,
+.code-editor.modifier-nav-active .cm-person-token,
+.code-editor.modifier-nav-active .cm-state-token,
+.code-editor.modifier-nav-active .cm-reference-token {
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 .code-editor .cm-jira-token {
   color: #0052cc;
   font-weight: 600;
+}
+
+.code-editor .cm-task-reference-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid #c7ccf0;
+  background: #f0f3ff;
+  color: #4c526c;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.code-editor .cm-task-reference-icon i {
+  font-size: 9px;
+}
+
+.code-editor .cm-task-reference-menu .task-reference-dropdown {
+  z-index: 20;
 }
 
 .code-editor .cm-indentation-marker {
@@ -1897,6 +1970,10 @@ body.dragging-task .task-trash.drag-over {
   border-top: 1px solid #d6d9e6;
 }
 
+.legend[hidden] {
+  display: none !important;
+}
+
 html[data-legend-hidden="true"] .legend {
   display: none;
 }
@@ -1906,6 +1983,10 @@ html[data-legend-hidden="true"] .legend {
   flex-direction: column;
   gap: 6px;
   min-width: 0;
+}
+
+.legend-group[hidden] {
+  display: none !important;
 }
 
 .legend-people {
@@ -1934,6 +2015,10 @@ html[data-legend-hidden="true"] .legend {
 
 .legend-tags .pill-list {
   justify-content: flex-end;
+}
+
+.task-edit-list[hidden] {
+  display: none !important;
 }
 
 
@@ -2106,6 +2191,72 @@ body.task-trash-over .task-node.dragging {
   gap: 6px;
 }
 
+.task-reference-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.task-reference-indicator {
+  border: 1px solid #c7ccf0;
+  background: #f0f3ff;
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #4c526c;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.task-reference-indicator:hover {
+  border-color: #8fa4ff;
+  background: #e8eeff;
+}
+
+.task-reference-indicator:focus-visible {
+  outline: 2px solid #2f54eb;
+  outline-offset: 1px;
+}
+
+.task-reference-indicator i {
+  font-size: 9px;
+}
+
+.task-reference-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 200px;
+  max-width: 280px;
+  border: 1px solid #d6d9e6;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(17, 24, 39, 0.14);
+  overflow: hidden;
+  z-index: 6;
+}
+
+.task-reference-option {
+  width: 100%;
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: #2f3355;
+  cursor: pointer;
+}
+
+.task-reference-option:hover {
+  background: #f4f6ff;
+}
+
 .state-pill {
   background: transparent;
   color: #2f54eb;
@@ -2137,6 +2288,7 @@ body.task-trash-over .task-node.dragging {
   border-radius: 999px;
   padding: 2px 8px;
   font-size: 11px;
+  white-space: nowrap;
   cursor: pointer;
   margin: 2px 0;
 }
@@ -2680,6 +2832,35 @@ html[data-theme="dark"] .kanban-card-title {
   color: #e6e8f2;
 }
 
+html[data-theme="dark"] .task-reference-indicator {
+  border-color: #3b425a;
+  color: #cfd6f8;
+  background: #1a2236;
+}
+
+html[data-theme="dark"] .task-reference-indicator:hover {
+  border-color: #8fa4ff;
+  background: #212b45;
+}
+
+html[data-theme="dark"] .task-reference-indicator:focus-visible {
+  outline-color: #8fa4ff;
+}
+
+html[data-theme="dark"] .task-reference-dropdown {
+  border-color: #2a2e3f;
+  background: #151a2a;
+  box-shadow: 0 10px 24px rgba(3, 6, 20, 0.6);
+}
+
+html[data-theme="dark"] .task-reference-option {
+  color: #e6e8f2;
+}
+
+html[data-theme="dark"] .task-reference-option:hover {
+  background: #1b2236;
+}
+
 html[data-theme="dark"] .kanban-card.dragging {
   opacity: 0;
   box-shadow: none;
@@ -2722,6 +2903,12 @@ html[data-theme="dark"] .task-node.delete-preview {
   box-shadow: 0 0 0 2px rgba(255, 122, 124, 0.2), 0 16px 28px rgba(3, 6, 20, 0.55);
 }
 
+html[data-theme="dark"] .task-node .references.unresolved,
+html[data-theme="dark"] .task-preview-card .references.unresolved {
+  color: #ff9b9d;
+  text-decoration-color: #ff9b9d;
+}
+
 html[data-theme="dark"] .graph-search {
   background: #151a2a;
   border-color: #2a2e3f;
@@ -2756,6 +2943,28 @@ html[data-theme="dark"] .toolbar-icon {
 html[data-theme="dark"] .toolbar-icon:hover {
   background: #1b2234;
   border-color: #3b425a;
+}
+
+html[data-theme="dark"] .floating-toggle {
+  background: #151a2a;
+  border-color: #2a2e3f;
+  color: #e6e8f2;
+  box-shadow: 0 12px 24px rgba(3, 6, 20, 0.5);
+}
+
+html[data-theme="dark"] .floating-toggle:hover {
+  background: #1b2234;
+  border-color: #3b425a;
+}
+
+html[data-theme="dark"] .floating-toggle.active {
+  background: #1d2948;
+  border-color: #8fa4ff;
+  color: #8fa4ff;
+}
+
+html[data-theme="dark"] .floating-toggle:focus-visible {
+  outline-color: #8fa4ff;
 }
 
 html[data-theme="dark"] .pill {
@@ -2840,9 +3049,19 @@ html[data-theme="dark"] .code-editor .cm-reference-token {
   color: #ffb454;
 }
 
+html[data-theme="dark"] .code-editor .cm-reference-token-invalid {
+  color: #ff7a7c;
+}
+
 html[data-theme="dark"] .code-editor .cm-jira-token {
   color: #8bb7ff;
   font-weight: 600;
+}
+
+html[data-theme="dark"] .code-editor .cm-task-reference-icon {
+  border-color: #3b425a;
+  color: #cfd6f8;
+  background: #1a2236;
 }
 
 html[data-theme="dark"] .code-editor .cm-indentation-marker {
@@ -3010,7 +3229,9 @@ html[data-theme="dark"] .inline-link {
 }
 
 .task-node .description ul,
-.task-preview-card .description ul {
+.task-node .description ol,
+.task-preview-card .description ul,
+.task-preview-card .description ol {
   margin: 0 0 4px;
   padding-left: 16px;
 }
@@ -3134,6 +3355,12 @@ html[data-theme="dark"] .task-preview-card .description tbody tr:nth-child(odd) 
   cursor: pointer;
   display: inline-block;
   margin-right: 6px;
+}
+
+.task-node .references.unresolved,
+.task-preview-card .references.unresolved {
+  color: #ff4d4f;
+  text-decoration-color: #ff4d4f;
 }
 
 .collapse-toggle {

@@ -27,6 +27,9 @@ const COLLAB_COLORS = [
 ];
 const IDLE_TIMEOUT_MS = 60000;
 const IDLE_CHECK_MS = 5000;
+const OFFLINE_DRAFT_STORAGE_KEY = "taskScript.offlineDraft.v1";
+const OFFLINE_DRAFT_SAVE_INTERVAL_MS = 10000;
+const SPELLCHECK_STORAGE_KEY = "taskScript.spellcheckEnabled.v1";
 const STATUS_LABELS = {
   connected: "live",
   connecting: "reconnecting",
@@ -320,6 +323,8 @@ const dom = {
   clearFilters: document.getElementById("clear-filters"),
   graphCanvas: document.getElementById("graph-canvas"),
   divider: document.getElementById("divider"),
+  spellcheckToggleMain: document.getElementById("spellcheck-toggle-main"),
+  spellcheckToggleModal: document.getElementById("spellcheck-toggle-modal"),
 };
 
 function initializeSecretToggles() {
@@ -348,6 +353,14 @@ function setButtonIcon(button, icon) {
   iconEl.className = `fa-solid ${icon}`;
 }
 
+function getStoredSpellcheckEnabled() {
+  try {
+    return localStorage.getItem(SPELLCHECK_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
 const state = {
   tasks: [],
   allTasks: [],
@@ -372,6 +385,9 @@ const state = {
   suggestionItems: [],
   kanbanGroupBy: "none",
   taskPathMaps: new Map(),
+  incomingReferenceCountByName: new Map(),
+  spellcheckEnabled: getStoredSpellcheckEnabled(),
+  scopedSpellcheck: true,
 };
 
 const KANBAN_GROUPS = new Set(["none", "person", "tag"]);
@@ -456,6 +472,9 @@ const collab = {
   authToken: AUTH_TOKEN,
   isAuthenticated: false,
   connectionStatus: "disconnected",
+  offlineDraftTimer: null,
+  offlineDraftDirty: false,
+  offlineDraftSavedValue: "",
 };
 
 let pendingDeleteSpace = null;
@@ -761,9 +780,117 @@ function updateBoardConnectionLabel() {
   }
 }
 
+function isOfflineMode() {
+  return !collab.spaceId;
+}
+
+function readOfflineDraft() {
+  try {
+    const raw = localStorage.getItem(OFFLINE_DRAFT_STORAGE_KEY);
+    if (raw === null) {
+      return null;
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.text === "string") {
+        return parsed.text;
+      }
+    } catch {
+      // Fallback to raw string format.
+    }
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+function writeOfflineDraft(text) {
+  try {
+    localStorage.setItem(
+      OFFLINE_DRAFT_STORAGE_KEY,
+      JSON.stringify({
+        text,
+        savedAt: Date.now(),
+      })
+    );
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function stopOfflineDraftTimer() {
+  if (collab.offlineDraftTimer) {
+    clearInterval(collab.offlineDraftTimer);
+    collab.offlineDraftTimer = null;
+  }
+}
+
+function flushOfflineDraft({ force = false } = {}) {
+  if (!isOfflineMode()) {
+    stopOfflineDraftTimer();
+    collab.offlineDraftDirty = false;
+    return;
+  }
+  const currentValue =
+    editorController && typeof editorController.getValue === "function"
+      ? editorController.getValue()
+      : (dom.editor?.value || "");
+  if (
+    !force
+    && !collab.offlineDraftDirty
+    && currentValue === collab.offlineDraftSavedValue
+  ) {
+    return;
+  }
+  writeOfflineDraft(currentValue);
+  collab.offlineDraftSavedValue = currentValue;
+  collab.offlineDraftDirty = false;
+}
+
+function ensureOfflineDraftTimer() {
+  if (collab.offlineDraftTimer) {
+    return;
+  }
+  collab.offlineDraftTimer = setInterval(() => {
+    if (!isOfflineMode()) {
+      stopOfflineDraftTimer();
+      collab.offlineDraftDirty = false;
+      return;
+    }
+    if (!collab.offlineDraftDirty) {
+      return;
+    }
+    flushOfflineDraft();
+  }, OFFLINE_DRAFT_SAVE_INTERVAL_MS);
+}
+
+function trackOfflineDraftChange(value) {
+  if (!isOfflineMode()) {
+    stopOfflineDraftTimer();
+    collab.offlineDraftDirty = false;
+    return;
+  }
+  if (value === collab.offlineDraftSavedValue) {
+    collab.offlineDraftDirty = false;
+    return;
+  }
+  collab.offlineDraftDirty = true;
+  ensureOfflineDraftTimer();
+}
+
+function getInitialEditorValue() {
+  const stored = readOfflineDraft();
+  if (stored !== null) {
+    collab.offlineDraftSavedValue = stored;
+    return stored;
+  }
+  collab.offlineDraftSavedValue = sample;
+  return sample;
+}
+
 const sample = `Example board:\n    people:\n        maya:\n            name: Maya Rivera\n        luis:\n            name: Luis Ortega\n        sam:\n            name: Sam Patel\n        nina:\n            name: Nina Lopez\n        zara:\n            name: Zara Chen\n    tags:\n        planning\n        backend\n        ux\n        research\n\n% Kickoff sprint\n!todo @maya #planning #ux\n**Goal:** Align scope, risks, and owners. {Architecture}\n- Define success metrics\n- Draft roadmap milestones\n[ ] Share notes with stakeholders\n[ ] Lock sprint goals\n\n    % Collect requirements\n    !inprogress @sam #research\n    Interview 5 users and summarize themes.\n    [ ] Write interview guide\n    [x] Schedule sessions\n\n        % Summarize insights\n        !todo @nina #research #planning\n        Capture themes and map to product risks.\n\n    % Create UX flow\n    !todo @maya #ux\n    Map onboarding screens and happy path.\n    - Wireframe key screens\n    - Validate navigation\n\n% Architecture\n!inprogress @luis #backend\nDefine data contracts and core services.\n| Area | Owner | Status |\n| --- | --- | --- |\n| API | Luis | Draft |\n| Data | Maya | Review |\n\n    % Build service skeleton\n    !todo @luis #backend\n    [ ] Set up repo and CI\n    [ ] Define API endpoints\n\n    % Integrate auth\n    !todo @sam #backend\n    Connect OAuth provider and session storage.\n\n        % Validate permissions\n        !todo @zara #backend #research\n        Check scopes and error handling.\n\n% Release prep\n!todo @maya #planning\nFinalize checklist and release timeline.\n{Kickoff sprint}\n`;
 
-dom.editor.value = sample;
+dom.editor.value = getInitialEditorValue();
 
 let editorController;
 
@@ -855,6 +982,8 @@ editorController = createEditor({
   onTokenDoubleClick: (token) => {
     openSlugRenameModal(token);
   },
+  spellcheck: state.spellcheckEnabled,
+  scopedSpellcheck: true,
 });
 
 const canvasController = createCanvas({
@@ -874,6 +1003,11 @@ const canvasController = createCanvas({
     updateClearFiltersVisibility();
   },
 });
+
+let modalEditorController = null;
+let modalEditorState = null;
+
+setScopedSpellcheckEnabled(state.spellcheckEnabled, { persist: false });
 
 function applyEditorValue(nextValue) {
   const currentValue = editorController.getValue();
@@ -1013,12 +1147,25 @@ function buildTagPersonLists() {
       )
     );
   });
+  const peopleLegendGroup = dom.personList?.closest(".legend-group");
+  const tagsLegendGroup = dom.tagList?.closest(".legend-group");
+  if (peopleLegendGroup) {
+    peopleLegendGroup.hidden = people.length === 0;
+  }
+  if (tagsLegendGroup) {
+    tagsLegendGroup.hidden = tags.length === 0;
+  }
+  const hasVisibleLegendGroups =
+    (Boolean(peopleLegendGroup) && !peopleLegendGroup.hidden)
+    || (Boolean(tagsLegendGroup) && !tagsLegendGroup.hidden);
+  setLegendHasVisibleContent(hasVisibleLegendGroups);
 }
 
 function sync() {
   if (!editorController) {
     return;
   }
+  const sourceText = editorController.getValue();
   const {
     tasks,
     tags,
@@ -1031,7 +1178,8 @@ function sync() {
     tagMeta,
     peopleMeta,
     stateMeta,
-  } = parseTasks(editorController.getValue());
+    incomingReferenceCountByName,
+  } = parseTasks(sourceText);
   applyStableTaskIds({ allTasks });
   state.tasks = tasks;
   state.allTasks = allTasks;
@@ -1043,6 +1191,8 @@ function sync() {
   state.tagMeta = tagMeta;
   state.peopleMeta = peopleMeta;
   state.stateMeta = stateMeta;
+  state.incomingReferenceCountByName = incomingReferenceCountByName;
+  trackOfflineDraftChange(sourceText);
   if (dom.boardTitle) {
     const title = config.boardName || "Task Script";
     dom.boardTitle.textContent = title;
@@ -1085,8 +1235,6 @@ let editingTaskRange = null;
 let editingTaskIndent = "";
 let editingTaskJiraKey = null;
 let creatingTask = false;
-let modalEditorController = null;
-let modalEditorState = null;
 let pendingDeleteTask = null;
 let isTaskDragActive = false;
 let taskEditDragHandlersBound = false;
@@ -1392,6 +1540,14 @@ function refreshTaskEditTokenLists() {
   renderTaskEditTokenList(dom.taskEditStates, stateTokens, state.stateMeta, "state");
   renderTaskEditTokenList(dom.taskEditTags, tagTokens, state.tagMeta, "tag");
   renderTaskEditTokenList(dom.taskEditPeople, peopleTokens, state.peopleMeta, "person");
+  const peopleListSection = dom.taskEditPeople?.closest(".task-edit-list");
+  const tagsListSection = dom.taskEditTags?.closest(".task-edit-list");
+  if (peopleListSection) {
+    peopleListSection.hidden = peopleTokens.length === 0;
+  }
+  if (tagsListSection) {
+    tagsListSection.hidden = tagTokens.length === 0;
+  }
 }
 
 function ensureTaskEditDragHandlers() {
@@ -1513,9 +1669,16 @@ function updateTaskEditPreviewFromText(text) {
   desc.className = "description";
   const descriptionLines = (parsed.descriptionText || "").replace(/\r/g, "").split("\n");
   const cleanedDescription = descriptionLines
-    .map((line) =>
-      line.replace(/(^|\s)![^\s#@]+/g, "$1").replace(/\s{2,}/g, " ").trimEnd()
-    )
+    .map((line) => {
+      const rawLine = typeof line === "string" ? line : "";
+      const indent = rawLine.match(/^\s*/)?.[0] || "";
+      const content = rawLine
+        .slice(indent.length)
+        .replace(/(^|\s)![^\s#@]+/g, "$1")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      return content ? `${indent}${content}` : "";
+    })
     .join("\n");
   const lineIndexes = descriptionLines.map((_, index) => index);
   desc.innerHTML = renderMarkdown(cleanedDescription, { lineIndexes, disableLinks: true });
@@ -1527,6 +1690,11 @@ function updateTaskEditPreviewFromText(text) {
   });
   desc.querySelectorAll(".references").forEach((ref) => {
     ref.classList.add("inline-link");
+    const referenceName = typeof ref.dataset.ref === "string" ? ref.dataset.ref.trim() : "";
+    if (!findTaskByName(referenceName)) {
+      ref.classList.add("unresolved");
+      ref.title = "Reference target not found";
+    }
   });
   card.appendChild(desc);
   dom.taskEditPreview.appendChild(card);
@@ -1628,7 +1796,11 @@ function ensureTaskEditEditor() {
       onTokenDoubleClick: (token) => {
         openSlugRenameModal(token);
       },
+      spellcheck: state.spellcheckEnabled,
     });
+  }
+  if (modalEditorController?.setSpellcheckEnabled) {
+    modalEditorController.setSpellcheckEnabled(state.spellcheckEnabled);
   }
   return modalEditorController;
 }
@@ -2110,7 +2282,20 @@ function renameTaskReferencesInLines(lines, oldTitle, newTitle) {
 }
 
 function findTaskByName(name) {
-  return state.allTasks.find((task) => task.name === name);
+  const query = typeof name === "string" ? name.trim() : "";
+  if (!query) {
+    return null;
+  }
+  const exact = state.allTasks.find((task) => task.name === query);
+  if (exact) {
+    return exact;
+  }
+  const lowerQuery = query.toLowerCase();
+  return (
+    state.allTasks.find(
+      (task) => typeof task.name === "string" && task.name.toLowerCase() === lowerQuery
+    ) || null
+  );
 }
 
 function syncEditorState() {
@@ -4970,6 +5155,7 @@ function disconnectSpace() {
   collab.synced = false;
   collab.lastActivityAt = 0;
   collab.connectionStatus = "disconnected";
+  trackOfflineDraftChange(editorController?.getValue?.() || dom.editor?.value || "");
   updateConnectButtonLabel();
   updateBoardConnectionLabel();
 }
@@ -5067,6 +5253,8 @@ async function connectToSpace(spaceId, spacePath = "") {
     return;
   }
   disconnectSpace();
+  stopOfflineDraftTimer();
+  collab.offlineDraftDirty = false;
 
   const ydoc = new Y.Doc();
   collab.synced = false;
@@ -5240,6 +5428,49 @@ function setTheme(theme) {
   }
 }
 
+function getSpellcheckToggleButtons() {
+  return [dom.spellcheckToggleMain, dom.spellcheckToggleModal].filter(Boolean);
+}
+
+function updateSpellcheckToggleButton() {
+  const buttons = getSpellcheckToggleButtons();
+  if (!buttons.length) {
+    return;
+  }
+  const enabled = Boolean(state.spellcheckEnabled);
+  const label = enabled
+    ? "Disable spellcheck (titles and descriptions)"
+    : "Enable spellcheck (titles and descriptions)";
+  buttons.forEach((button) => {
+    button.classList.toggle("active", enabled);
+    button.setAttribute("aria-pressed", enabled ? "true" : "false");
+    button.title = label;
+    button.setAttribute("aria-label", label);
+  });
+}
+
+function setScopedSpellcheckEnabled(enabled, { persist = true } = {}) {
+  const next = Boolean(enabled);
+  state.spellcheckEnabled = next;
+  if (state.scopedSpellcheck !== true) {
+    state.scopedSpellcheck = true;
+  }
+  if (editorController?.setSpellcheckEnabled) {
+    editorController.setSpellcheckEnabled(next);
+  }
+  if (modalEditorController?.setSpellcheckEnabled) {
+    modalEditorController.setSpellcheckEnabled(next);
+  }
+  updateSpellcheckToggleButton();
+  if (persist) {
+    try {
+      localStorage.setItem(SPELLCHECK_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      // Ignore storage failures.
+    }
+  }
+}
+
 if (dom.themeButton) {
   const storedTheme = localStorage.getItem("theme");
   const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
@@ -5247,6 +5478,16 @@ if (dom.themeButton) {
   dom.themeButton.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme;
     setTheme(current === "dark" ? "light" : "dark");
+  });
+}
+
+const spellcheckToggleButtons = getSpellcheckToggleButtons();
+if (spellcheckToggleButtons.length) {
+  updateSpellcheckToggleButton();
+  spellcheckToggleButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      setScopedSpellcheckEnabled(!state.spellcheckEnabled);
+    });
   });
 }
 
@@ -5630,6 +5871,7 @@ window.addEventListener("beforeunload", () => {
   if (collab.spaceId) {
     reportPresence(collab.spaceId, true);
   }
+  flushOfflineDraft({ force: true });
 });
 
 if (dom.spaceOpenCreate) {
@@ -5807,6 +6049,22 @@ dom.clearFilters.addEventListener("click", () => {
 let resizing = false;
 let resizingKanban = false;
 let pendingGraphRender = null;
+let legendHiddenByRightSnap = false;
+let legendHasVisibleContent = true;
+
+function applyLegendHiddenState() {
+  if (!dom.legend) {
+    return;
+  }
+  const shouldHide = legendHiddenByRightSnap || !legendHasVisibleContent;
+  dom.legend.hidden = shouldHide;
+  document.documentElement.toggleAttribute("data-legend-hidden", shouldHide);
+}
+
+function setLegendHasVisibleContent(hasVisibleContent) {
+  legendHasVisibleContent = Boolean(hasVisibleContent);
+  applyLegendHiddenState();
+}
 
 function scheduleGraphRender() {
   if (pendingGraphRender) {
@@ -5820,13 +6078,10 @@ function scheduleGraphRender() {
 }
 
 function setLegendHiddenForRightSnap(leftPercent, maxPercent) {
-  if (!dom.legend) {
-    return;
-  }
-  const shouldHide = Number.isFinite(leftPercent)
+  legendHiddenByRightSnap = Number.isFinite(leftPercent)
     && Number.isFinite(maxPercent)
     && leftPercent >= (maxPercent - 0.01);
-  document.documentElement.toggleAttribute("data-legend-hidden", shouldHide);
+  applyLegendHiddenState();
 }
 
 function updateLegendHiddenFromLayout() {

@@ -14,12 +14,18 @@ export function createCanvas({
   onFiltersChange,
 }) {
   const { graphNodes, graphLines, graphCanvas, graphMinimap, minimapSvg } = dom;
+  const GRAPH_ZOOM_MIN = 0.25;
+  const GRAPH_ZOOM_MAX = 2.5;
+  const GRAPH_ZOOM_STEP = 0.1;
+  const ZOOM_REDRAW_DELAY_MS = 140;
   let lineAnimationFrame = null;
   let lineAnimationUntil = 0;
   let lastVisibleTasks = [];
   let lastNodesById = new Map();
   let lastClickAt = 0;
   let lastClickTaskId = "";
+  let zoomRedrawTimeout = null;
+  let openReferenceDropdown = null;
 
   const copyToClipboard = async (text) => {
     if (!text) {
@@ -48,6 +54,142 @@ export function createCanvas({
 
   const getTaskById = (taskId) =>
     state.allTasks.find((item) => item.id === taskId) || null;
+
+  const closeReferenceDropdown = () => {
+    if (!openReferenceDropdown) {
+      return;
+    }
+    openReferenceDropdown.classList.add("hidden");
+    openReferenceDropdown = null;
+  };
+
+  document.addEventListener("click", () => {
+    closeReferenceDropdown();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeReferenceDropdown();
+    }
+  });
+
+  const getIncomingReferenceTasks = (task) => {
+    if (!task || !Array.isArray(task.incomingReferences)) {
+      return [];
+    }
+    const unique = [];
+    const seen = new Set();
+    task.incomingReferences.forEach((sourceTask) => {
+      const id = sourceTask?.id;
+      if (!id || seen.has(id) || id === task.id) {
+        return;
+      }
+      seen.add(id);
+      unique.push(sourceTask);
+    });
+    unique.sort((a, b) => (a?.lineIndex || 0) - (b?.lineIndex || 0));
+    return unique;
+  };
+
+  const createReferenceIndicator = (task) => {
+    const referenceTasks = getIncomingReferenceTasks(task);
+    const safeCount = referenceTasks.length;
+    if (!safeCount) {
+      return null;
+    }
+    const label = safeCount === 1
+      ? "Referenced by 1 task"
+      : `Referenced by ${safeCount} tasks`;
+    const menu = document.createElement("div");
+    menu.className = "task-reference-menu";
+    const indicator = document.createElement("button");
+    indicator.type = "button";
+    indicator.className = "task-reference-indicator";
+    indicator.title = `${label}. Click to open list.`;
+    indicator.setAttribute("aria-label", `${label}. Click to open list.`);
+    const icon = document.createElement("i");
+    icon.className = "fa-solid fa-link";
+    icon.setAttribute("aria-hidden", "true");
+    const countNode = document.createElement("span");
+    countNode.textContent = String(safeCount);
+    indicator.append(icon, countNode);
+    const dropdown = document.createElement("div");
+    dropdown.className = "task-reference-dropdown hidden";
+    referenceTasks.forEach((sourceTask) => {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "task-reference-option";
+      option.textContent = sourceTask?.name || "Untitled task";
+      option.title = "Focus task";
+      option.addEventListener("click", (event) => {
+        event.stopPropagation();
+        closeReferenceDropdown();
+        const liveTask = getTaskById(sourceTask.id);
+        if (liveTask) {
+          onSelectTask(liveTask);
+        }
+      });
+      dropdown.appendChild(option);
+    });
+    menu.append(indicator, dropdown);
+    menu.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    indicator.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const isOpen = openReferenceDropdown === dropdown && !dropdown.classList.contains("hidden");
+      closeReferenceDropdown();
+      if (isOpen) {
+        return;
+      }
+      dropdown.classList.remove("hidden");
+      openReferenceDropdown = dropdown;
+    });
+    return menu;
+  };
+
+  let tokenDragGhost = null;
+
+  const clearTokenDragGhost = () => {
+    if (!tokenDragGhost) {
+      return;
+    }
+    tokenDragGhost.remove();
+    tokenDragGhost = null;
+  };
+
+  const setTokenDragImage = (event, sourceEl, options = {}) => {
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer || !sourceEl) {
+      return;
+    }
+    const rect = sourceEl.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      return;
+    }
+    clearTokenDragGhost();
+    const scaleWithZoom = options.scaleWithZoom !== false;
+    const scale = scaleWithZoom ? Math.max(0.01, state.transform?.scale || 1) : 1;
+    const ghost = sourceEl.cloneNode(true);
+    ghost.classList.add("drag-ghost");
+    ghost.style.position = "absolute";
+    ghost.style.top = "-9999px";
+    ghost.style.left = "-9999px";
+    ghost.style.margin = "0";
+    ghost.style.width = `${rect.width / scale}px`;
+    ghost.style.height = `${rect.height / scale}px`;
+    if ("zoom" in ghost.style) {
+      ghost.style.zoom = scale;
+    } else {
+      ghost.style.transformOrigin = "top left";
+      ghost.style.transform = `scale(${scale})`;
+    }
+    ghost.style.pointerEvents = "none";
+    document.body.appendChild(ghost);
+    tokenDragGhost = ghost;
+    const offsetX = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+    const offsetY = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+    dataTransfer.setDragImage(ghost, offsetX, offsetY);
+  };
 
   const isTaskDrag = (event) => {
     const dataTransfer = event.dataTransfer;
@@ -303,6 +445,10 @@ export function createCanvas({
       title.appendChild(pill);
     }
     title.append(displayTitle);
+    const referenceIndicator = createReferenceIndicator(task);
+    if (referenceIndicator) {
+      title.appendChild(referenceIndicator);
+    }
     const header = document.createElement("div");
     header.className = "task-header";
     header.appendChild(title);
@@ -319,6 +465,7 @@ export function createCanvas({
       statePill.draggable = true;
       statePill.addEventListener("dragstart", (event) => {
         event.stopPropagation();
+        setTokenDragImage(event, statePill);
         event.dataTransfer.setData(
           "application/json",
           JSON.stringify({
@@ -335,15 +482,20 @@ export function createCanvas({
     const desc = document.createElement("div");
     desc.className = "description";
     const descriptionText = task.description
-      .map((line) =>
-        line
+      .map((line) => {
+        const rawLine = typeof line === "string" ? line : "";
+        const indent = rawLine.match(/^\s*/)?.[0] || "";
+        const content = rawLine
+          .slice(indent.length)
           .replace(/(^|\s)![^\s#@]+/g, "$1")
           .replace(/\s{2,}/g, " ")
-          .trim()
-      )
+          .trim();
+        return content ? `${indent}${content}` : "";
+      })
       .join("\n");
     desc.innerHTML = renderMarkdown(descriptionText, {
       lineIndexes: task.descriptionLineIndexes,
+      baseIndent: Number.isFinite(task.indent) ? task.indent : 0,
     });
 
     const toggle = document.createElement("div");
@@ -374,9 +526,17 @@ export function createCanvas({
     }
     if (task.description.length) {
       desc.querySelectorAll(".references").forEach((link) => {
+        const referenceName = typeof link.dataset.ref === "string" ? link.dataset.ref.trim() : "";
+        const initialTarget = findTaskByName(referenceName);
+        if (!initialTarget) {
+          link.classList.add("unresolved");
+          link.title = "Reference target not found";
+          return;
+        }
+        link.title = `Open task: ${initialTarget.name}`;
         link.addEventListener("click", (event) => {
           event.stopPropagation();
-          const ref = link.dataset.ref;
+          const ref = typeof link.dataset.ref === "string" ? link.dataset.ref.trim() : "";
           const target = findTaskByName(ref);
           if (target) {
             onSelectTask(target);
@@ -421,6 +581,7 @@ export function createCanvas({
         pill.draggable = true;
         pill.addEventListener("dragstart", (event) => {
           event.stopPropagation();
+          setTokenDragImage(event, pill);
           event.dataTransfer.setData(
             "application/json",
             JSON.stringify({
@@ -466,6 +627,7 @@ export function createCanvas({
   };
 
   function renderGraph() {
+    closeReferenceDropdown();
     graphLines.innerHTML = "";
     const existingNodes = new Map();
     graphNodes.querySelectorAll(".task-node[data-task-id]").forEach((node) => {
@@ -629,6 +791,7 @@ export function createCanvas({
     if (text.startsWith("#") || text.startsWith("@")) {
       pill.draggable = true;
       pill.addEventListener("dragstart", (event) => {
+        setTokenDragImage(event, pill, { scaleWithZoom: false });
         event.dataTransfer.setData(
           "application/json",
           JSON.stringify({
@@ -764,6 +927,19 @@ export function createCanvas({
     updateMinimapViewport();
   }
 
+  const scheduleZoomRedraw = () => {
+    if (zoomRedrawTimeout) {
+      clearTimeout(zoomRedrawTimeout);
+    }
+    zoomRedrawTimeout = setTimeout(() => {
+      zoomRedrawTimeout = null;
+      // Match focus flow redraw behavior used from editor selection.
+      state.animateTransform = true;
+      applyTransform(true);
+      renderGraph();
+    }, ZOOM_REDRAW_DELAY_MS);
+  };
+
   let isPanning = false;
   let isDraggingToken = false;
   let lastPoint = { x: 0, y: 0 };
@@ -778,19 +954,23 @@ export function createCanvas({
   graphCanvas.addEventListener("dragend", (event) => {
     if (event.target.closest(".pill")) {
       isDraggingToken = false;
+      clearTokenDragGhost();
     }
   });
 
   window.addEventListener("dragend", () => {
     isDraggingToken = false;
+    clearTokenDragGhost();
   });
 
   window.addEventListener("drop", () => {
     isDraggingToken = false;
+    clearTokenDragGhost();
   });
 
   graphCanvas.addEventListener("drop", () => {
     isDraggingToken = false;
+    clearTokenDragGhost();
   });
 
   graphCanvas.addEventListener("mousedown", (event) => {
@@ -824,8 +1004,11 @@ export function createCanvas({
 
   graphCanvas.addEventListener("wheel", (event) => {
     event.preventDefault();
-    const delta = event.deltaY > 0 ? -0.1 : 0.1;
-    const newScale = Math.min(1.6, Math.max(0.5, state.transform.scale + delta));
+    const delta = event.deltaY > 0 ? -GRAPH_ZOOM_STEP : GRAPH_ZOOM_STEP;
+    const newScale = Math.min(
+      GRAPH_ZOOM_MAX,
+      Math.max(GRAPH_ZOOM_MIN, state.transform.scale + delta)
+    );
     const rect = graphCanvas.getBoundingClientRect();
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
@@ -834,6 +1017,7 @@ export function createCanvas({
     state.transform.y = pointerY - (pointerY - state.transform.y) * scaleFactor;
     state.transform.scale = newScale;
     applyTransform();
+    scheduleZoomRedraw();
   });
 
   graphCanvas.addEventListener("dragover", (event) => {

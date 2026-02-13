@@ -63,6 +63,31 @@ function removeLeadingBlankLines(lines, start, end) {
 const UNASSIGNED_GROUP = "__unassigned__";
 let lastKanbanClickAt = 0;
 let lastKanbanClickId = "";
+let openReferenceDropdown = null;
+let referenceDropdownHandlersBound = false;
+
+function closeReferenceDropdown() {
+  if (!openReferenceDropdown) {
+    return;
+  }
+  openReferenceDropdown.classList.add("hidden");
+  openReferenceDropdown = null;
+}
+
+function ensureReferenceDropdownHandlers() {
+  if (referenceDropdownHandlersBound) {
+    return;
+  }
+  referenceDropdownHandlersBound = true;
+  document.addEventListener("click", () => {
+    closeReferenceDropdown();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeReferenceDropdown();
+    }
+  });
+}
 
 function normalizeGroupBy(value) {
   return value === "person" || value === "tag" ? value : "none";
@@ -126,6 +151,81 @@ function getTaskGroupKeys(task, groupBy) {
   return [UNASSIGNED_GROUP];
 }
 
+function getIncomingReferenceTasks(task) {
+  if (!task || !Array.isArray(task.incomingReferences)) {
+    return [];
+  }
+  const unique = [];
+  const seen = new Set();
+  task.incomingReferences.forEach((sourceTask) => {
+    const id = sourceTask?.id;
+    if (!id || seen.has(id) || id === task.id) {
+      return;
+    }
+    seen.add(id);
+    unique.push(sourceTask);
+  });
+  unique.sort((a, b) => (a?.lineIndex || 0) - (b?.lineIndex || 0));
+  return unique;
+}
+
+function createReferenceIndicator(task, { selectTask, getTaskById }) {
+  const referenceTasks = getIncomingReferenceTasks(task);
+  const safeCount = referenceTasks.length;
+  if (!safeCount) {
+    return null;
+  }
+  const label = safeCount === 1
+    ? "Referenced by 1 task"
+    : `Referenced by ${safeCount} tasks`;
+  const menu = document.createElement("div");
+  menu.className = "task-reference-menu";
+  const indicator = document.createElement("button");
+  indicator.type = "button";
+  indicator.className = "task-reference-indicator";
+  indicator.title = `${label}. Click to open list.`;
+  indicator.setAttribute("aria-label", `${label}. Click to open list.`);
+  const icon = document.createElement("i");
+  icon.className = "fa-solid fa-link";
+  icon.setAttribute("aria-hidden", "true");
+  const countNode = document.createElement("span");
+  countNode.textContent = String(safeCount);
+  indicator.append(icon, countNode);
+  const dropdown = document.createElement("div");
+  dropdown.className = "task-reference-dropdown hidden";
+  referenceTasks.forEach((sourceTask) => {
+    const option = document.createElement("button");
+    option.type = "button";
+    option.className = "task-reference-option";
+    option.textContent = sourceTask?.name || "Untitled task";
+    option.title = "Focus task";
+    option.addEventListener("click", (event) => {
+      event.stopPropagation();
+      closeReferenceDropdown();
+      const liveTask = getTaskById(sourceTask.id);
+      if (liveTask) {
+        selectTask(liveTask);
+      }
+    });
+    dropdown.appendChild(option);
+  });
+  menu.append(indicator, dropdown);
+  menu.addEventListener("click", (event) => {
+    event.stopPropagation();
+  });
+  indicator.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const isOpen = openReferenceDropdown === dropdown && !dropdown.classList.contains("hidden");
+    closeReferenceDropdown();
+    if (isOpen) {
+      return;
+    }
+    dropdown.classList.remove("hidden");
+    openReferenceDropdown = dropdown;
+  });
+  return menu;
+}
+
 function renderKanbanCardContent({
   card,
   task,
@@ -133,6 +233,8 @@ function renderKanbanCardContent({
   matchesSearchTask,
   filtersActive,
   matchesFilters,
+  selectTask,
+  getTaskById,
 }) {
   const wasDragging = card.classList.contains("dragging");
   card.className = "kanban-card";
@@ -182,6 +284,10 @@ function renderKanbanCardContent({
     titleNode.appendChild(pill);
   }
   titleNode.append(displayTitle);
+  const referenceIndicator = createReferenceIndicator(task, { selectTask, getTaskById });
+  if (referenceIndicator) {
+    titleNode.appendChild(referenceIndicator);
+  }
   card.appendChild(titleNode);
   const metaWrap = document.createElement("div");
   metaWrap.className = "kanban-card-meta";
@@ -347,6 +453,8 @@ function createKanbanColumn({
       matchesSearchTask,
       filtersActive,
       matchesFilters,
+      selectTask,
+      getTaskById,
     });
     bindKanbanCard({
       card,
@@ -393,6 +501,8 @@ export function buildKanban({
   if (!dom.kanbanBoard) {
     return;
   }
+  ensureReferenceDropdownHandlers();
+  closeReferenceDropdown();
   const getTaskById = (taskId) =>
     state.allTasks.find((item) => item.id === taskId) || null;
   const normalizedGroupBy = normalizeGroupBy(groupBy);

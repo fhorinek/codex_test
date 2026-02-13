@@ -1,11 +1,11 @@
 {
   "users": {
-    "user": {
+    "admin": {
       "display_name": "František Horínek",
       "role": "admin",
       "spaces": [],
-      "password_salt": "fd8b8f63ffdb5cf1",
-      "password_hash": "1e525bac2b0e6f66a36bb50542be8feb"
+      "password_salt": "d249c051217fd22b",
+      "password_hash": "d2eadffb771051d4b661aef3da7b5526"
     }
   }
 }

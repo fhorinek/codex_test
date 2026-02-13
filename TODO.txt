@@ -23,3 +23,8 @@ From SPACE -> JIRA
 Structure
     XXX parenting
     
+Task title will have icon next to it if there are any reference to that Task
+Spelling checks for task description
+Nested list (by tab)
+numbered list (automaticaly added next number after enter)
+when in offline mode, store the text to local storage every 10 seconds when changed and on closed

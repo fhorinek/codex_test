@@ -71,8 +71,21 @@ export function applyInlineown(text) {
 export function applyInlineMarkdownWithOptions(text, options = {}) {
   let value = text;
   const { disableLinks = false } = options;
-  const linkReplacement = disableLinks ? "<span class=\"inline-link\">$1</span>" : "<a href=\"$2\" target=\"_blank\" rel=\"noopener\">$1</a>";
-  const urlReplacement = disableLinks ? "<span class=\"inline-link\">$1</span>" : "<a href=\"$1\" target=\"_blank\" rel=\"noopener\">$1</a>";
+  const placeholders = [];
+  const addPlaceholder = (content) => {
+    const index = placeholders.push(content) - 1;
+    return `@@INLINE_${index}@@`;
+  };
+  const buildLink = (label, href) => (
+    disableLinks
+      ? `<span class="inline-link">${label}</span>`
+      : `<a href="${href}" target="_blank" rel="noopener">${label}</a>`
+  );
+  const buildUrlLink = (href) => (
+    disableLinks
+      ? `<span class="inline-link">${href}</span>`
+      : `<a href="${href}" target="_blank" rel="noopener">${href}</a>`
+  );
   value = value.replace(
     /(^|\s)(#[^\s#@]+)/g,
     "$1<span class=\"pill inline-pill\" data-type=\"tag\" data-value=\"$2\">$2</span>"
@@ -85,14 +98,27 @@ export function applyInlineMarkdownWithOptions(text, options = {}) {
     /\[JIRA:([A-Z][A-Z0-9]+-\d+)\]/g,
     "<span class=\"pill inline-pill jira-pill\" data-type=\"jira\" data-value=\"$1\">$1</span>"
   );
-  value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "<img alt=\"$1\" src=\"$2\" />");
-  value = value.replace(/\[([^\]]+)\]\(([^)]+)\)/g, linkReplacement);
-  value = value.replace(/(https?:\/\/[^\s<]+)/g, urlReplacement);
+  value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, alt, src) =>
+    addPlaceholder(`<img alt="${alt}" src="${src}" />`)
+  );
+  value = value.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) =>
+    addPlaceholder(buildLink(label, href))
+  );
+  value = value.replace(/(https?:\/\/[^\s<]+)/g, (_match, href) =>
+    addPlaceholder(buildUrlLink(href))
+  );
   value = value.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   value = value.replace(/__([^_]+)__/g, "<u>$1</u>");
   value = value.replace(/==([^=]+)==/g, "<mark>$1</mark>");
   value = value.replace(/\*([^*]+)\*/g, "<em>$1</em>");
   value = value.replace(/\{([^}]+)\}/g, "<span class=\"references\" data-ref=\"$1\">$1</span>");
+  value = value.replace(/@@INLINE_(\d+)@@/g, (_match, rawIndex) => {
+    const index = Number.parseInt(rawIndex, 10);
+    if (!Number.isFinite(index) || !placeholders[index]) {
+      return "";
+    }
+    return placeholders[index];
+  });
   return value;
 }
 
@@ -100,15 +126,74 @@ export function renderMarkdown(text, options = {}) {
   const lines = escapeHtml(text).split("\n");
   const lineIndexes = Array.isArray(options.lineIndexes) ? options.lineIndexes : [];
   const disableLinks = Boolean(options.disableLinks);
+  const baseIndent = Number.isFinite(options.baseIndent)
+    ? Math.max(0, Number.parseInt(options.baseIndent, 10))
+    : 0;
   let html = "";
-  let inList = false;
   let inTable = false;
+  const listStack = [];
 
-  const closeList = () => {
-    if (inList) {
-      html += "</ul>";
-      inList = false;
+  const openList = (nextType, startNumber = 1) => {
+    if (nextType === "ol" && Number.isFinite(startNumber) && startNumber > 1) {
+      html += `<ol start="${startNumber}">`;
+    } else {
+      html += `<${nextType}>`;
     }
+    listStack.push({ type: nextType, liOpen: false });
+  };
+
+  const closeListItemAt = (index) => {
+    const item = listStack[index];
+    if (!item || !item.liOpen) {
+      return;
+    }
+    html += "</li>";
+    item.liOpen = false;
+  };
+
+  const closeDeepestList = () => {
+    const lastIndex = listStack.length - 1;
+    if (lastIndex < 0) {
+      return;
+    }
+    const { type } = listStack[lastIndex];
+    closeListItemAt(lastIndex);
+    html += `</${type}>`;
+    listStack.pop();
+  };
+
+  const closeAllLists = () => {
+    while (listStack.length) {
+      closeDeepestList();
+    }
+  };
+
+  const renderListItem = ({ type, level, content, startNumber }) => {
+    const safeLevel = Math.max(0, Number.parseInt(level, 10) || 0);
+    const clampedLevel = Math.min(safeLevel, listStack.length);
+    const targetDepth = clampedLevel + 1;
+
+    while (listStack.length > targetDepth) {
+      closeDeepestList();
+    }
+
+    if (listStack.length === targetDepth) {
+      const current = listStack[listStack.length - 1];
+      if (current && current.type !== type) {
+        closeDeepestList();
+        openList(type, startNumber);
+      } else {
+        closeListItemAt(listStack.length - 1);
+      }
+    } else if (listStack.length < targetDepth) {
+      openList(type, startNumber);
+    }
+
+    if (!listStack.length) {
+      openList(type, startNumber);
+    }
+    html += `<li>${applyInlineMarkdownWithOptions(content, { disableLinks })}`;
+    listStack[listStack.length - 1].liOpen = true;
   };
 
   const closeTable = () => {
@@ -130,7 +215,7 @@ export function renderMarkdown(text, options = {}) {
     const isTableSeparator = /^\|?\s*[-:]+/.test(nextLine) && nextLine.includes("|");
 
     if (trimmed.includes("|") && isTableSeparator && !inTable) {
-      closeList();
+      closeAllLists();
       inTable = true;
       html += "<table><thead><tr>";
       toCells(line).forEach((cell) => {
@@ -160,29 +245,46 @@ export function renderMarkdown(text, options = {}) {
       }
     }
 
-    const checkboxMatch = trimmed.match(/^\[([ xX])\]\s+(.*)/);
-    const listMatch = trimmed.match(/^[-*]\s+(.*)/);
+    const checkboxMatch = trimmed.match(/^\[([ xX])\](?:\s+(.*))?$/);
+    const unorderedListMatch = line.match(/^(\s*)[-*](?:\s+(.*))?$/);
+    const orderedListMatch = line.match(/^(\s*)(\d+)\.(?:\s+(.*))?$/);
 
-    if (checkboxMatch || listMatch) {
+    if (checkboxMatch || unorderedListMatch || orderedListMatch) {
       closeTable();
       if (checkboxMatch) {
-        closeList();
+        closeAllLists();
         const checked = checkboxMatch[1].toLowerCase() === "x";
+        const checkboxContent = checkboxMatch[2] || "";
         const lineIndex = Number.isFinite(lineIndexes[index])
           ? ` data-line="${lineIndexes[index]}"`
           : "";
-        html += `<div class="checkbox-line" data-line="${lineIndexes[index] ?? ""}"><input type="checkbox"${lineIndex} ${checked ? "checked" : ""} /> ${applyInlineMarkdownWithOptions(checkboxMatch[2], { disableLinks })}</div>`;
-      } else if (listMatch) {
-        if (!inList) {
-          html += "<ul>";
-          inList = true;
-        }
-        html += `<li>${applyInlineMarkdownWithOptions(listMatch[1], { disableLinks })}</li>`;
+        const renderedContent = checkboxContent
+          ? ` ${applyInlineMarkdownWithOptions(checkboxContent, { disableLinks })}`
+          : "";
+        html += `<div class="checkbox-line" data-line="${lineIndexes[index] ?? ""}"><input type="checkbox"${lineIndex} ${checked ? "checked" : ""} />${renderedContent}</div>`;
+      } else {
+        const isOrdered = Boolean(orderedListMatch);
+        const nextListType = isOrdered ? "ol" : "ul";
+        const indentLength = isOrdered
+          ? orderedListMatch[1].length
+          : unorderedListMatch[1].length;
+        const relativeIndent = Math.max(0, indentLength - baseIndent);
+        const level = Math.floor(relativeIndent / 4);
+        const content = (isOrdered ? orderedListMatch[3] : unorderedListMatch[2]) || "";
+        const startNumber = isOrdered
+          ? Number.parseInt(orderedListMatch[2], 10)
+          : 1;
+        renderListItem({
+          type: nextListType,
+          level,
+          content,
+          startNumber,
+        });
       }
       return;
     }
 
-    closeList();
+    closeAllLists();
     closeTable();
 
     if (trimmed === "") {
@@ -192,7 +294,7 @@ export function renderMarkdown(text, options = {}) {
     }
   });
 
-  closeList();
+  closeAllLists();
   closeTable();
   return html;
 }
@@ -311,7 +413,6 @@ export function parseTasks(text) {
       return;
     }
     const raw = line;
-    const trimmed = raw.trim();
     const taskMatch = raw.match(/^(\s*)%\s+(.*)$/);
     if (taskMatch) {
       const indent = taskMatch[1].length;
@@ -326,6 +427,7 @@ export function parseTasks(text) {
         name,
         jiraKey: parsedTitle.key,
         depth,
+        indent,
         parent: null,
         tags: [],
         people: [],
@@ -333,6 +435,8 @@ export function parseTasks(text) {
         description: [],
         descriptionLineIndexes: [],
         references: [],
+        incomingReferenceCount: 0,
+        incomingReferences: [],
         children: [],
         lineIndex: index,
       };
@@ -359,12 +463,13 @@ export function parseTasks(text) {
       return;
     }
 
-    if (!currentTask || trimmed === "") {
+    const descriptionLine = raw.replace(/\s+$/g, "");
+    if (!currentTask || descriptionLine.trim() === "") {
       return;
     }
-    currentTask.description.push(trimmed);
+    currentTask.description.push(descriptionLine);
     currentTask.descriptionLineIndexes.push(index);
-    const tagMatches = trimmed.matchAll(/(^|\s)(#[^\s#@]+)/g);
+    const tagMatches = descriptionLine.matchAll(/(^|\s)(#[^\s#@]+)/g);
     for (const match of tagMatches) {
       const tag = match[2];
       if (tag && tag.length > 1) {
@@ -376,7 +481,7 @@ export function parseTasks(text) {
         }
       }
     }
-    const personMatches = trimmed.matchAll(/(^|\s)(@[^\s#@]+)/g);
+    const personMatches = descriptionLine.matchAll(/(^|\s)(@[^\s#@]+)/g);
     for (const match of personMatches) {
       const person = match[2];
       if (person && person.length > 1) {
@@ -388,11 +493,14 @@ export function parseTasks(text) {
         }
       }
     }
-    const matches = trimmed.matchAll(/\{([^}]+)\}/g);
+    const matches = descriptionLine.matchAll(/\{([^}]+)\}/g);
     for (const match of matches) {
-      currentTask.references.push(match[1]);
+      const reference = match[1].trim();
+      if (reference) {
+        currentTask.references.push(reference);
+      }
     }
-    const stateMatches = trimmed.matchAll(/(^|\s)(![^\s#@]+)/g);
+    const stateMatches = descriptionLine.matchAll(/(^|\s)(![^\s#@]+)/g);
     for (const match of stateMatches) {
       const stateTag = match[2];
       if (!stateTag || stateTag.length <= 1) {
@@ -424,6 +532,32 @@ export function parseTasks(text) {
   };
   collect(tasks);
 
+  const incomingReferenceTasksByName = new Map();
+  allTasks.forEach((task) => {
+    const uniqueReferences = new Set(
+      task.references
+        .map((reference) => (typeof reference === "string" ? reference.trim() : ""))
+        .filter(Boolean)
+    );
+    uniqueReferences.forEach((key) => {
+      const existing = incomingReferenceTasksByName.get(key);
+      if (existing) {
+        existing.push(task);
+      } else {
+        incomingReferenceTasksByName.set(key, [task]);
+      }
+    });
+  });
+  const incomingReferenceCountByName = new Map();
+  incomingReferenceTasksByName.forEach((references, name) => {
+    incomingReferenceCountByName.set(name, references.length);
+  });
+  allTasks.forEach((task) => {
+    const key = typeof task.name === "string" ? task.name.trim() : "";
+    task.incomingReferences = key ? [...(incomingReferenceTasksByName.get(key) || [])] : [];
+    task.incomingReferenceCount = task.incomingReferences.length;
+  });
+
   return {
     tasks,
     tags,
@@ -436,5 +570,6 @@ export function parseTasks(text) {
     tagMeta,
     peopleMeta,
     stateMeta,
+    incomingReferenceCountByName,
   };
 }

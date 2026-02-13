@@ -4,7 +4,9 @@
   "description": "Task Script Board is a script-first planner with live code, graph, and kanban views, collaborative spaces/folders, role-based user management, Jira/profile settings, slug rename tools, and persistent sessions.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run test:unit",
+    "test:unit": "node --test tests/task.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js",
+    "test:e2e": "node --test tests/app.e2e.test.js && node --test tests/backend.contract.e2e.test.js"
   },
   "keywords": [],
   "author": "",

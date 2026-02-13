@@ -12,7 +12,7 @@ from ypy_websocket.websocket_provider import WebsocketProvider
 logger = logging.getLogger("jira-worker")
 
 WS_BASE_URL = "ws://localhost:5000/ws"
-SERVER_USER = "user"
+SERVER_USER = "admin"
 SERVER_PASSWORD = "devtoken"
 
 REFERENCE_RE = re.compile(r"\{([^}]+)\}")

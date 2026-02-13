@@ -3,6 +3,7 @@ import base64
 import json
 import hashlib
 import logging
+import os
 import re
 import secrets
 import time
@@ -1990,7 +1991,12 @@ async def main() -> None:
     migrate_legacy_space_config_to_filesystem()
     load_users_store()
     await scan_ystore_files()
-    config = uvicorn.Config(app, host="0.0.0.0", port=5000, log_level="info")
+    port_value = os.getenv("PORT", "5000").strip()
+    try:
+        port = int(port_value)
+    except ValueError:
+        port = 5000
+    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
     server = uvicorn.Server(config)
     async with websocket_server:
         await server.serve()
