@@ -5497,7 +5497,6 @@ async function connectToSpace(spaceId, spacePath = "") {
   updateConnectButtonLabel();
   updateBoardConnectionLabel();
   startPresenceHeartbeat(spaceId);
-  hydrateFromRemote(spaceId, ytext);
 
   provider.on("status", ({ status }) => {
     if (!navigator.onLine) {
