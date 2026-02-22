@@ -21,3 +21,6 @@ Thumbs.db
 __pycache__
 .ystore
 backend/jira/jira_config.json
+backend/users_config.json
+backend/sessions.json
+backend/spaces/**

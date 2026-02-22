@@ -284,6 +284,11 @@ const dom = {
   slugRenameNew: document.getElementById("slug-rename-new"),
   slugRenameCancel: document.getElementById("slug-rename-cancel"),
   slugRenameSave: document.getElementById("slug-rename-save"),
+  boardRenameModal: document.getElementById("board-rename-modal"),
+  boardRenameClose: document.getElementById("board-rename-close"),
+  boardRenameInput: document.getElementById("board-rename-input"),
+  boardRenameCancel: document.getElementById("board-rename-cancel"),
+  boardRenameSave: document.getElementById("board-rename-save"),
   taskTrash: document.getElementById("task-trash"),
   taskDeleteModal: document.getElementById("task-delete-modal"),
   taskDeleteMessage: document.getElementById("task-delete-message"),
@@ -321,6 +326,8 @@ const dom = {
   tagList: document.getElementById("tag-list"),
   personList: document.getElementById("person-list"),
   clearFilters: document.getElementById("clear-filters"),
+  storyPointsSummaryGraph: document.getElementById("story-points-summary-graph"),
+  storyPointsSummaryKanban: document.getElementById("story-points-summary-kanban"),
   graphCanvas: document.getElementById("graph-canvas"),
   divider: document.getElementById("divider"),
   spellcheckToggleMain: document.getElementById("spellcheck-toggle-main"),
@@ -372,6 +379,7 @@ const state = {
   tagMeta: new Map(),
   peopleMeta: new Map(),
   stateMeta: new Map(),
+  totalStoryPoints: 0,
   selectedTags: new Set(),
   selectedPeople: new Set(),
   collapsed: new Set(),
@@ -463,6 +471,7 @@ const collab = {
   username: "",
   displayName: "",
   role: "user",
+  mustChangePassword: false,
   permissions: {
     can_manage_spaces: false,
     can_manage_jira: false,
@@ -482,6 +491,7 @@ let pendingDeleteFolder = null;
 let pendingDeleteUser = null;
 let pendingPasswordUser = null;
 let pendingSlugRename = null;
+let pendingBoardRename = false;
 let createUserSpacesPicker = null;
 let toastContainer = null;
 let lastToast = { message: "", kind: "", at: 0 };
@@ -588,6 +598,10 @@ function applySessionFromServer(data) {
     }
   }
   collab.permissions = normalizePermissions(data.permissions);
+  collab.mustChangePassword = Boolean(
+    data.must_change_password
+    ?? (serverUser && serverUser.must_change_password)
+  );
   const displayLabel = collab.displayName || collab.username || "user";
   collab.identity = getCollabIdentity(displayLabel);
   updateRoleVisibility();
@@ -669,6 +683,7 @@ function applyAuthFromInputs({ store = true, markDirty = true } = {}) {
     collab.isAuthenticated = false;
     collab.displayName = "";
     collab.role = "user";
+    collab.mustChangePassword = false;
     collab.permissions = normalizePermissions(null);
   }
   if (collab.bindingOptions) {
@@ -1001,6 +1016,7 @@ const canvasController = createCanvas({
     buildTagPersonLists();
     buildKanban();
     updateClearFiltersVisibility();
+    renderStoryPointsSummary();
   },
 });
 
@@ -1085,6 +1101,7 @@ function handleEditorSelection(line) {
     canvasController.focusOnTask(task);
     canvasController.renderGraph();
     buildKanban();
+    renderStoryPointsSummary();
   } else {
     editorController.updateSelectedLine();
   }
@@ -1108,6 +1125,7 @@ function selectTask(task) {
   canvasController.focusOnTask(task);
   canvasController.renderGraph();
   buildKanban();
+  renderStoryPointsSummary();
 }
 
 function buildTagPersonLists() {
@@ -1149,16 +1167,89 @@ function buildTagPersonLists() {
   });
   const peopleLegendGroup = dom.personList?.closest(".legend-group");
   const tagsLegendGroup = dom.tagList?.closest(".legend-group");
+  const storyPointsLegendGroup = dom.storyPointsSummaryGraph?.closest(".legend-group");
   if (peopleLegendGroup) {
     peopleLegendGroup.hidden = people.length === 0;
   }
   if (tagsLegendGroup) {
     tagsLegendGroup.hidden = tags.length === 0;
   }
+  if (storyPointsLegendGroup) {
+    storyPointsLegendGroup.hidden = !(Number.isFinite(state.totalStoryPoints) && state.totalStoryPoints > 0);
+  }
+  const visibleLegendParts = [
+    !peopleLegendGroup?.hidden ? "people" : "",
+    !storyPointsLegendGroup?.hidden ? "story" : "",
+    !tagsLegendGroup?.hidden ? "tags" : "",
+  ].filter(Boolean);
+  if (dom.legend) {
+    dom.legend.dataset.legendLayout = visibleLegendParts.join("-") || "empty";
+  }
   const hasVisibleLegendGroups =
     (Boolean(peopleLegendGroup) && !peopleLegendGroup.hidden)
-    || (Boolean(tagsLegendGroup) && !tagsLegendGroup.hidden);
+    || (Boolean(tagsLegendGroup) && !tagsLegendGroup.hidden)
+    || (Boolean(storyPointsLegendGroup) && !storyPointsLegendGroup.hidden);
   setLegendHasVisibleContent(hasVisibleLegendGroups);
+}
+
+function formatStoryPointsNumber(value) {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+  return Number.isInteger(value) ? String(value) : String(value);
+}
+
+function renderStoryPointsSummary() {
+  const targets = [dom.storyPointsSummaryGraph, dom.storyPointsSummaryKanban].filter(Boolean);
+  if (!targets.length) {
+    return;
+  }
+  const total = Number.isFinite(state.totalStoryPoints) ? state.totalStoryPoints : 0;
+  const hasSearchSelection = Boolean(state.searchQuery && state.searchQuery.trim());
+  const hasFilterSelection = Boolean(filtersActive());
+  const hasSelection = hasSearchSelection || hasFilterSelection;
+  let selectedTotal = null;
+  if (hasSelection) {
+    const selectedTasks = new Set();
+    state.allTasks.forEach((task) => {
+      const selectedBySearch = hasSearchSelection && matchesSearchTask(task);
+      const selectedByFilters = hasFilterSelection && matchesFilters(task);
+      if (selectedBySearch || selectedByFilters) {
+        selectedTasks.add(task.id);
+      }
+    });
+    selectedTotal = 0;
+    state.allTasks.forEach((task) => {
+      if (!selectedTasks.has(task.id)) {
+        return;
+      }
+      let ancestor = task.parent;
+      while (ancestor) {
+        if (selectedTasks.has(ancestor.id)) {
+          return;
+        }
+        ancestor = ancestor.parent;
+      }
+      selectedTotal += Number.isFinite(task.storyPointsTotal) ? task.storyPointsTotal : 0;
+    });
+  }
+  const hasAnyPoints = total > 0 || (selectedTotal !== null && selectedTotal > 0);
+  targets.forEach((pill) => {
+    if (!hasAnyPoints) {
+      pill.hidden = true;
+      pill.textContent = "";
+      pill.title = "";
+      return;
+    }
+    pill.hidden = false;
+    if (hasSelection && selectedTotal !== null) {
+      pill.textContent = `★ ${formatStoryPointsNumber(selectedTotal)} out of ${formatStoryPointsNumber(total)}`;
+      pill.title = "Story points";
+    } else {
+      pill.textContent = `★ ${formatStoryPointsNumber(total)}`;
+      pill.title = "Story points";
+    }
+  });
 }
 
 function sync() {
@@ -1179,6 +1270,7 @@ function sync() {
     peopleMeta,
     stateMeta,
     incomingReferenceCountByName,
+    totalStoryPoints,
   } = parseTasks(sourceText);
   applyStableTaskIds({ allTasks });
   state.tasks = tasks;
@@ -1192,6 +1284,7 @@ function sync() {
   state.peopleMeta = peopleMeta;
   state.stateMeta = stateMeta;
   state.incomingReferenceCountByName = incomingReferenceCountByName;
+  state.totalStoryPoints = totalStoryPoints;
   trackOfflineDraftChange(sourceText);
   if (dom.boardTitle) {
     const title = config.boardName || "Task Script";
@@ -1205,6 +1298,7 @@ function sync() {
   buildTagPersonLists();
   buildKanban();
   canvasController.renderGraph();
+  renderStoryPointsSummary();
   editorController.updateSuggestions();
   updateClearFiltersVisibility();
 }
@@ -1268,6 +1362,7 @@ function parseTaskBody(text) {
   const tags = new Set();
   const people = new Set();
   let stateToken = null;
+  let storyPoints = null;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     let match;
@@ -1285,12 +1380,22 @@ function parseTaskBody(text) {
         stateToken = stateMatch[2];
       }
     }
+    if (storyPoints === null) {
+      const storyMatch = line.match(/(^|\s)~(\d+(?:\.\d+)?)(?=\s|$)/);
+      if (storyMatch) {
+        const parsedPoints = Number.parseFloat(storyMatch[2]);
+        if (Number.isFinite(parsedPoints)) {
+          storyPoints = parsedPoints;
+        }
+      }
+    }
   }
   return {
     descriptionText: lines.join("\n"),
     tags: Array.from(tags),
     people: Array.from(people),
     state: stateToken,
+    storyPoints,
   };
 }
 
@@ -1633,6 +1738,7 @@ function updateTaskEditPreviewFromText(text) {
   const displayKey = jiraKey || editingTaskJiraKey;
   updateTaskEditJiraPill(displayKey);
   const displayTitle = jiraTitle || "Untitled task";
+  const formatStoryPoints = (value) => (Number.isInteger(value) ? String(value) : String(value));
   dom.taskEditPreview.innerHTML = "";
   const card = document.createElement("div");
   card.className = "task-preview-card";
@@ -1665,6 +1771,13 @@ function updateTaskEditPreviewFromText(text) {
     header.appendChild(pill);
   }
   card.appendChild(header);
+  if (Number.isFinite(parsed.storyPoints)) {
+    const storyPill = document.createElement("span");
+    storyPill.className = "pill story-points-pill task-story-points-corner";
+    storyPill.textContent = `★ ${formatStoryPoints(parsed.storyPoints)}`;
+    storyPill.title = "Story points";
+    card.appendChild(storyPill);
+  }
   const desc = document.createElement("div");
   desc.className = "description";
   const descriptionLines = (parsed.descriptionText || "").replace(/\r/g, "").split("\n");
@@ -1675,6 +1788,7 @@ function updateTaskEditPreviewFromText(text) {
       const content = rawLine
         .slice(indent.length)
         .replace(/(^|\s)![^\s#@]+/g, "$1")
+        .replace(/(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g, "$1")
         .replace(/\s{2,}/g, " ")
         .trim();
       return content ? `${indent}${content}` : "";
@@ -1902,6 +2016,69 @@ function closeTaskEditModal() {
   editingTaskJiraKey = null;
   creatingTask = false;
   updateTaskEditJiraPill(null);
+}
+
+function normalizeBoardNameInput(value) {
+  const raw = typeof value === "string" ? value : "";
+  const trimmed = raw.trim().replace(/:+\s*$/, "").trim();
+  return trimmed || "Task Script";
+}
+
+function updateBoardNameInEditor(nextBoardName) {
+  if (!editorController) {
+    return;
+  }
+  const normalizedBoardName = normalizeBoardNameInput(nextBoardName);
+  const headerLine = `${normalizedBoardName}:`;
+  const lines = editorController.getValue().replace(/\r/g, "").split("\n");
+  const firstTrimmed = (lines[0] || "").trim();
+  const hasExplicitHeader =
+    Boolean(firstTrimmed)
+    && !firstTrimmed.startsWith("%")
+    && firstTrimmed.endsWith(":");
+  if (hasExplicitHeader) {
+    lines[0] = headerLine;
+  } else {
+    lines.unshift(headerLine);
+  }
+  forceEditorRefresh(lines.join("\n"), { collapseSelection: true });
+}
+
+function openBoardRenameModal() {
+  if (!dom.boardRenameModal || !dom.boardRenameInput) {
+    return;
+  }
+  pendingBoardRename = true;
+  const currentBoardName = normalizeBoardNameInput(
+    state.config?.boardName || dom.boardTitle?.textContent || "Task Script"
+  );
+  dom.boardRenameInput.value = currentBoardName;
+  dom.boardRenameModal.classList.remove("hidden");
+  dom.boardRenameInput.focus();
+  dom.boardRenameInput.select();
+}
+
+function closeBoardRenameModal() {
+  if (!dom.boardRenameModal) {
+    return;
+  }
+  dom.boardRenameModal.classList.add("hidden");
+  pendingBoardRename = false;
+}
+
+function submitBoardRename() {
+  if (!pendingBoardRename) {
+    closeBoardRenameModal();
+    return;
+  }
+  const nextBoardName = normalizeBoardNameInput(dom.boardRenameInput?.value || "");
+  const currentBoardName = normalizeBoardNameInput(
+    state.config?.boardName || dom.boardTitle?.textContent || "Task Script"
+  );
+  if (nextBoardName !== currentBoardName) {
+    updateBoardNameInEditor(nextBoardName);
+  }
+  closeBoardRenameModal();
 }
 
 function openSlugRenameModal(token) {
@@ -4846,8 +5023,13 @@ async function attemptLogin() {
     closeLoginModal();
     openSpacesModal();
     showToast("Logged in.");
+    if (collab.mustChangePassword) {
+      showToast("Change the default admin password.", "error");
+      openProfileModal();
+    }
   } catch (error) {
     collab.isAuthenticated = false;
+    collab.mustChangePassword = false;
     collab.permissions = normalizePermissions(null);
     updateRoleVisibility();
     updateConnectButtonLabel();
@@ -4880,6 +5062,7 @@ async function restoreSessionFromCookie() {
     }
   } catch {
     collab.isAuthenticated = false;
+    collab.mustChangePassword = false;
     collab.permissions = normalizePermissions(null);
     updateRoleVisibility();
     updateConnectButtonLabel();
@@ -4893,6 +5076,7 @@ async function logout() {
   collab.username = "";
   collab.displayName = "";
   collab.role = "user";
+  collab.mustChangePassword = false;
   collab.permissions = normalizePermissions(null);
   collab.authToken = AUTH_TOKEN;
   collab.identity = getCollabIdentity("user");
@@ -5115,14 +5299,27 @@ function updateConnectButtonLabel() {
   if (!dom.connectButton) {
     return;
   }
+  let buttonText = "Login";
   if (collab.spaceId || collab.isAuthenticated) {
     setButtonIcon(dom.connectButton, "fa-right-left");
     dom.connectButton.title = "Switch space";
     dom.connectButton.setAttribute("aria-label", "Switch space");
+    buttonText = "Switch";
   } else {
     setButtonIcon(dom.connectButton, "fa-cloud");
     dom.connectButton.title = "Login";
     dom.connectButton.setAttribute("aria-label", "Login");
+    buttonText = "Login";
+  }
+  if (dom.connectButton.classList.contains("topbar-connect-button")) {
+    const labels = Array.from(dom.connectButton.querySelectorAll("span"));
+    let label = labels[0] || null;
+    if (!label) {
+      label = document.createElement("span");
+      dom.connectButton.appendChild(label);
+    }
+    label.textContent = buttonText;
+    labels.slice(1).forEach((extra) => extra.remove());
   }
   updateRoleVisibility();
   updateBoardConnectionLabel();
@@ -5674,6 +5871,40 @@ if (dom.graphAddTask) {
   });
 }
 
+if (dom.boardTitle) {
+  dom.boardTitle.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    openBoardRenameModal();
+  });
+}
+
+if (dom.boardRenameClose) {
+  dom.boardRenameClose.addEventListener("click", () => {
+    closeBoardRenameModal();
+  });
+}
+
+if (dom.boardRenameCancel) {
+  dom.boardRenameCancel.addEventListener("click", () => {
+    closeBoardRenameModal();
+  });
+}
+
+if (dom.boardRenameSave) {
+  dom.boardRenameSave.addEventListener("click", () => {
+    submitBoardRename();
+  });
+}
+
+if (dom.boardRenameInput) {
+  dom.boardRenameInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      submitBoardRename();
+    }
+  });
+}
+
 if (dom.slugRenameClose) {
   dom.slugRenameClose.addEventListener("click", () => {
     closeSlugRenameModal();
@@ -5999,6 +6230,7 @@ dom.searchInput.addEventListener("input", () => {
   canvasController.renderGraph();
   buildKanban();
   updateClearFiltersVisibility();
+  renderStoryPointsSummary();
 });
 
 dom.searchInput.addEventListener("keydown", (event) => {
@@ -6015,6 +6247,7 @@ dom.searchInput.addEventListener("keydown", (event) => {
   canvasController.renderGraph();
   buildKanban();
   updateClearFiltersVisibility();
+  renderStoryPointsSummary();
 });
 
 [dom.kanbanGroup].filter(Boolean).forEach((group) => {
@@ -6032,6 +6265,7 @@ dom.searchInput.addEventListener("keydown", (event) => {
     canvasController.renderGraph();
     buildKanban();
     updateClearFiltersVisibility();
+    renderStoryPointsSummary();
   });
 });
 
@@ -6044,6 +6278,7 @@ dom.clearFilters.addEventListener("click", () => {
   buildTagPersonLists();
   buildKanban();
   updateClearFiltersVisibility();
+  renderStoryPointsSummary();
 });
 
 let resizing = false;

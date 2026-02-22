@@ -250,7 +250,7 @@ def _remove_tokens_from_line(
         if token_value in targets:
             continue
         kept.append(part)
-    return "".join(kept).strip()
+    return re.sub(r"\s+", " ", "".join(kept)).strip()
 
 
 def _remove_state_token_from_line(line: str, desired_state) -> str:

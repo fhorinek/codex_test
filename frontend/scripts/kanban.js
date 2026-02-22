@@ -15,6 +15,31 @@ function lightenColor(color, amount = 0.4) {
   return `#${toHex(mix(r))}${toHex(mix(g))}${toHex(mix(b))}`;
 }
 
+function formatStoryPointsNumber(value) {
+  if (!Number.isFinite(value)) {
+    return "0";
+  }
+  return Number.isInteger(value) ? String(value) : String(value);
+}
+
+function buildTaskStoryPointsLabel(task) {
+  if (!task) {
+    return "";
+  }
+  const own = Number.isFinite(task.storyPoints) ? task.storyPoints : null;
+  const subtask = Number.isFinite(task.storyPointsSubtasksTotal) ? task.storyPointsSubtasksTotal : 0;
+  if (own !== null) {
+    if (subtask > 0) {
+      return `★ ${formatStoryPointsNumber(own)} + ${formatStoryPointsNumber(subtask)}`;
+    }
+    return `★ ${formatStoryPointsNumber(own)}`;
+  }
+  if (subtask > 0) {
+    return `★ +${formatStoryPointsNumber(subtask)}`;
+  }
+  return "";
+}
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -292,6 +317,7 @@ function renderKanbanCardContent({
   const metaWrap = document.createElement("div");
   metaWrap.className = "kanban-card-meta";
   let hasMeta = false;
+  const storyPointsLabel = buildTaskStoryPointsLabel(task);
   if (task.people.length) {
     const person = task.people[0];
     const meta = state.peopleMeta?.get(person);
@@ -324,6 +350,12 @@ function renderKanbanCardContent({
   }
   if (hasMeta) {
     card.appendChild(metaWrap);
+  }
+  if (storyPointsLabel) {
+    const storyPill = document.createElement("span");
+    storyPill.className = "pill story-points-pill task-story-points-corner";
+    storyPill.textContent = storyPointsLabel;
+    card.appendChild(storyPill);
   }
   if (matchesSearchTask(task)) {
     card.classList.add("kanban-search");

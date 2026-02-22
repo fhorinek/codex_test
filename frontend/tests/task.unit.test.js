@@ -195,3 +195,29 @@ test("parseTasks trims whitespace-only padding inside reference braces", async (
   assert.ok(task);
   assert.deepEqual(task.references, ["Trim Me"]);
 });
+
+// Verifies "~n" story-point token parsing and recursive totals across subtasks.
+test("parseTasks parses story points and computes recursive totals", async () => {
+  const { parseTasks } = await loadTaskModule();
+  const parsed = parseTasks(
+    "% Parent\n~3\n    % Child A\n    ~2\n    % Child B\n        % Grandchild\n        ~1\n"
+  );
+
+  const parent = parsed.tasks[0];
+  const childA = parent.children[0];
+  const childB = parent.children[1];
+  const grandchild = childB.children[0];
+
+  assert.equal(parent.storyPoints, 3);
+  assert.equal(childA.storyPoints, 2);
+  assert.equal(childB.storyPoints, null);
+  assert.equal(grandchild.storyPoints, 1);
+
+  assert.equal(grandchild.storyPointsSubtasksTotal, 0);
+  assert.equal(grandchild.storyPointsTotal, 1);
+  assert.equal(childB.storyPointsSubtasksTotal, 1);
+  assert.equal(childB.storyPointsTotal, 1);
+  assert.equal(parent.storyPointsSubtasksTotal, 3);
+  assert.equal(parent.storyPointsTotal, 6);
+  assert.equal(parsed.totalStoryPoints, 6);
+});

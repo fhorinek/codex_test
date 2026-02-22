@@ -51,8 +51,8 @@ logger = logging.getLogger("server")
 SPACE_ID_RE = re.compile(r"[a-zA-Z0-9_-]+")
 VALID_ROLES = {"admin", "manager", "user"}
 PASSWORD_SALT_BYTES = 8
-DEFAULT_BOOTSTRAP_USERNAME = "user"
-DEFAULT_BOOTSTRAP_PASSWORD = "devtoken"
+DEFAULT_BOOTSTRAP_USERNAME = "admin"
+DEFAULT_BOOTSTRAP_PASSWORD = "admin"
 SESSION_COOKIE_NAME = "task_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
 PERSONAL_FOLDER_NAME = "personal"
@@ -69,6 +69,7 @@ class AuthUser:
     display_name: str
     role: str
     spaces: Tuple[str, ...]
+    must_change_password: bool = False
 
 
 def sanitize_space(space_id: str) -> str:
@@ -224,6 +225,7 @@ def normalize_user_record(username: str, raw: Any) -> Dict[str, Any]:
         "display_name": display_name,
         "role": role,
         "spaces": spaces,
+        "must_change_password": bool(source.get("must_change_password")),
         **password_record,
     }
 
@@ -505,6 +507,7 @@ def bootstrap_users_from_legacy() -> Dict[str, Dict[str, Any]]:
         "display_name": DEFAULT_BOOTSTRAP_USERNAME,
         "role": "admin",
         "spaces": [],
+        "must_change_password": True,
         **build_password_record(DEFAULT_BOOTSTRAP_PASSWORD),
     }
     return result
@@ -861,6 +864,7 @@ def user_record_to_auth(username: str, record: Dict[str, Any]) -> AuthUser:
         display_name=record.get("display_name", username),
         role=record.get("role", "user"),
         spaces=tuple(record.get("spaces", [])),
+        must_change_password=bool(record.get("must_change_password")),
     )
 
 
@@ -962,6 +966,7 @@ def serialize_auth(auth: AuthUser) -> Dict[str, Any]:
         "display_name": auth.display_name,
         "role": auth.role,
         "spaces": sorted(set(auth.spaces)),
+        "must_change_password": bool(auth.must_change_password),
     }
 
 
@@ -1324,6 +1329,7 @@ def login(
         "ok": True,
         "user": serialize_auth(auth),
         "permissions": serialize_permissions(auth),
+        "must_change_password": bool(auth.must_change_password),
     }
 
 
@@ -1345,6 +1351,7 @@ def read_me(request: Request, user: AuthUser = Depends(require_auth)) -> Dict[st
         "permissions": serialize_permissions(user),
         "spaces": list_visible_spaces(user),
         "last_space": last_space,
+        "must_change_password": bool(user.must_change_password),
     }
 
 
@@ -1375,6 +1382,7 @@ def update_me(
         if not verify_password(record, current_password):
             raise HTTPException(status_code=403, detail="Current password is incorrect.")
         record.update(build_password_record(password))
+        record["must_change_password"] = False
 
     users[user.username] = normalize_user_record(user.username, record)
     save_users_store(users)
@@ -1476,6 +1484,7 @@ def update_user(
                     status_code=403, detail="Current password is incorrect."
                 )
             target.update(build_password_record(password))
+            target["must_change_password"] = False
         users[target_username] = normalize_user_record(target_username, target)
         save_users_store(users)
         return {"ok": True, "user": user_view(target_username, users[target_username], user)}
@@ -1494,6 +1503,7 @@ def update_user(
         if not isinstance(password, str) or not password:
             raise HTTPException(status_code=400, detail="Password is required.")
         target.update(build_password_record(password))
+        target["must_change_password"] = False
     if "spaces" in payload:
         if not can_assign_space_access(user):
             raise HTTPException(status_code=403, detail="Not allowed.")

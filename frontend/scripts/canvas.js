@@ -27,6 +27,21 @@ export function createCanvas({
   let zoomRedrawTimeout = null;
   let openReferenceDropdown = null;
 
+  const formatStoryPointsNumber = (value) => {
+    if (!Number.isFinite(value)) {
+      return "0";
+    }
+    return Number.isInteger(value) ? String(value) : String(value);
+  };
+
+  const createStoryPointsPill = (label) => {
+    const pill = document.createElement("span");
+    pill.className = "pill story-points-pill";
+    pill.textContent = label;
+    pill.title = "Story points";
+    return pill;
+  };
+
   const copyToClipboard = async (text) => {
     if (!text) {
       return;
@@ -452,6 +467,15 @@ export function createCanvas({
     const header = document.createElement("div");
     header.className = "task-header";
     header.appendChild(title);
+    const ownStoryPoints = Number.isFinite(task.storyPoints) ? task.storyPoints : null;
+    const subtaskStoryPoints = Number.isFinite(task.storyPointsSubtasksTotal)
+      ? task.storyPointsSubtasksTotal
+      : 0;
+    const storyLabel = ownStoryPoints !== null
+      ? (subtaskStoryPoints > 0
+        ? `★ ${formatStoryPointsNumber(ownStoryPoints)} + ${formatStoryPointsNumber(subtaskStoryPoints)}`
+        : `★ ${formatStoryPointsNumber(ownStoryPoints)}`)
+      : (subtaskStoryPoints > 0 ? `★ +${formatStoryPointsNumber(subtaskStoryPoints)}` : "");
     if (task.state) {
       const statePill = document.createElement("span");
       statePill.className = "pill state-pill";
@@ -488,6 +512,7 @@ export function createCanvas({
         const content = rawLine
           .slice(indent.length)
           .replace(/(^|\s)![^\s#@]+/g, "$1")
+          .replace(/(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g, "$1")
           .replace(/\s{2,}/g, " ")
           .trim();
         return content ? `${indent}${content}` : "";
@@ -621,8 +646,18 @@ export function createCanvas({
         });
       });
     }
-    if (task.children.length) {
-      node.appendChild(toggle);
+    if (task.children.length || storyLabel) {
+      const cornerMeta = document.createElement("div");
+      cornerMeta.className = "task-corner-meta";
+      if (task.children.length) {
+        cornerMeta.appendChild(toggle);
+      }
+      if (storyLabel) {
+        const storyPill = createStoryPointsPill(storyLabel);
+        storyPill.classList.add("task-story-points-corner");
+        cornerMeta.appendChild(storyPill);
+      }
+      node.appendChild(cornerMeta);
     }
   };
 

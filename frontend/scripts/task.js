@@ -432,6 +432,9 @@ export function parseTasks(text) {
         tags: [],
         people: [],
         state: null,
+        storyPoints: null,
+        storyPointsSubtasksTotal: 0,
+        storyPointsTotal: 0,
         description: [],
         descriptionLineIndexes: [],
         references: [],
@@ -519,6 +522,15 @@ export function parseTasks(text) {
         invalidStateTags.set(index, lineInvalid);
       }
     }
+    if (currentTask.storyPoints === null) {
+      const storyMatch = descriptionLine.match(/(^|\s)~(\d+(?:\.\d+)?)(?=\s|$)/);
+      if (storyMatch) {
+        const parsedPoints = Number.parseFloat(storyMatch[2]);
+        if (Number.isFinite(parsedPoints)) {
+          currentTask.storyPoints = parsedPoints;
+        }
+      }
+    }
   });
 
   const allTasks = [];
@@ -531,6 +543,24 @@ export function parseTasks(text) {
     });
   };
   collect(tasks);
+
+  const computeStoryPointsTotal = (task) => {
+    const ownPoints = Number.isFinite(task.storyPoints) ? task.storyPoints : 0;
+    let subtaskPoints = 0;
+    task.children.forEach((child) => {
+      subtaskPoints += computeStoryPointsTotal(child);
+    });
+    task.storyPointsSubtasksTotal = subtaskPoints;
+    task.storyPointsTotal = ownPoints + subtaskPoints;
+    return task.storyPointsTotal;
+  };
+  tasks.forEach((task) => {
+    computeStoryPointsTotal(task);
+  });
+  const totalStoryPoints = tasks.reduce(
+    (sum, task) => sum + (Number.isFinite(task.storyPointsTotal) ? task.storyPointsTotal : 0),
+    0
+  );
 
   const incomingReferenceTasksByName = new Map();
   allTasks.forEach((task) => {
@@ -571,5 +601,6 @@ export function parseTasks(text) {
     peopleMeta,
     stateMeta,
     incomingReferenceCountByName,
+    totalStoryPoints,
   };
 }

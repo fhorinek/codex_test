@@ -22,12 +22,17 @@ if __package__ in (None, ""):
     from jira.config import JiraConfig, load_jira_config
     from jira.space import (
         SpaceSession,
+        add_reference_to_description,
         apply_linked_references,
         extract_linked_keys,
         format_token_line,
         normalize_reference_to_key,
         open_space_session,
         read_ydoc_text,
+        remove_people_from_line,
+        remove_reference_from_description,
+        remove_state_from_line,
+        remove_tags_from_line,
         replace_ydoc_text,
         scrub_body_tokens,
     )
@@ -36,12 +41,17 @@ else:
     from .config import JiraConfig, load_jira_config
     from .space import (
         SpaceSession,
+        add_reference_to_description,
         apply_linked_references,
         extract_linked_keys,
         format_token_line,
         normalize_reference_to_key,
         open_space_session,
         read_ydoc_text,
+        remove_people_from_line,
+        remove_reference_from_description,
+        remove_state_from_line,
+        remove_tags_from_line,
         replace_ydoc_text,
         scrub_body_tokens,
     )
@@ -78,6 +88,17 @@ STATE_TOKEN_RE = re.compile(r"(^|\s)!([^\s#@]+)")
 TAG_TOKEN_RE = re.compile(r"(^|\s)#([^\s#@]+)")
 PERSON_TOKEN_RE = re.compile(r"(^|\s)@([^\s#@]+)")
 REFERENCE_RE = re.compile(r"\{([^}]+)\}")
+
+TASK_MODIFY_ADD = "add"
+TASK_MODIFY_REMOVE = "remove"
+
+TASK_FIELD_TAG = "tag"
+TASK_FIELD_DESCRIPTION = "description"
+TASK_FIELD_REFERENCE = "reference"
+TASK_FIELD_PEOPLE = "people"
+TASK_FIELD_NAME = "name"
+TASK_FIELD_STATE = "state"
+TASK_FIELD_JIRAKEY = "jirakey"
 
 
 @dataclass
@@ -965,6 +986,192 @@ def set_task_description(
         f"{task.indent}{entry}" if entry else "" for entry in desc_lines
     ]
     lines[desc_start:desc_end] = new_block
+
+
+def modify_task(
+    lines: List[str],
+    task: ParsedTask,
+    operation: str,
+    field: str,
+    values: Optional[List[str]] = None,
+) -> None:
+    values = list(values or [])
+
+    if field == TASK_FIELD_TAG:
+        if operation == TASK_MODIFY_ADD:
+            desired_tags = _normalize_list(list(task.tags) + values)
+            ensure_task_tokens(lines, task, task.state, desired_tags, task.people)
+        elif operation == TASK_MODIFY_REMOVE:
+            remove_set = {value for value in values if value}
+            desired_tags = [tag for tag in task.tags if tag not in remove_set]
+            _, desc_start, desc_end = ensure_task_tokens(
+                lines,
+                task,
+                task.state,
+                desired_tags,
+                task.people,
+            )
+            updated_description_lines: List[str] = []
+            for line in task.description.split("\n"):
+                cleaned = remove_tags_from_line(line, values)
+                if cleaned:
+                    updated_description_lines.append(cleaned)
+            updated_description = "\n".join(updated_description_lines).rstrip()
+            set_task_description(
+                lines,
+                task,
+                updated_description,
+                desc_start,
+                desc_end,
+            )
+        else:
+            raise ValueError(f"unsupported operation for {field}: {operation}")
+        return
+
+    if field == TASK_FIELD_PEOPLE:
+        if operation == TASK_MODIFY_ADD:
+            desired_people = _normalize_list(list(task.people) + values)
+            ensure_task_tokens(lines, task, task.state, task.tags, desired_people)
+        elif operation == TASK_MODIFY_REMOVE:
+            remove_set = {value for value in values if value}
+            desired_people = [person for person in task.people if person not in remove_set]
+            _, desc_start, desc_end = ensure_task_tokens(
+                lines,
+                task,
+                task.state,
+                task.tags,
+                desired_people,
+            )
+            updated_description_lines: List[str] = []
+            for line in task.description.split("\n"):
+                cleaned = remove_people_from_line(line, values)
+                if cleaned:
+                    updated_description_lines.append(cleaned)
+            updated_description = "\n".join(updated_description_lines).rstrip()
+            set_task_description(
+                lines,
+                task,
+                updated_description,
+                desc_start,
+                desc_end,
+            )
+        else:
+            raise ValueError(f"unsupported operation for {field}: {operation}")
+        return
+
+    if field == TASK_FIELD_STATE:
+        if operation == TASK_MODIFY_ADD:
+            state = values[0] if values else ""
+            ensure_task_tokens(lines, task, state, task.tags, task.people)
+        elif operation == TASK_MODIFY_REMOVE:
+            _, desc_start, desc_end = ensure_task_tokens(
+                lines,
+                task,
+                None,
+                task.tags,
+                task.people,
+            )
+            updated_description_lines: List[str] = []
+            for line in task.description.split("\n"):
+                cleaned = remove_state_from_line(line)
+                if cleaned:
+                    updated_description_lines.append(cleaned)
+            updated_description = "\n".join(updated_description_lines).rstrip()
+            set_task_description(
+                lines,
+                task,
+                updated_description,
+                desc_start,
+                desc_end,
+            )
+        else:
+            raise ValueError(f"unsupported operation for {field}: {operation}")
+        return
+
+    if field == TASK_FIELD_REFERENCE:
+        updated_description = task.description
+        if operation == TASK_MODIFY_ADD:
+            for ref in values:
+                updated_description = add_reference_to_description(
+                    updated_description, ref
+                )
+        elif operation == TASK_MODIFY_REMOVE:
+            for ref in values:
+                updated_description = remove_reference_from_description(
+                    updated_description, ref
+                )
+        else:
+            raise ValueError(f"unsupported operation for {field}: {operation}")
+        set_task_description(
+            lines,
+            task,
+            updated_description,
+            task.desc_start,
+            task.desc_end,
+        )
+        return
+
+    if field == TASK_FIELD_DESCRIPTION:
+        if operation == TASK_MODIFY_ADD:
+            extra = "\n".join(value for value in values if value)
+            if task.description and extra:
+                updated_description = f"{task.description}\n{extra}"
+            else:
+                updated_description = task.description or extra
+        elif operation == TASK_MODIFY_REMOVE:
+            remove_set = {value for value in values if value}
+            kept_lines = [
+                line
+                for line in task.description.split("\n")
+                if line and line not in remove_set
+            ]
+            updated_description = "\n".join(kept_lines).rstrip()
+        else:
+            raise ValueError(f"unsupported operation for {field}: {operation}")
+        set_task_description(
+            lines,
+            task,
+            updated_description,
+            task.desc_start,
+            task.desc_end,
+        )
+        return
+
+    if field == TASK_FIELD_NAME:
+        if operation == TASK_MODIFY_ADD:
+            name = values[0] if values else ""
+            set_task_name(lines, task, name)
+        elif operation == TASK_MODIFY_REMOVE:
+            set_task_name(lines, task, "")
+        else:
+            raise ValueError(f"unsupported operation for {field}: {operation}")
+        return
+
+    if field == TASK_FIELD_JIRAKEY:
+        if operation == TASK_MODIFY_ADD:
+            jira_key = values[0] if values else ""
+            insert_jira_key(lines, task, jira_key)
+        elif operation == TASK_MODIFY_REMOVE:
+            lines[task.line_index] = build_task_line(task.indent, task.name, None)
+        else:
+            raise ValueError(f"unsupported operation for {field}: {operation}")
+        return
+
+    raise ValueError(f"unsupported field: {field}")
+
+
+def modify_task_text(
+    input_text: str,
+    operation: str,
+    field: str,
+    values: Optional[List[str]] = None,
+) -> str:
+    lines = input_text.split("\n")
+    tasks = parse_tasks(lines)
+    if len(tasks) != 1:
+        raise ValueError("expected exactly one task in input_text")
+    modify_task(lines, tasks[0], operation, field, values)
+    return "\n".join(lines)
 
 
 def map_state_to_jira(state: Optional[str], project_key: Optional[str] = None) -> Optional[str]:
