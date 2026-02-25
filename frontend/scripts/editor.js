@@ -1407,6 +1407,10 @@ export function createEditor({
       setSpellcheckEnabled: () => { },
       undo: () => { },
       redo: () => { },
+      getDisplaySelectionRects: () => [],
+      getDisplayCursorRects: () => [],
+      syncOverlayMetrics: () => { },
+      setCollabExtensions: () => { },
     };
   }
 
@@ -1419,6 +1423,7 @@ export function createEditor({
   let modifierNavActive = false;
   const themeCompartment = new Compartment();
   const contentAttrCompartment = new Compartment();
+  const collabCompartment = new Compartment();
   const initialDarkTheme = document.documentElement.dataset.theme === "dark";
   let spellcheckEnabled = Boolean(spellcheck);
   const scopedSpellcheckEnabled = Boolean(scopedSpellcheck);
@@ -1437,6 +1442,81 @@ export function createEditor({
     });
 
   const completionSource = taskScriptCompletionSource(state);
+
+  const syncTextareaOverlayMetrics = () => {
+    if (!textarea || !view?.scrollDOM || !view?.contentDOM) {
+      return;
+    }
+    const wrapper = textarea.offsetParent instanceof HTMLElement
+      ? textarea.offsetParent
+      : textarea.parentElement;
+    if (!wrapper) {
+      return;
+    }
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const scrollerRect = view.scrollDOM.getBoundingClientRect();
+    const contentRect = view.contentDOM.getBoundingClientRect();
+    if (!wrapperRect.width || !wrapperRect.height || !scrollerRect.width || !scrollerRect.height) {
+      return;
+    }
+
+    // Align the hidden textarea to the visible CodeMirror content area so y-textarea
+    // remote cursor/selection overlays are positioned against the same text origin.
+    const contentInsetX = (contentRect.left - scrollerRect.left) + view.scrollDOM.scrollLeft;
+    const contentInsetY = (contentRect.top - scrollerRect.top) + view.scrollDOM.scrollTop;
+    let linePaddingLeft = 0;
+    let linePaddingRight = 0;
+    const sampleLine = view.contentDOM.querySelector(".cm-line");
+    if (sampleLine instanceof HTMLElement) {
+      const lineStyles = getComputedStyle(sampleLine);
+      linePaddingLeft = parseFloat(lineStyles.paddingLeft || "0") || 0;
+      linePaddingRight = parseFloat(lineStyles.paddingRight || "0") || 0;
+    }
+
+    const left = (scrollerRect.left - wrapperRect.left) + contentInsetX + linePaddingLeft;
+    const top = (scrollerRect.top - wrapperRect.top) + contentInsetY;
+    const width = Math.max(
+      1,
+      view.scrollDOM.clientWidth - contentInsetX - linePaddingLeft - linePaddingRight
+    );
+    const height = Math.max(1, view.scrollDOM.clientHeight - contentInsetY);
+
+    textarea.style.inset = "auto";
+    textarea.style.left = `${Math.max(0, left)}px`;
+    textarea.style.top = `${Math.max(0, top)}px`;
+    textarea.style.right = "auto";
+    textarea.style.bottom = "auto";
+    textarea.style.width = `${width}px`;
+    textarea.style.height = `${height}px`;
+    textarea.style.padding = "0";
+
+    const contentStyles = getComputedStyle(view.contentDOM);
+    const editorStyles = getComputedStyle(view.dom);
+    if (contentStyles.fontFamily) {
+      textarea.style.fontFamily = contentStyles.fontFamily;
+    }
+    if (contentStyles.fontSize) {
+      textarea.style.fontSize = contentStyles.fontSize;
+    }
+    if (contentStyles.lineHeight) {
+      textarea.style.lineHeight = contentStyles.lineHeight;
+    } else if (editorStyles.lineHeight) {
+      textarea.style.lineHeight = editorStyles.lineHeight;
+    }
+    const contentTextStyles = getComputedStyle(sampleLine || view.contentDOM);
+    if (contentTextStyles.letterSpacing) {
+      textarea.style.letterSpacing = contentTextStyles.letterSpacing;
+    }
+    if (contentTextStyles.fontWeight) {
+      textarea.style.fontWeight = contentTextStyles.fontWeight;
+    }
+    if (contentTextStyles.fontVariantLigatures) {
+      textarea.style.fontVariantLigatures = contentTextStyles.fontVariantLigatures;
+    }
+    if (contentTextStyles.tabSize) {
+      textarea.style.tabSize = contentTextStyles.tabSize;
+    }
+  };
 
   const updateListener = EditorView.updateListener.of((update) => {
     if (update.docChanged) {
@@ -1474,6 +1554,9 @@ export function createEditor({
       if (isUser && line !== null && line !== previousLine) {
         onSelectTask(line);
       }
+    }
+    if (update.docChanged || update.selectionSet || update.viewportChanged || update.geometryChanged) {
+      syncTextareaOverlayMetrics();
     }
   });
 
@@ -1526,6 +1609,7 @@ export function createEditor({
         selectedWhitespaceHighlighter,
         themeCompartment.of(themeExtension(initialDarkTheme)),
         contentAttrCompartment.of(contentAttributesExtension()),
+        collabCompartment.of([]),
         history(),
         indentUnit.of("    "),
         updateListener,
@@ -1561,6 +1645,7 @@ export function createEditor({
     textarea.setSelectionRange(selection.from, selection.to);
     textarea.scrollTop = view.scrollDOM.scrollTop;
     textarea.scrollLeft = view.scrollDOM.scrollLeft;
+    syncTextareaOverlayMetrics();
   }
 
   textarea.addEventListener("input", () => {
@@ -1583,14 +1668,37 @@ export function createEditor({
     textarea.scrollTop = view.scrollDOM.scrollTop;
     textarea.scrollLeft = view.scrollDOM.scrollLeft;
     textarea.dispatchEvent(new Event("scroll"));
+    syncTextareaOverlayMetrics();
   });
+
+  const resizeObserver = typeof ResizeObserver === "function"
+    ? new ResizeObserver(() => {
+      syncTextareaOverlayMetrics();
+    })
+    : null;
+  resizeObserver?.observe(host);
+  resizeObserver?.observe(view.scrollDOM);
 
   view.dom.addEventListener("focus", () => {
     if (typeof onFocusChange !== "function") {
       return;
     }
-    const selection = view.state.selection.main;
-    onFocusChange(true, selection.from, selection.to);
+    const emitFocusedSelection = () => {
+      if (!view.hasFocus) {
+        return;
+      }
+      const selection = view.state.selection.main;
+      onFocusChange(true, selection.from, selection.to);
+    };
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => {
+        emitFocusedSelection();
+      });
+    } else {
+      queueMicrotask(() => {
+        emitFocusedSelection();
+      });
+    }
   });
 
   view.dom.addEventListener("blur", () => {
@@ -1674,6 +1782,26 @@ export function createEditor({
     return line;
   };
 
+  const getVisibleRects = (selector) =>
+    Array.from(view.dom.querySelectorAll(selector))
+      .map((node) => {
+        const rect = node.getBoundingClientRect();
+        if (!rect || rect.width <= 0 || rect.height <= 0) {
+          return null;
+        }
+        const styles = getComputedStyle(node);
+        if (styles.display === "none" || styles.visibility === "hidden") {
+          return null;
+        }
+        return {
+          x: rect.x,
+          y: rect.y,
+          width: rect.width,
+          height: rect.height,
+        };
+      })
+      .filter(Boolean);
+
   return {
     getValue: () => view.state.doc.toString(),
     setValue: (nextValue) => {
@@ -1688,11 +1816,65 @@ export function createEditor({
       if (nextValue === view.state.doc.toString()) {
         return;
       }
+      const currentValue = view.state.doc.toString();
+      const selection = view.state.selection.main;
+      const scrollTop = view.scrollDOM.scrollTop;
+      const scrollLeft = view.scrollDOM.scrollLeft;
+
+      // Preserve local caret/selection when remote edits arrive by mapping the
+      // current selection through a minimal whole-document diff.
+      let prefix = 0;
+      const maxPrefix = Math.min(currentValue.length, nextValue.length);
+      while (prefix < maxPrefix && currentValue[prefix] === nextValue[prefix]) {
+        prefix += 1;
+      }
+      let suffix = 0;
+      const maxSuffix = Math.min(
+        currentValue.length - prefix,
+        nextValue.length - prefix
+      );
+      while (
+        suffix < maxSuffix &&
+        currentValue[currentValue.length - 1 - suffix] ===
+          nextValue[nextValue.length - 1 - suffix]
+      ) {
+        suffix += 1;
+      }
+      const oldReplaceStart = prefix;
+      const oldReplaceEnd = currentValue.length - suffix;
+      const newReplace = nextValue.slice(prefix, nextValue.length - suffix);
+      const delta = nextValue.length - currentValue.length;
+      const adjustOffset = (pos) => {
+        if (pos <= oldReplaceStart) {
+          return pos;
+        }
+        if (pos >= oldReplaceEnd) {
+          return pos + delta;
+        }
+        return oldReplaceStart + newReplace.length;
+      };
+      const nextAnchor = Math.max(
+        0,
+        Math.min(nextValue.length, adjustOffset(selection.from))
+      );
+      const nextHead = Math.max(
+        0,
+        Math.min(nextValue.length, adjustOffset(selection.to))
+      );
+
       suppressTextareaUpdate = true;
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: nextValue },
+        selection: { anchor: nextAnchor, head: nextHead },
       });
       suppressTextareaUpdate = false;
+      view.scrollDOM.scrollTop = scrollTop;
+      view.scrollDOM.scrollLeft = scrollLeft;
+      if (textarea) {
+        textarea.scrollTop = scrollTop;
+        textarea.scrollLeft = scrollLeft;
+      }
+      syncTextareaOverlayMetrics();
     },
     replaceRange: (from, to, insert) => {
       view.dispatch({
@@ -1748,6 +1930,18 @@ export function createEditor({
     },
     redo: () => {
       redo(view);
+    },
+    getDisplaySelectionRects: () =>
+      getVisibleRects(".cm-selectionLayer .cm-selectionBackground"),
+    getDisplayCursorRects: () =>
+      getVisibleRects(".cm-cursorLayer .cm-cursor"),
+    syncOverlayMetrics: syncTextareaOverlayMetrics,
+    setCollabExtensions: (extensions = []) => {
+      const normalized = Array.isArray(extensions) ? extensions : [extensions];
+      view.dispatch({
+        effects: collabCompartment.reconfigure(normalized.filter(Boolean)),
+      });
+      syncTextareaOverlayMetrics();
     },
   };
 }

@@ -50,11 +50,11 @@ function insertTokenRespectState(line, token) {
   if (!trimmed) {
     return `${indent}${token}`;
   }
-  const stateMatch = trimmed.match(/(^|\s)(![^\s#@]+)/);
+  const stateMatch = trimmed.match(/(^|\s)(![^\s#@~]+)/);
   if (stateMatch) {
     const stateToken = stateMatch[2];
     const rest = normalizeContent(
-      trimmed.replace(/(^|\s)![^\s#@]+(?=\s|$)/g, "$1")
+      trimmed.replace(/(^|\s)![^\s#@~]+(?=\s|$)/g, "$1")
     );
     const combined = rest ? `${stateToken} ${token} ${rest}` : `${stateToken} ${token}`;
     return `${indent}${normalizeContent(combined)}`;
@@ -73,7 +73,30 @@ function findFirstNonEmptyLine(lines, start, end) {
 
 function lineHasTokens(line) {
   const { content } = splitIndent(line);
-  return /(^|\s)([#@!][^\s#@]+)/.test(content);
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return false;
+  }
+  return trimmed.split(/\s+/).every((part) => (
+    /^~\d+(?:\.\d+)?$/.test(part) || /^[#@!][^\s#@~]+$/.test(part)
+  ));
+}
+
+function isEstimateToken(token) {
+  return /^~\d+(?:\.\d+)?$/.test((token || "").trim());
+}
+
+function removeEstimateTokensFromContent(content) {
+  return normalizeContent(content.replace(/(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g, "$1"));
+}
+
+function appendEstimateTokenToLine(line, token) {
+  const { indent, content } = splitIndent(line);
+  const cleaned = removeEstimateTokensFromContent(content);
+  if (!cleaned) {
+    return `${indent}${token}`;
+  }
+  return `${indent}${normalizeContent(`${cleaned} ${token}`)}`;
 }
 
 function removeLeadingBlankLines(lines, start, end) {
@@ -194,6 +217,95 @@ function getIncomingReferenceTasks(task) {
   return unique;
 }
 
+function buildKanbanDescriptionText(task) {
+  if (!task || !Array.isArray(task.description) || !task.description.length) {
+    return "";
+  }
+  return task.description
+    .map((line) => {
+      const rawLine = typeof line === "string" ? line : "";
+      const indent = rawLine.match(/^\s*/)?.[0] || "";
+      const content = rawLine
+        .slice(indent.length)
+        .replace(/(^|\s)![^\s#@~]+/g, "$1")
+        .replace(/(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g, "$1")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      return content ? `${indent}${content}` : "";
+    })
+    .join("\n");
+}
+
+function renderKanbanDescription({ task, state, renderMarkdown, onToggleCheckbox }) {
+  const descriptionText = buildKanbanDescriptionText(task);
+  if (!descriptionText || !descriptionText.trim()) {
+    return null;
+  }
+  if (typeof renderMarkdown !== "function") {
+    const fallback = document.createElement("pre");
+    fallback.className = "kanban-card-description";
+    fallback.textContent = descriptionText;
+    return fallback;
+  }
+  const node = document.createElement("div");
+  node.className = "kanban-card-description description";
+  const lineIndexes = Array.isArray(task?.descriptionLineIndexes)
+    ? task.descriptionLineIndexes
+    : undefined;
+  node.innerHTML = renderMarkdown(descriptionText, {
+    lineIndexes,
+    baseIndent: Number.isFinite(task?.indent) ? task.indent : 0,
+  });
+
+  node.querySelectorAll(".references").forEach((link) => {
+    const referenceName = typeof link.dataset.ref === "string" ? link.dataset.ref.trim() : "";
+    const target = state.allTasks?.find((item) => (item?.name || "").trim() === referenceName);
+    if (!target) {
+      link.classList.add("unresolved");
+      link.title = "Reference target not found";
+    }
+  });
+
+  node.querySelectorAll(".inline-pill").forEach((pill) => {
+    const type = pill.dataset.type;
+    const value = pill.dataset.value;
+    if (type === "tag") {
+      const meta = state.tagMeta?.get(value);
+      pill.textContent = `#${meta?.name || value.replace("#", "")}`;
+      if (meta?.color) {
+        pill.style.borderColor = meta.color;
+      }
+    } else if (type === "person") {
+      const meta = state.peopleMeta?.get(value);
+      pill.textContent = `👤 ${meta?.name || value.replace("@", "")}`;
+      if (meta?.color) {
+        pill.style.borderColor = meta.color;
+      }
+    } else if (type === "jira") {
+      pill.textContent = value;
+    }
+  });
+
+  node.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
+    const rawLine = checkbox.dataset.line;
+    const lineIndex = Number.parseInt(rawLine, 10);
+    if (!Number.isFinite(lineIndex) || typeof onToggleCheckbox !== "function") {
+      checkbox.disabled = true;
+      checkbox.tabIndex = -1;
+      return;
+    }
+    checkbox.addEventListener("click", (event) => {
+      event.stopPropagation();
+    });
+    checkbox.addEventListener("change", (event) => {
+      event.stopPropagation();
+      onToggleCheckbox(lineIndex, Boolean(event.currentTarget?.checked));
+    });
+  });
+
+  return node;
+}
+
 function createReferenceIndicator(task, { selectTask, getTaskById }) {
   const referenceTasks = getIncomingReferenceTasks(task);
   const safeCount = referenceTasks.length;
@@ -255,6 +367,8 @@ function renderKanbanCardContent({
   card,
   task,
   state,
+  renderMarkdown,
+  onToggleCheckbox,
   matchesSearchTask,
   filtersActive,
   matchesFilters,
@@ -350,6 +464,15 @@ function renderKanbanCardContent({
   }
   if (hasMeta) {
     card.appendChild(metaWrap);
+  }
+  const descriptionNode = renderKanbanDescription({
+    task,
+    state,
+    renderMarkdown,
+    onToggleCheckbox,
+  });
+  if (descriptionNode) {
+    card.appendChild(descriptionNode);
   }
   if (storyPointsLabel) {
     const storyPill = document.createElement("span");
@@ -454,6 +577,8 @@ function createKanbanColumn({
   matchesSearchTask,
   filtersActive,
   matchesFilters,
+  renderMarkdown,
+  onToggleCheckbox,
   updateTaskState,
   existingCards,
   getTaskById,
@@ -482,6 +607,8 @@ function createKanbanColumn({
       card,
       task,
       state,
+      renderMarkdown,
+      onToggleCheckbox,
       matchesSearchTask,
       filtersActive,
       matchesFilters,
@@ -502,7 +629,10 @@ function createKanbanColumn({
     event.preventDefault();
     column.classList.add("drag-over");
   });
-  column.addEventListener("dragleave", () => {
+  column.addEventListener("dragleave", (event) => {
+    if (event.relatedTarget && column.contains(event.relatedTarget)) {
+      return;
+    }
     column.classList.remove("drag-over");
   });
   column.addEventListener("drop", (event) => {
@@ -514,6 +644,9 @@ function createKanbanColumn({
       return;
     }
     const nextState = column.dataset.stateTag;
+    if (task.state === nextState) {
+      return;
+    }
     updateTaskState(task, nextState);
   });
   return column;
@@ -522,12 +655,14 @@ function createKanbanColumn({
 export function buildKanban({
   state,
   dom,
+  renderMarkdown,
   selectTask,
   onEditTask,
   matchesSearchTask,
   filtersActive,
   matchesFilters,
   updateTaskState,
+  onToggleCheckbox,
   groupBy = "none",
 }) {
   if (!dom.kanbanBoard) {
@@ -589,6 +724,8 @@ export function buildKanban({
         matchesSearchTask,
         filtersActive,
         matchesFilters,
+        renderMarkdown,
+        onToggleCheckbox,
         updateTaskState,
         existingCards,
         getTaskById,
@@ -697,6 +834,8 @@ export function buildKanban({
         matchesSearchTask,
         filtersActive,
         matchesFilters,
+        renderMarkdown,
+        onToggleCheckbox,
         updateTaskState,
         existingCards: null,
         getTaskById,
@@ -756,8 +895,6 @@ export function updateTaskState({ task, newState, dom, sync, applyEditorValue })
         lines.splice(start, 0, `${indent}${newState}`, "");
       } else if (lineHasTokens(lines[firstNonEmpty])) {
         lines[firstNonEmpty] = prependTokenToLine(lines[firstNonEmpty], newState);
-      } else if (lines[start].trim() === "") {
-        lines[start] = `${indent}${newState}`;
       } else {
         lines.splice(start, 0, `${indent}${newState}`);
       }
@@ -789,8 +926,13 @@ export function updateTaskToken({ task, token, action, dom, sync, applyEditorVal
     end += 1;
   }
   const originalSlice = lines.slice(start, end);
-  const tokenMatch = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`);
-  const tokenReplace = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
+  const estimateToken = isEstimateToken(token);
+  const tokenMatch = estimateToken
+    ? /(^|\s)~\d+(?:\.\d+)?(?=\s|$)/
+    : new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`);
+  const tokenReplace = estimateToken
+    ? /(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g
+    : new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
   const hasToken = lines
     .slice(start, end)
     .some((line) => tokenMatch.test(splitIndent(line).content));
@@ -800,7 +942,9 @@ export function updateTaskToken({ task, token, action, dom, sync, applyEditorVal
       if (!tokenMatch.test(content)) {
         return line;
       }
-      const cleaned = normalizeContent(content.replace(tokenReplace, "$1"));
+      const cleaned = estimateToken
+        ? removeEstimateTokensFromContent(content)
+        : normalizeContent(content.replace(tokenReplace, "$1"));
       return cleaned ? `${lineIndent}${cleaned}` : "";
     };
     if (hasToken) {
@@ -812,9 +956,9 @@ export function updateTaskToken({ task, token, action, dom, sync, applyEditorVal
     if (firstNonEmpty === -1) {
       lines.splice(start, 0, `${indent}${token}`, "");
     } else if (lineHasTokens(lines[firstNonEmpty])) {
-      lines[firstNonEmpty] = insertTokenRespectState(lines[firstNonEmpty], token);
-    } else if (lines[start].trim() === "") {
-      lines[start] = `${indent}${token}`;
+      lines[firstNonEmpty] = estimateToken
+        ? appendEstimateTokenToLine(lines[firstNonEmpty], token)
+        : insertTokenRespectState(lines[firstNonEmpty], token);
     } else {
       lines.splice(start, 0, `${indent}${token}`);
     }
@@ -827,7 +971,9 @@ export function updateTaskToken({ task, token, action, dom, sync, applyEditorVal
       if (!tokenMatch.test(content)) {
         continue;
       }
-      const cleaned = normalizeContent(content.replace(tokenReplace, "$1"));
+      const cleaned = estimateToken
+        ? removeEstimateTokensFromContent(content)
+        : normalizeContent(content.replace(tokenReplace, "$1"));
       lines[i] = cleaned ? `${lineIndent}${cleaned}` : "";
     }
     const emptyIndexes = [];

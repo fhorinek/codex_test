@@ -8,17 +8,20 @@ from typing import Any
 import y_py as Y
 import websockets
 from ypy_websocket.websocket_provider import WebsocketProvider
+try:
+    from jira.config import load_jira_worker_credentials
+except ImportError:  # pragma: no cover
+    from .config import load_jira_worker_credentials
 
 logger = logging.getLogger("jira-worker")
 
 WS_BASE_URL = "ws://localhost:5000/ws"
-SERVER_USER = "admin"
-SERVER_PASSWORD = "devtoken"
 
 REFERENCE_RE = re.compile(r"\{([^}]+)\}")
 STATE_TOKEN_RE = re.compile(r"(^|\s)!([^\s#@]+)")
 TAG_TOKEN_RE = re.compile(r"(^|\s)#([^\s#@]+)")
 PERSON_TOKEN_RE = re.compile(r"(^|\s)@([^\s#@]+)")
+STORY_POINTS_RE = re.compile(r"(^|\s)~(\d+(?:\.\d+)?)(?=\s|$)")
 TOKEN_SPLIT_RE = re.compile(r"(\s+)")
 
 
@@ -184,13 +187,10 @@ def scrub_body_tokens(
             TAG_TOKEN_RE,
             invert=True,
         )
-        line = _remove_tokens_from_line(
-            line,
-            desired_people,
-            PERSON_TOKEN_RE,
-            invert=True,
-        )
+        # Preserve body @mentions as free-form content. Jira only manages a single owner.
         line = _remove_state_token_from_line(line, desired_state)
+        line = STORY_POINTS_RE.sub(" ", line)
+        line = re.sub(r"\s+", " ", line).strip()
         if line.strip() == "":
             continue
         cleaned_lines.append(line.strip())
@@ -331,7 +331,10 @@ class SpaceSession:
 
 
 async def open_space_session(space_id: str) -> SpaceSession:
-    url = f"{WS_BASE_URL}/{space_id}?user={SERVER_USER}&password={SERVER_PASSWORD}"
+    server_user, server_password = load_jira_worker_credentials()
+    if not server_user or not server_password:
+        raise RuntimeError("Jira worker credentials are not configured. Save Jira config in the frontend first.")
+    url = f"{WS_BASE_URL}/{space_id}?user={server_user}&password={server_password}"
     logger.debug("Connecting to space %s via %s", space_id, url)
     try:
         ws = await asyncio.wait_for(

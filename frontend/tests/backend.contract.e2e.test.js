@@ -190,6 +190,50 @@ function sessionCookieFromHeader(setCookieHeader) {
   return `${SESSION_COOKIE_NAME}=${match[1]}`;
 }
 
+async function openAndCloseSpaceWebsocket(baseUrl, spaceId, username, password) {
+  const wsBase = baseUrl.replace(/^http/i, "ws");
+  const wsUrl = `${wsBase}/ws/${encodeURIComponent(spaceId)}?user=${encodeURIComponent(username)}&pass=${encodeURIComponent(password)}`;
+  const python = getPythonExecutable();
+  const script = `
+import asyncio
+import sys
+import websockets
+
+async def main():
+    url = sys.argv[1]
+    async with websockets.connect(url, open_timeout=10, close_timeout=10) as ws:
+        try:
+            await asyncio.wait_for(ws.recv(), timeout=1.0)
+        except asyncio.TimeoutError:
+            pass
+        await asyncio.sleep(0.1)
+
+asyncio.run(main())
+`.trim();
+
+  await new Promise((resolve, reject) => {
+    const child = spawn(python, ["-c", script, wsUrl], {
+      cwd: BACKEND_DIR,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let output = "";
+    child.stdout.on("data", (chunk) => {
+      output = `${output}${String(chunk)}`.slice(-8000);
+    });
+    child.stderr.on("data", (chunk) => {
+      output = `${output}${String(chunk)}`.slice(-8000);
+    });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(new Error(`websocket client exited with code ${code}${output ? `\n${output}` : ""}`));
+    });
+  });
+}
+
 async function login(baseUrl, username, password) {
   const response = await fetch(`${baseUrl}/api/login`, {
     method: "POST",
@@ -582,6 +626,77 @@ test("e2e: backend contracts, permissions, lifecycle and collaboration", async (
       });
       assert.equal(deleteSpace.status, 200);
     });
+  } finally {
+    await stopServer(serverProcess);
+    await restoreFile(USERS_FILE, previousUsers);
+    await restoreFile(SESSIONS_FILE, previousSessions);
+    await restoreDir(SPACES_DIR, spacesBackup);
+    await restoreDir(YSTORE_DIR, ystoreBackup);
+  }
+});
+
+// Regression: normal websocket client disconnects should not surface as fatal
+// ExceptionGroup traces during backend shutdown.
+test("e2e: websocket disconnect does not crash backend on shutdown", async (t) => {
+  if (!(await hasBindCapability())) {
+    t.skip("Socket bind is not permitted in this environment.");
+    return;
+  }
+
+  const previousUsers = await readOptional(USERS_FILE);
+  const previousSessions = await readOptional(SESSIONS_FILE);
+  const spacesBackup = `${SPACES_DIR}.__ws_disconnect_backup__`;
+  const ystoreBackup = `${YSTORE_DIR}.__ws_disconnect_backup__`;
+  let serverProcess = null;
+  let logs = "";
+
+  try {
+    const usersFixture = {
+      users: {
+        [ADMIN_USER]: makeUserRecord("QA Admin", "admin", ADMIN_PASS, "1000000000000001"),
+      },
+    };
+
+    const port = await pickFreePort();
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const wsSpace = randomSpace("ws_disconnect");
+
+    await backupAndResetDir(SPACES_DIR, spacesBackup);
+    await backupAndResetDir(YSTORE_DIR, ystoreBackup);
+    await fs.writeFile(USERS_FILE, `${JSON.stringify(usersFixture, null, 2)}\n`, "utf8");
+    await fs.writeFile(SESSIONS_FILE, `${JSON.stringify({ sessions: {} }, null, 2)}\n`, "utf8");
+    await fs.writeFile(path.join(SPACES_DIR, `${wsSpace}.txt`), "Board Name: WS Disconnect\n\n% Seeded\n", "utf8");
+
+    serverProcess = spawn(getPythonExecutable(), ["server.py"], {
+      cwd: BACKEND_DIR,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        PYTHONUNBUFFERED: "1",
+        PORT: String(port),
+      },
+    });
+    const appendLogs = (chunk) => {
+      logs = `${logs}${String(chunk)}`.slice(-50000);
+    };
+    serverProcess.stdout.on("data", appendLogs);
+    serverProcess.stderr.on("data", appendLogs);
+
+    await waitForServer(baseUrl, serverProcess, () => logs);
+
+    // Connect/disconnect more than once to exercise room send/close race paths.
+    await openAndCloseSpaceWebsocket(baseUrl, wsSpace, ADMIN_USER, ADMIN_PASS);
+    await openAndCloseSpaceWebsocket(baseUrl, wsSpace, ADMIN_USER, ADMIN_PASS);
+
+    assert.equal(serverProcess.exitCode, null, "server should remain running after websocket disconnect");
+    const health = await fetch(`${baseUrl}/`);
+    assert.equal(health.status, 200);
+
+    await stopServer(serverProcess);
+    serverProcess = null;
+
+    assert.doesNotMatch(logs, /ExceptionGroup: unhandled errors in a TaskGroup/);
+    assert.doesNotMatch(logs, /ERROR:\s+Exception in ASGI application/);
   } finally {
     await stopServer(serverProcess);
     await restoreFile(USERS_FILE, previousUsers);

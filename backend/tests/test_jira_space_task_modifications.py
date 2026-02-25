@@ -8,6 +8,9 @@ if str(BACKEND_DIR) not in sys.path:
 
 from jira.worker import (
     TASK_FIELD_PEOPLE,
+    TASK_FIELD_DESCRIPTION,
+    TASK_FIELD_JIRAKEY,
+    TASK_FIELD_NAME,
     TASK_FIELD_REFERENCE,
     TASK_FIELD_STATE,
     TASK_FIELD_TAG,
@@ -67,6 +70,24 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
             TASK_MODIFY_ADD,
             TASK_FIELD_TAG,
             ["urgent"],
+        )
+
+    def test_add_tag_inserts_token_line_before_description(self):
+        input_text = """
+        % [JIRA:KAN-1] Task
+        planning notes
+        """
+        output_text = """
+        % [JIRA:KAN-1] Task
+        #backend
+        planning notes
+        """
+        self.assert_space_modification(
+            input_text,
+            output_text,
+            TASK_MODIFY_ADD,
+            TASK_FIELD_TAG,
+            ["backend"],
         )
 
     def test_remove_tag_from_space_text_task(self):
@@ -145,6 +166,25 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
         )
         self.assertEqual(linked, ["KAN-99"])
 
+    def test_add_reference_appends_after_nonempty_description_with_blank_line(self):
+        input_text = """
+        % [JIRA:KAN-1] Task
+        details line
+        """
+        output_text = """
+        % [JIRA:KAN-1] Task
+        details line
+
+        {Release Plan}
+        """
+        self.assert_space_modification(
+            input_text,
+            output_text,
+            TASK_MODIFY_ADD,
+            TASK_FIELD_REFERENCE,
+            ["Release Plan"],
+        )
+
     def test_space_modification_remove_tag_token_line(self):
         input_text = """
         % [JIRA:KAN-1] Task
@@ -163,7 +203,7 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
             TASK_FIELD_TAG,
             ["tag2"],
         )
-        
+
     def test_space_modification_remove_tag_description_body(self):
         input_text = """
         % [JIRA:KAN-1] Task
@@ -240,6 +280,150 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
             [],
         )
 
+    def test_space_modification_remove_state_deletes_empty_token_line(self):
+        input_text = """
+        % [JIRA:KAN-1] Task
+        !todo
+        description
+        """
+        output_text = """
+        % [JIRA:KAN-1] Task
+        description
+        """
+        self.assert_space_modification(
+            input_text,
+            output_text,
+            TASK_MODIFY_REMOVE,
+            TASK_FIELD_STATE,
+            [],
+        )
+
+    def test_space_modification_description_field_add_and_remove(self):
+        input_add = """
+        % [JIRA:KAN-1] Task
+        !todo #tag1
+        first line
+        """
+        output_add = """
+        % [JIRA:KAN-1] Task
+        !todo #tag1
+        first line
+        second line
+        third line
+        """
+        self.assert_space_modification(
+            input_add,
+            output_add,
+            TASK_MODIFY_ADD,
+            TASK_FIELD_DESCRIPTION,
+            ["second line", "third line"],
+        )
+
+        input_remove = """
+        % [JIRA:KAN-1] Task
+        !todo #tag1
+        first line
+        second line
+        third line
+        """
+        output_remove = """
+        % [JIRA:KAN-1] Task
+        !todo #tag1
+        first line
+        third line
+        """
+        self.assert_space_modification(
+            input_remove,
+            output_remove,
+            TASK_MODIFY_REMOVE,
+            TASK_FIELD_DESCRIPTION,
+            ["second line"],
+        )
+
+    def test_space_modification_description_field_add_to_empty_description(self):
+        input_text = """
+        % [JIRA:KAN-1] Task
+        !todo #tag1
+        """
+        output_text = """
+        % [JIRA:KAN-1] Task
+        !todo #tag1
+        new details
+        """
+        self.assert_space_modification(
+            input_text,
+            output_text,
+            TASK_MODIFY_ADD,
+            TASK_FIELD_DESCRIPTION,
+            ["new details"],
+        )
+
+    def test_space_modification_name_field_add_and_remove(self):
+        input_rename = """
+        % [JIRA:KAN-1] Task
+        !todo
+        """
+        output_rename = """
+        % [JIRA:KAN-1] Renamed task
+        !todo
+        """
+        self.assert_space_modification(
+            input_rename,
+            output_rename,
+            TASK_MODIFY_ADD,
+            TASK_FIELD_NAME,
+            ["Renamed task"],
+        )
+
+        input_clear = """
+        % [JIRA:KAN-1] Task
+        !todo
+        """
+        output_clear = """
+        % [JIRA:KAN-1]
+        !todo
+        """
+        self.assert_space_modification(
+            input_clear,
+            output_clear,
+            TASK_MODIFY_REMOVE,
+            TASK_FIELD_NAME,
+            [],
+        )
+
+    def test_space_modification_jirakey_field_add_and_remove(self):
+        input_add = """
+        % Task
+        !todo
+        """
+        output_add = """
+        % [JIRA:KAN-1] Task
+        !todo
+        """
+        self.assert_space_modification(
+            input_add,
+            output_add,
+            TASK_MODIFY_ADD,
+            TASK_FIELD_JIRAKEY,
+            ["KAN-1"],
+        )
+
+        input_remove = """
+        % [JIRA:KAN-1] Task
+        !todo
+        """
+        output_remove = """
+        % Task
+        !todo
+        """
+        self.assert_space_modification(
+            input_remove,
+            output_remove,
+            TASK_MODIFY_REMOVE,
+            TASK_FIELD_JIRAKEY,
+            [],
+        )
+
     def test_space_modification_remove_state_description_body(self):
         input_text = """
         % [JIRA:KAN-1] Task
@@ -276,6 +460,70 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
             TASK_FIELD_REFERENCE,
             ["Release Plan"],
         )
+
+    def test_modify_task_text_requires_exactly_one_task(self):
+        with self.assertRaisesRegex(ValueError, "expected exactly one task"):
+            modify_task_text(
+                "plain text only",
+                TASK_MODIFY_ADD,
+                TASK_FIELD_TAG,
+                ["tag1"],
+            )
+
+        multiple_tasks = "\n".join(
+            [
+                "% [JIRA:KAN-1] First",
+                "% [JIRA:KAN-2] Second",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "expected exactly one task"):
+            modify_task_text(
+                multiple_tasks,
+                TASK_MODIFY_ADD,
+                TASK_FIELD_TAG,
+                ["tag1"],
+            )
+
+    def test_modify_task_text_rejects_unsupported_operation_for_each_field(self):
+        base_task = "\n".join(
+            [
+                "% [JIRA:KAN-1] Task",
+                "!todo #tag1 @fero",
+                "details {Release Plan}",
+            ]
+        )
+        for field in [
+            TASK_FIELD_TAG,
+            TASK_FIELD_PEOPLE,
+            TASK_FIELD_STATE,
+            TASK_FIELD_REFERENCE,
+            TASK_FIELD_DESCRIPTION,
+            TASK_FIELD_NAME,
+            TASK_FIELD_JIRAKEY,
+        ]:
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(ValueError, f"unsupported operation for {field}"):
+                    modify_task_text(
+                        base_task,
+                        "replace",
+                        field,
+                        ["value"],
+                    )
+
+    def test_modify_task_text_rejects_unsupported_field(self):
+        base_task = "\n".join(
+            [
+                "% [JIRA:KAN-1] Task",
+                "!todo",
+            ]
+        )
+        with self.assertRaisesRegex(ValueError, "unsupported field: unknown"):
+            modify_task_text(
+                base_task,
+                TASK_MODIFY_ADD,
+                "unknown",
+                ["value"],
+            )
 
 
 if __name__ == "__main__":

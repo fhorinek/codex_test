@@ -2,6 +2,7 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 let taskModulePromise = null;
 
@@ -9,9 +10,8 @@ function loadTaskModule() {
   if (!taskModulePromise) {
     taskModulePromise = (async () => {
       const taskPath = path.resolve(__dirname, "../scripts/task.js");
-      const source = await fs.readFile(taskPath, "utf8");
-      const dataUrl = `data:text/javascript;base64,${Buffer.from(source, "utf8").toString("base64")}`;
-      return import(dataUrl);
+      await fs.readFile(taskPath, "utf8");
+      return import(pathToFileURL(taskPath).href);
     })();
   }
   return taskModulePromise;
@@ -220,4 +220,52 @@ test("parseTasks parses story points and computes recursive totals", async () =>
   assert.equal(parent.storyPointsSubtasksTotal, 3);
   assert.equal(parent.storyPointsTotal, 6);
   assert.equal(parsed.totalStoryPoints, 6);
+});
+
+// Verifies config metadata parsing for slug definitions:
+// - people entries can carry nested mail
+// - state entries can carry nested jiraState
+// - parser keeps raw config values and exposes them via metadata maps
+test("parseTasks parses slug config metadata fields", async () => {
+  const { parseTasks } = await loadTaskModule();
+  const parsed = parseTasks(
+    [
+      "Board:",
+      "    people:",
+      "        maya:",
+      "            name: Maya Rivera",
+      "            color: 00aa55",
+      "            mail: maya@example.com",
+      "    states:",
+      "        doing:",
+      "            name: In Progress",
+      "            jiraState: In Progress",
+      "        done:",
+      "            jira: Done",
+      "",
+      "% Task",
+      "!doing @maya",
+    ].join("\n")
+  );
+
+  const person = parsed.config.people.find((item) => item.key === "maya");
+  const doing = parsed.config.states.find((item) => item.key === "doing");
+  const done = parsed.config.states.find((item) => item.key === "done");
+  const personMeta = parsed.peopleMeta.get("@maya");
+  const doingMeta = parsed.stateMeta.get("!doing");
+
+  assert.ok(person);
+  assert.equal(person.name, "Maya Rivera");
+  assert.equal(person.color, "#00aa55");
+  assert.equal(person.email, "maya@example.com");
+
+  assert.ok(doing);
+  assert.equal(doing.jiraState, "In Progress");
+  assert.ok(done);
+  assert.equal(done.jiraState, "Done");
+
+  assert.ok(personMeta);
+  assert.equal(personMeta.email, "maya@example.com");
+  assert.ok(doingMeta);
+  assert.equal(doingMeta.jiraState, "In Progress");
 });

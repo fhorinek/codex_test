@@ -13,6 +13,7 @@ import uuid
 logger = logging.getLogger("server")
 
 LOG_BORDER_WIDTH = 60
+JIRA_ESTIMATE_UNSET = object()
 
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
 _UNDERLINE_RE = re.compile(r"__([^_]+)__")
@@ -112,7 +113,7 @@ def to_adf(text: str) -> Dict[str, Any]:
     content: List[Dict[str, Any]] = []
     list_mode: Optional[str] = None
     list_items: List[Any] = []
-    checkbox_re = re.compile(r"^\[([ xX])\]\s+(.*)$")
+    checkbox_re = re.compile(r"^\[([ xX])\](?:\s+(.*))?$")
     bullet_re = re.compile(r"^[-*]\s+(.*)$")
 
     def flush_list() -> None:
@@ -138,7 +139,7 @@ def to_adf(text: str) -> Dict[str, Any]:
         bullet_match = bullet_re.match(stripped) if not checkbox_match else None
         if checkbox_match:
             checked = checkbox_match.group(1).lower() == "x"
-            item_text = checkbox_match.group(2)
+            item_text = checkbox_match.group(2) or ""
             if list_mode != "task":
                 flush_list()
                 list_mode = "task"
@@ -397,7 +398,7 @@ class JiraClient:
         try:
             data, status = self._request(
                 "GET",
-                f"/rest/api/3/issue/{key}?fields=summary,description,status,labels,assignee,issuelinks,subtasks,parent",
+                f"/rest/api/3/issue/{key}?fields=summary,description,status,labels,assignee,issuelinks,subtasks,parent,timetracking,timeoriginalestimate",
             )
             return data, status
         except Exception:
@@ -413,6 +414,7 @@ class JiraClient:
         issue_type: str = "Task",
         parent_key: Optional[str] = None,
         assignee_id: Optional[str] = None,
+        original_estimate_minutes: Any = JIRA_ESTIMATE_UNSET,
     ) -> Tuple[Optional[str], Optional[int], Optional[Dict[str, Any]]]:
         payload = {
             "fields": {
@@ -427,6 +429,13 @@ class JiraClient:
             payload["fields"]["parent"] = {"key": parent_key}
         if assignee_id:
             payload["fields"]["assignee"] = {"accountId": assignee_id}
+        if original_estimate_minutes is not JIRA_ESTIMATE_UNSET:
+            if original_estimate_minutes is None:
+                payload["fields"]["timetracking"] = {"originalEstimate": None}
+            else:
+                payload["fields"]["timetracking"] = {
+                    "originalEstimate": f"{max(0, int(original_estimate_minutes))}m"
+                }
         try:
             result, status = self._request("POST", "/rest/api/3/issue", payload)
             logger.info(
@@ -457,6 +466,7 @@ class JiraClient:
         labels: Optional[List[str]] = None,
         assignee_id: Optional[str] = None,
         clear_assignee: bool = False,
+        original_estimate_minutes: Any = JIRA_ESTIMATE_UNSET,
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]]]:
         payload = {"fields": {}}
         if summary is not None:
@@ -469,6 +479,13 @@ class JiraClient:
             payload["fields"]["assignee"] = None
         elif assignee_id:
             payload["fields"]["assignee"] = {"accountId": assignee_id}
+        if original_estimate_minutes is not JIRA_ESTIMATE_UNSET:
+            if original_estimate_minutes is None:
+                payload["fields"]["timetracking"] = {"originalEstimate": None}
+            else:
+                payload["fields"]["timetracking"] = {
+                    "originalEstimate": f"{max(0, int(original_estimate_minutes))}m"
+                }
         try:
             result, status = self._request("PUT", f"/rest/api/3/issue/{key}", payload)
             logger.info(

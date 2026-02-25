@@ -543,7 +543,29 @@
           </label>
           <label class="modal-field">
             <span>New slug</span>
-            <input id="slug-rename-new" type="text" placeholder="new_slug" />
+            <input id="slug-rename-new" type="text" />
+          </label>
+          <label id="slug-rename-display-name-field" class="modal-field">
+            <span id="slug-rename-display-name-label">Display name</span>
+            <input id="slug-rename-display-name" type="text" />
+          </label>
+          <label id="slug-rename-color-field" class="modal-field">
+            <span>Color</span>
+            <input id="slug-rename-color" type="hidden" />
+            <div id="slug-rename-color-swatches" class="slug-color-swatches" role="group" aria-label="Color choices"></div>
+            <div class="slug-color-controls">
+              <input id="slug-rename-color-picker" class="slug-color-picker" type="color" value="#cfe8ff" aria-label="Custom color picker" />
+              <button id="slug-rename-color-clear" class="toolbar-button" type="button">Auto</button>
+              <span id="slug-rename-color-preview" class="slug-color-preview">Auto</span>
+            </div>
+          </label>
+          <label id="slug-rename-email-field" class="modal-field hidden">
+            <span id="slug-rename-email-label">Email</span>
+            <input id="slug-rename-email" type="email" autocomplete="email" />
+          </label>
+          <label id="slug-rename-jira-state-field" class="modal-field hidden">
+            <span id="slug-rename-jira-state-label">Jira state</span>
+            <input id="slug-rename-jira-state" type="text" />
           </label>
         </div>
         <div class="modal-actions">
@@ -583,12 +605,13 @@
       "imports": {
         "yjs": "/node_modules/yjs/dist/yjs.mjs",
         "y-websocket": "/node_modules/y-websocket/src/y-websocket.js",
-        "y-textarea": "/node_modules/y-textarea/dist/y-textArea.es.js",
+        "y-codemirror.next": "/node_modules/y-codemirror.next/src/index.js",
         "lib0/array": "/node_modules/lib0/array.js",
         "lib0/binary": "/node_modules/lib0/binary.js",
         "lib0/broadcastchannel": "/node_modules/lib0/broadcastchannel.js",
         "lib0/buffer": "/node_modules/lib0/buffer.js",
         "lib0/decoding": "/node_modules/lib0/decoding.js",
+        "lib0/dom": "/node_modules/lib0/dom.js",
         "lib0/encoding": "/node_modules/lib0/encoding.js",
         "lib0/environment": "/node_modules/lib0/environment.js",
         "lib0/error": "/node_modules/lib0/error.js",
@@ -597,8 +620,10 @@
         "lib0/logging": "/node_modules/lib0/logging.js",
         "lib0/map": "/node_modules/lib0/map.js",
         "lib0/math": "/node_modules/lib0/math.js",
+        "lib0/mutex": "/node_modules/lib0/mutex.js",
         "lib0/object": "/node_modules/lib0/object.js",
         "lib0/observable": "/node_modules/lib0/observable.js",
+        "lib0/pair": "/node_modules/lib0/pair.js",
         "lib0/promise": "/node_modules/lib0/promise.js",
         "lib0/random": "/node_modules/lib0/random.js",
         "lib0/set": "/node_modules/lib0/set.js",

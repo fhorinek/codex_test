@@ -11,6 +11,7 @@ BACKEND_DIR = JIRA_DIR.parent
 JIRA_CONFIG_PATH = JIRA_DIR / "jira_config.json"
 USERS_CONFIG_PATH = BACKEND_DIR / "users_config.json"
 LEGACY_USERS_CONFIG_PATH = JIRA_DIR / "users_config.json"
+JIRA_DAEMON_USERNAME = "jira-daemon"
 
 
 @dataclass(frozen=True)
@@ -113,3 +114,10 @@ def save_jira_config(
     data["token"] = config.token
     save_jira_config_data(data)
     return config
+
+
+def load_jira_worker_credentials() -> tuple[str, str]:
+    data = load_jira_config_data()
+    username = _normalize_value(data.get("worker_username")) or JIRA_DAEMON_USERNAME
+    password = _normalize_value(data.get("worker_password"))
+    return username, password

@@ -18,7 +18,7 @@ logger = logging.getLogger("jira-worker")
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if __package__ in (None, ""):
     sys.path.append(str(BACKEND_DIR))
-    from jira.client import JiraClient, from_adf
+    from jira.client import JiraClient, JIRA_ESTIMATE_UNSET, from_adf
     from jira.config import JiraConfig, load_jira_config
     from jira.space import (
         SpaceSession,
@@ -37,7 +37,7 @@ if __package__ in (None, ""):
         scrub_body_tokens,
     )
 else:
-    from .client import JiraClient, from_adf
+    from .client import JiraClient, JIRA_ESTIMATE_UNSET, from_adf
     from .config import JiraConfig, load_jira_config
     from .space import (
         SpaceSession,
@@ -62,6 +62,7 @@ JIRA_PROJECTS: Dict[str, str] = {
 }
 JIRA_SYNC_INTERVAL = 10
 JIRA_PULL_IDLE_SECONDS = 5
+JIRA_SPACE_STABLE_SECONDS = 15
 JIRA_ISSUE_TYPE = "Task"
 JIRA_SUBTASK_ISSUE_TYPE = "Sub-task"
 JIRA_DEFAULT_STATE = "Backlog"
@@ -83,11 +84,12 @@ JIRA_ACCOUNT_ID_BY_EMAIL: Dict[str, str] = {}
 LOG_BORDER_WIDTH = 60
 
 TASK_LINE_RE = re.compile(r"^(\s*)%\s+(.*)$")
-TOKEN_LINE_RE = re.compile(r"(^|\s)[#!@]")
+TOKEN_LINE_RE = re.compile(r"(^|\s)[#!@~]")
 STATE_TOKEN_RE = re.compile(r"(^|\s)!([^\s#@]+)")
 TAG_TOKEN_RE = re.compile(r"(^|\s)#([^\s#@]+)")
 PERSON_TOKEN_RE = re.compile(r"(^|\s)@([^\s#@]+)")
 REFERENCE_RE = re.compile(r"\{([^}]+)\}")
+STORY_POINTS_RE = re.compile(r"(^|\s)~(\d+(?:\.\d+)?)(?=\s|$)")
 
 TASK_MODIFY_ADD = "add"
 TASK_MODIFY_REMOVE = "remove"
@@ -140,6 +142,7 @@ class SyncEntity:
     owner: Optional[str]
     description: str
     linked: List[str]
+    story_points: Optional[float] = None
     timestamp: float = 0.0
     field_timestamps: Dict[str, float] = field(default_factory=dict)
 
@@ -158,6 +161,7 @@ class SpaceTask:
     tags: List[str]
     people: List[str]
     description: str
+    story_points: Optional[float] = None
     parent_index: Optional[int] = None
 
 
@@ -498,7 +502,9 @@ def is_token_line(text: str) -> bool:
     if not stripped:
         return False
     for token in stripped.split():
-        if not re.fullmatch(r"[#!@][^\s#@]+", token):
+        if re.fullmatch(r"~\d+(?:\.\d+)?", token):
+            continue
+        if not re.fullmatch(r"[#!@][^\s#@~]+", token):
             return False
     return True
 
@@ -527,6 +533,7 @@ def parse_space_tasks(lines: List[str]) -> List[SpaceTask]:
         tags: List[str] = []
         people: List[str] = []
         description_lines: List[str] = []
+        story_points: Optional[float] = None
         for line_index in range(body_start, body_end):
             entry = lines[line_index]
             if entry.startswith(indent):
@@ -537,17 +544,17 @@ def parse_space_tasks(lines: List[str]) -> List[SpaceTask]:
                 state_match_any = STATE_TOKEN_RE.search(entry)
                 if state_match_any:
                     state = state_match_any.group(2)
+            if story_points is None:
+                story_match_any = STORY_POINTS_RE.search(entry)
+                if story_match_any:
+                    try:
+                        parsed_story = float(story_match_any.group(2))
+                    except ValueError:
+                        parsed_story = None
+                    if parsed_story is not None and parsed_story >= 0:
+                        story_points = parsed_story
             if is_token_line(entry):
                 token_line_indices.append(line_index)
-                token_line = entry.strip()
-                state_match = STATE_TOKEN_RE.search(token_line)
-                if state_match and not state:
-                    state = state_match.group(2)
-                tags.extend(match.group(2) for match in TAG_TOKEN_RE.finditer(token_line))
-                people.extend(
-                    match.group(2) for match in PERSON_TOKEN_RE.finditer(token_line)
-                )
-                continue
             description_lines.append(entry)
         description = "\n".join(description_lines).rstrip()
         tasks.append(
@@ -564,6 +571,7 @@ def parse_space_tasks(lines: List[str]) -> List[SpaceTask]:
                 tags=tags,
                 people=people,
                 description=description,
+                story_points=story_points,
             )
         )
     return tasks
@@ -629,6 +637,17 @@ def normalize_description_for_space(
     return "\n".join(filtered_lines).rstrip()
 
 
+def strip_token_lines_from_description(description: str) -> str:
+    if not description:
+        return ""
+    kept: List[str] = []
+    for line in description.split("\n"):
+        if is_token_line(line):
+            continue
+        kept.append(line)
+    return "\n".join(kept).rstrip()
+
+
 def convert_description_to_jira(
     description: str, title_to_key: Dict[str, str]
 ) -> str:
@@ -645,7 +664,99 @@ def convert_description_to_jira(
     return REFERENCE_RE.sub(repl, description).rstrip()
 
 
-SYNC_FIELDS = ["title", "state", "tags", "owner", "description", "linked"]
+def _clean_story_points_line(line: str) -> str:
+    cleaned = STORY_POINTS_RE.sub(" ", line)
+    return " ".join(cleaned.split())
+
+
+def extract_story_points_from_description(description: str) -> Optional[float]:
+    if not description:
+        return None
+    for line in description.split("\n"):
+        match = STORY_POINTS_RE.search(line)
+        if not match:
+            continue
+        try:
+            value = float(match.group(2))
+        except ValueError:
+            return None
+        if value >= 0:
+            return value
+    return None
+
+
+def strip_story_points_from_description(description: str) -> str:
+    if not description:
+        return ""
+    lines: List[str] = []
+    for line in description.split("\n"):
+        cleaned = _clean_story_points_line(line)
+        if cleaned:
+            lines.append(cleaned)
+    return "\n".join(lines).rstrip()
+
+
+def format_story_points_token(value: float) -> str:
+    if float(value).is_integer():
+        return str(int(value))
+    return f"{value:.4f}".rstrip("0").rstrip(".")
+
+
+def format_token_line_with_story_points(
+    state: Optional[str],
+    tags: List[str],
+    people: List[str],
+    story_points: Optional[float],
+) -> str:
+    base = format_token_line(state, tags, people)
+    if story_points is None:
+        return base
+    story_token = f"~{format_story_points_token(story_points)}"
+    if not base:
+        return story_token
+    return f"{base} {story_token}"
+
+
+def story_points_to_estimate_minutes(story_points: Optional[float]) -> Optional[int]:
+    if story_points is None:
+        return 0
+    if story_points < 0:
+        return None
+    return max(0, int(round(float(story_points) * 60.0)))
+
+
+def estimate_seconds_to_story_points(seconds: Any) -> Optional[float]:
+    if not isinstance(seconds, (int, float)):
+        return None
+    if seconds < 0:
+        return None
+    value = round(float(seconds) / 3600.0, 4)
+    if value.is_integer():
+        return float(int(value))
+    return value
+
+
+def extract_jira_original_estimate_seconds(fields: Dict[str, Any]) -> Optional[int]:
+    value = fields.get("timeoriginalestimate")
+    if isinstance(value, (int, float)):
+        return int(value)
+    timetracking = fields.get("timetracking")
+    if isinstance(timetracking, dict):
+        value = timetracking.get("originalEstimateSeconds")
+        if isinstance(value, (int, float)):
+            return int(value)
+    return None
+
+
+SYNC_FIELDS = [
+    "title",
+    "state",
+    "tags",
+    "owner",
+    "description",
+    "linked",
+    "story_points",
+]
 
 
 def _entity_field_value(entity: SyncEntity, field: str) -> Any:
@@ -661,6 +772,10 @@ def _entity_field_value(entity: SyncEntity, field: str) -> Any:
         return entity.description or ""
     if field == "linked":
         return _normalize_list(entity.linked)
+    if field == "story_points":
+        if entity.story_points is None:
+            return 0.0
+        return float(entity.story_points)
     return None
 
 
@@ -710,6 +825,7 @@ def copy_entity(entity: SyncEntity, timestamp: Optional[float] = None) -> SyncEn
         owner=entity.owner,
         description=entity.description,
         linked=list(entity.linked),
+        story_points=entity.story_points,
         timestamp=entity.timestamp if timestamp is None else timestamp,
         field_timestamps=dict(entity.field_timestamps),
     )
@@ -728,7 +844,13 @@ def build_space_entity(
     title_to_key: Dict[str, str],
 ) -> SyncEntity:
     title = task.title.strip()
+    story_points = (
+        task.story_points
+        if task.story_points is not None
+        else extract_story_points_from_description(task.description)
+    )
     description = normalize_description_for_space(task.description, key_to_title)
+    description = strip_story_points_from_description(description)
     linked = extract_linked_keys(description, title_to_key)
     owner = task.people[0] if task.people else None
     state = task.state.strip() if task.state else None
@@ -740,6 +862,7 @@ def build_space_entity(
         owner=owner,
         description=description,
         linked=linked,
+        story_points=story_points,
     )
 
 
@@ -813,10 +936,13 @@ def build_jira_entity(
     description_raw = from_adf(fields.get("description"))
     linked = extract_linked_keys(description_raw, title_to_key)
     description = normalize_description_for_space(description_raw, key_to_title)
+    description = strip_story_points_from_description(description)
     status_name = fields.get("status", {}).get("name")
     state_slug, state_changed = resolve_state_slug(status_name, states, state_order)
     labels = fields.get("labels") or []
     assignee = fields.get("assignee")
+    estimate_seconds = extract_jira_original_estimate_seconds(fields)
+    story_points = estimate_seconds_to_story_points(estimate_seconds)
     owner_slug, people_changed = resolve_assignee_slug(
         assignee, people, people_order
     )
@@ -828,6 +954,7 @@ def build_jira_entity(
         owner=owner_slug,
         description=description,
         linked=linked,
+        story_points=story_points,
     )
     return entity, state_changed, people_changed
 
@@ -846,7 +973,7 @@ def parse_tasks(lines: List[str]) -> List[ParsedTask]:
         desc_start = index + 1
         if desc_start < len(lines):
             candidate = lines[desc_start].strip()
-            if candidate and TOKEN_LINE_RE.search(candidate):
+            if candidate and is_token_line(candidate):
                 token_line_index = desc_start
                 desc_start += 1
         desc_end = desc_start
@@ -889,6 +1016,41 @@ def parse_tasks(lines: List[str]) -> List[ParsedTask]:
             )
         )
     return tasks
+
+
+def parse_space_task_token_values(
+    lines: List[str], task: SpaceTask
+) -> Tuple[Optional[str], List[str], List[str], Optional[float]]:
+    state: Optional[str] = None
+    tags: List[str] = []
+    people: List[str] = []
+    story_points: Optional[float] = None
+    for index in task.token_line_indices:
+        if index < 0 or index >= len(lines):
+            continue
+        raw = lines[index]
+        entry = raw
+        if entry.startswith(task.indent):
+            entry = entry[len(task.indent):]
+        token_line = entry.strip()
+        if not token_line:
+            continue
+        if state is None:
+            state_match = STATE_TOKEN_RE.search(token_line)
+            if state_match:
+                state = state_match.group(2)
+        tags.extend(match.group(2) for match in TAG_TOKEN_RE.finditer(token_line))
+        people.extend(match.group(2) for match in PERSON_TOKEN_RE.finditer(token_line))
+        if story_points is None:
+            story_match = STORY_POINTS_RE.search(token_line)
+            if story_match:
+                try:
+                    value = float(story_match.group(2))
+                except ValueError:
+                    value = None
+                if value is not None and value >= 0:
+                    story_points = value
+    return state, _normalize_list(tags), _normalize_list(people), story_points
 
 
 def assign_task_parents(tasks: List[ParsedTask]) -> None:
@@ -1295,6 +1457,8 @@ def format_entity_summary(entity: Optional[SyncEntity]) -> str:
         parts.append(f"tags={','.join(_normalize_list(entity.tags))}")
     if entity.linked:
         parts.append(f"linked={','.join(_normalize_list(entity.linked))}")
+    if entity.story_points is not None:
+        parts.append(f"story=~{format_story_points_token(entity.story_points)}")
     if entity.description:
         parts.append(f"desc={summarize_text(entity.description, limit=60)}")
     return " ".join(parts).strip() or "-"
@@ -1338,6 +1502,10 @@ def format_field_value(field: str, entity: Optional[SyncEntity]) -> str:
     if field == "linked":
         linked = _normalize_list(entity.linked)
         return ",".join(linked) if linked else "-"
+    if field == "story_points":
+        if entity.story_points is None:
+            return "-"
+        return f"~{format_story_points_token(entity.story_points)}"
     return "-"
 
 
@@ -1351,6 +1519,25 @@ def format_field_timestamp(entity: Optional[SyncEntity], field: str) -> str:
     if not entity:
         return "-"
     return format_timestamp(get_field_timestamp(entity, field))
+
+
+def is_recent_space_field_change(
+    entity: Optional[SyncEntity],
+    field: str,
+    now: float,
+    session_last_change: float,
+) -> bool:
+    if not entity or not session_last_change:
+        return False
+    if (now - session_last_change) >= JIRA_SPACE_STABLE_SECONDS:
+        return False
+    field_ts = get_field_timestamp(entity, field)
+    if not field_ts:
+        return False
+    # Only treat values touched at/after the latest recorded local change as dirty.
+    if field_ts + 0.001 < session_last_change:
+        return False
+    return (now - field_ts) < JIRA_SPACE_STABLE_SECONDS
 
 
 def wrap_text(value: str, width: int) -> List[str]:
@@ -1697,7 +1884,18 @@ async def sync_space_with_jira(
         )
         parent_key = parent_task.jira_key if parent_task and parent_task.jira_key else None
         project_key_hint = task.jira_project.upper()
-        jira_description = convert_description_to_jira(task.description, title_to_key)
+        pending_story_points = (
+            task.story_points
+            if task.story_points is not None
+            else extract_story_points_from_description(task.description)
+        )
+        jira_description = convert_description_to_jira(
+            strip_story_points_from_description(task.description),
+            title_to_key,
+        )
+        original_estimate_minutes = story_points_to_estimate_minutes(
+            pending_story_points
+        )
         owner_slug = task.people[0] if task.people else None
         assignee_id = await resolve_owner_account_id(
             client, owner_slug, people_config
@@ -1712,6 +1910,7 @@ async def sync_space_with_jira(
             issue_type,
             parent_key,
             assignee_id,
+            original_estimate_minutes,
         )
         logger.info("* Assigned key %s", issue_key or "(none)")
         if not issue_key:
@@ -1787,6 +1986,9 @@ async def sync_space_with_jira(
 
     field_directions_by_key: Dict[str, Dict[str, str]] = {}
     diff_fields_by_key: Dict[str, set] = {}
+    now = time.time()
+    session_last_change = getattr(session, "last_change", 0.0) or 0.0
+    setattr(session, "sync_dirty", False)
     for key, space_entity in space_entities.items():
         jira_entity = jira_entities.get(key)
         field_dirs: Dict[str, str] = {}
@@ -1800,6 +2002,19 @@ async def sync_space_with_jira(
             ):
                 continue
             diff_fields.add(field)
+            if is_recent_space_field_change(
+                space_entity, field, now, session_last_change
+            ):
+                field_dirs[field] = "dirty"
+                setattr(session, "sync_dirty", True)
+                logger.debug(
+                    "[Space %s] %s field %s is dirty (<%ss), skipping comparison/sync this round",
+                    session.space_id,
+                    key,
+                    field,
+                    JIRA_SPACE_STABLE_SECONDS,
+                )
+                continue
             if force_direction == "push":
                 field_dirs[field] = "->"
             elif force_direction == "pull":
@@ -1960,6 +2175,11 @@ async def sync_space_with_jira(
                 changes["owner"] = (jira_entity.owner, space_entity.owner)
             if "state" in push_fields:
                 changes["state"] = (jira_entity.state, space_entity.state)
+            if "story_points" in push_fields:
+                changes["story_points"] = (
+                    jira_entity.story_points,
+                    space_entity.story_points,
+                )
             if changes:
                 if "title" in changes:
                     logger.info("* Updating jira title to %s", space_entity.title)
@@ -1981,6 +2201,15 @@ async def sync_space_with_jira(
                     )
                 if "description" in changes:
                     logger.info("* Updating jira description")
+                if "story_points" in changes:
+                    logger.info(
+                        "* Updating jira original estimate to %s",
+                        (
+                            f"~{format_story_points_token(space_entity.story_points)}"
+                            if space_entity.story_points is not None
+                            else "(none)"
+                        ),
+                    )
                 assignee_id = None
                 clear_assignee = False
                 if "owner" in changes and space_entity.owner:
@@ -1999,10 +2228,12 @@ async def sync_space_with_jira(
                 update_summary = "title" in changes
                 update_description = "description" in changes
                 update_labels = "tags" in changes
+                update_estimate = "story_points" in changes
                 should_update_issue = (
                     update_summary
                     or update_description
                     or update_labels
+                    or update_estimate
                     or ((assignee_id is not None or clear_assignee) and "owner" in changes)
                 )
                 updated_jira = copy_entity(jira_entity)
@@ -2013,6 +2244,11 @@ async def sync_space_with_jira(
                         jira_description = convert_description_to_jira(
                             space_entity.description, title_to_key
                         )
+                    original_estimate_minutes = (
+                        story_points_to_estimate_minutes(space_entity.story_points)
+                        if update_estimate
+                        else JIRA_ESTIMATE_UNSET
+                    )
                     status, payload = await asyncio.to_thread(
                         client.update_issue,
                         key,
@@ -2021,6 +2257,7 @@ async def sync_space_with_jira(
                         space_entity.tags if update_labels else None,
                         assignee_id,
                         clear_assignee,
+                        original_estimate_minutes,
                     )
                     jira_status_by_key.setdefault(key, {})["update"] = status
                     logger.debug(
@@ -2040,6 +2277,8 @@ async def sync_space_with_jira(
                             updated_jira.tags = list(space_entity.tags)
                         if assignee_id is not None or clear_assignee:
                             updated_jira.owner = space_entity.owner
+                        if update_estimate:
+                            updated_jira.story_points = space_entity.story_points
                         jira_updated = True
                 if "state" in changes:
                     jira_status = map_space_state_to_jira(
@@ -2088,24 +2327,44 @@ async def sync_space_with_jira(
                     )
                     task_changed = True
 
+            (
+                current_token_state,
+                current_token_tags,
+                current_token_people,
+                current_token_story_points,
+            ) = parse_space_task_token_values(lines, task)
             desired_state = (
-                jira_entity.state if "state" in pull_fields else task.state
+                jira_entity.state if "state" in pull_fields else current_token_state
             )
             desired_tags = (
-                jira_entity.tags if "tags" in pull_fields else task.tags
+                jira_entity.tags if "tags" in pull_fields else current_token_tags
+            )
+            task_story_points = (
+                task.story_points
+                if task.story_points is not None
+                else extract_story_points_from_description(task.description)
+            )
+            desired_story_points = (
+                jira_entity.story_points
+                if "story_points" in pull_fields
+                else current_token_story_points
             )
             if "owner" in pull_fields:
                 desired_owner = [jira_entity.owner] if jira_entity.owner else []
             else:
-                desired_owner = list(task.people)
+                desired_owner = list(current_token_people)
             tokens_need_change = (
-                (desired_state or "") != (task.state or "")
-                or _normalize_list(desired_tags) != _normalize_list(task.tags)
-                or _normalize_list(desired_owner) != _normalize_list(task.people)
+                (desired_state or "") != (current_token_state or "")
+                or _normalize_list(desired_tags) != _normalize_list(current_token_tags)
+                or _normalize_list(desired_owner) != _normalize_list(current_token_people)
+                or desired_story_points != current_token_story_points
             )
             if tokens_need_change:
-                desired_token = format_token_line(
-                    desired_state, desired_tags, desired_owner
+                desired_token = format_token_line_with_story_points(
+                    desired_state,
+                    desired_tags,
+                    desired_owner,
+                    desired_story_points,
                 )
                 token_line_indices = list(task.token_line_indices)
                 if desired_token:
@@ -2141,21 +2400,49 @@ async def sync_space_with_jira(
                 if not task:
                     continue
 
-            pull_description = bool({"description", "linked"} & pull_fields)
+            pull_description = bool(
+                {"description", "linked", "story_points", "state", "tags", "owner"}
+                & pull_fields
+            )
             updated_description = task.description
             if pull_description:
-                description = apply_linked_references(
-                    jira_entity.description,
-                    jira_entity.linked,
-                    ref_key_to_title,
-                    ref_title_to_key,
+                if {"description", "linked"} & pull_fields:
+                    description = apply_linked_references(
+                        jira_entity.description,
+                        jira_entity.linked,
+                        ref_key_to_title,
+                        ref_title_to_key,
+                    )
+                    description = scrub_body_tokens(
+                        description,
+                        desired_state,
+                        desired_tags,
+                        desired_owner,
+                    )
+                    base_description = strip_story_points_from_description(description)
+                else:
+                    base_description = scrub_body_tokens(
+                        strip_token_lines_from_description(task.description),
+                        desired_state,
+                        desired_tags,
+                        desired_owner,
+                    )
+                    base_description = strip_story_points_from_description(base_description)
+                    if "owner" in pull_fields:
+                        old_owner = task.people[0] if task.people else None
+                        if old_owner and old_owner != (jira_entity.owner or None):
+                            kept_lines: List[str] = []
+                            for line in base_description.split("\n"):
+                                cleaned = remove_people_from_line(line, [old_owner])
+                                if cleaned:
+                                    kept_lines.append(cleaned)
+                            base_description = "\n".join(kept_lines).rstrip()
+                desired_story_points = (
+                    jira_entity.story_points
+                    if "story_points" in pull_fields
+                    else task_story_points
                 )
-                description = scrub_body_tokens(
-                    description,
-                    desired_state,
-                    desired_tags,
-                    desired_owner,
-                )
+                description = base_description
                 if description != task.description:
                     updated_description = description
                     token_lines = [
@@ -2188,8 +2475,13 @@ async def sync_space_with_jira(
                 if "owner" in pull_fields:
                     updated_space.owner = jira_entity.owner
                 if pull_description:
-                    updated_space.description = updated_description
+                    updated_space.description = strip_story_points_from_description(
+                        updated_description
+                    )
+                if "linked" in pull_fields or "description" in pull_fields:
                     updated_space.linked = list(jira_entity.linked)
+                if "story_points" in pull_fields:
+                    updated_space.story_points = jira_entity.story_points
                 updated_space = update_entity_cache(
                     space_cache, updated_space, time.time()
                 )
@@ -2219,7 +2511,7 @@ async def sync_space_with_jira(
                 }
         logger.info("* Task %s done", key)
 
-    if space_changed or states_changed or people_changed:
+    if created or space_changed or states_changed or people_changed:
         if not space_change_logged:
             change_log = render_space_change_log(
                 session.space_id, original_lines, lines

@@ -95,10 +95,17 @@ Admin-only modal:
 
 ## Task Script Format
 
-- Task line starts with `%`.
+- Task line starts with `%` and may include optional Jira key:
+  - `% [JIRA:ABC-123] Task title`
 - Subtasks use 4-space indentation.
-- Description lines continue until next task of same/higher level.
-- Optional tokens: `!state`, `#tag`, `@person`.
+- Optional tag line is the first body line (same indentation as task line body):
+  - tokens only, e.g. `@person !state #tag ~2`
+- `!state` and `~estimate` may appear anywhere in task body; only first occurrence is used.
+- `#tag` and `@person` may appear in tag line or description body.
+- First `@person` occurrence is used as the owner.
+- The token line is part of the task description/body block.
+- Description/body continues until blank line or next task.
+- Description lines should use the same indentation level as the task body.
 - References use `{Task Name}`.
 
 Optional config header before first task:
@@ -125,6 +132,8 @@ When renaming a task title in task edit modal, `{old title}` references are upda
 - Edit title and body code.
 - Live preview of markdown.
 - Token palettes (state/people/tags) with drag-in and drag-out behavior.
+- GUI/Jira edits add tokens to the token line only (create token line if missing).
+- Auto-format canonicalizes `!state` and `~estimate` into the token line (creates token line if needed).
 - Save applies changes to script and graph/kanban.
 
 ## Graph and Kanban

@@ -22,8 +22,12 @@ from fastapi.staticfiles import StaticFiles
 from ypy_websocket import WebsocketServer, YRoom
 from ypy_websocket.asgi_server import ASGIServer
 from ypy_websocket.ystore import FileYStore
+from ypy_websocket.yutils import YMessageType
 import uvicorn
+from uvicorn.protocols.utils import ClientDisconnected
+from websockets.exceptions import ConnectionClosedOK
 from jira.config import (
+    JIRA_DAEMON_USERNAME,
     load_jira_config_data,
     load_jira_config,
     load_users_config_data,
@@ -38,9 +42,7 @@ SPACES_DIR = Path(__file__).resolve().parent / "spaces"
 SPACES_DIR.mkdir(parents=True, exist_ok=True)
 YSTORE_DIR = Path(__file__).resolve().parent / "ystore"
 YSTORE_DIR.mkdir(parents=True, exist_ok=True)
-LEGACY_USERS_FILE = Path(__file__).resolve().parent / "users.txt"
 SESSIONS_FILE = Path(__file__).resolve().parent / "sessions.json"
-LEGACY_SPACES_META_FILE = Path(__file__).resolve().parent / "spaces_config.json"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -56,8 +58,10 @@ DEFAULT_BOOTSTRAP_PASSWORD = "admin"
 SESSION_COOKIE_NAME = "task_session"
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
 PERSONAL_FOLDER_NAME = "personal"
+JIRA_DAEMON_DISPLAY_NAME = "Jira Daemon"
 
 PRESENCE_TTL = 40
+AWARENESS_TTL_MS = PRESENCE_TTL * 1000
 presence: Dict[str, Dict[str, float]] = {}
 space_save_tasks: Dict[str, asyncio.Task] = {}
 SPACE_SAVE_DELAY = 0.5
@@ -166,23 +170,8 @@ def build_password_record(password: str) -> Dict[str, str]:
     }
 
 
-def parse_combined_password_hash(value: Any) -> Optional[Dict[str, str]]:
-    if not isinstance(value, str):
-        return None
-    parts = value.split("$")
-    if len(parts) != 3:
-        return None
-    algo, salt, digest = parts
-    if algo != "md5":
-        return None
-    if not salt or not re.fullmatch(r"[0-9a-fA-F]+", salt):
-        return None
-    if not re.fullmatch(r"[0-9a-fA-F]{32}", digest):
-        return None
-    return {
-        "password_salt": salt.lower(),
-        "password_hash": digest.lower(),
-    }
+def is_hidden_system_user(username: str) -> bool:
+    return username == JIRA_DAEMON_USERNAME
 
 
 def normalize_password_record(raw: Any) -> Dict[str, str]:
@@ -204,12 +193,6 @@ def normalize_password_record(raw: Any) -> Dict[str, str]:
                 "password_salt": salt.lower(),
                 "password_hash": digest.lower(),
             }
-        legacy_hash = parse_combined_password_hash(raw.get("password_hash"))
-        if legacy_hash:
-            return legacy_hash
-        password = raw.get("password")
-        if isinstance(password, str):
-            return build_password_record(password)
     return build_password_record(DEFAULT_BOOTSTRAP_PASSWORD)
 
 
@@ -470,49 +453,6 @@ def clear_last_space_for_deleted_space(space_id: str) -> None:
         _save_sessions_data(data)
 
 
-def load_legacy_users() -> Dict[str, str]:
-    users: Dict[str, str] = {}
-    if not LEGACY_USERS_FILE.exists():
-        return users
-    for line in LEGACY_USERS_FILE.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if ":" not in line:
-            continue
-        username, password = line.split(":", 1)
-        username = username.strip()
-        password = password.strip()
-        if username and re.fullmatch(SPACE_ID_RE, username) and password:
-            users[username] = password
-    return users
-
-
-def bootstrap_users_from_legacy() -> Dict[str, Dict[str, Any]]:
-    legacy = load_legacy_users()
-    result: Dict[str, Dict[str, Any]] = {}
-    if legacy:
-        names = list(legacy.keys())
-        for index, username in enumerate(names):
-            password = legacy[username]
-            role = "admin" if index == 0 else "user"
-            result[username] = {
-                "display_name": username,
-                "role": role,
-                "spaces": [],
-                **build_password_record(password),
-            }
-        return result
-    result[DEFAULT_BOOTSTRAP_USERNAME] = {
-        "display_name": DEFAULT_BOOTSTRAP_USERNAME,
-        "role": "admin",
-        "spaces": [],
-        "must_change_password": True,
-        **build_password_record(DEFAULT_BOOTSTRAP_PASSWORD),
-    }
-    return result
-
-
 def _normalize_users_store(raw_users: Any) -> Tuple[Dict[str, Dict[str, Any]], bool]:
     users: Dict[str, Dict[str, Any]] = {}
     changed = False
@@ -561,19 +501,15 @@ def load_users_store() -> Dict[str, Dict[str, Any]]:
     users, changed = _normalize_users_store(users_data.get("users"))
 
     if not users:
-        jira_data = load_jira_config_data()
-        migrated_users, migrated_changed = _normalize_users_store(jira_data.get("users"))
-        if migrated_users:
-            users = migrated_users
-            changed = True
-            if "users" in jira_data:
-                jira_data.pop("users", None)
-                save_jira_config_data(jira_data)
-            if migrated_changed:
-                changed = True
-
-    if not users:
-        users = bootstrap_users_from_legacy()
+        users = {
+            DEFAULT_BOOTSTRAP_USERNAME: {
+                "display_name": DEFAULT_BOOTSTRAP_USERNAME,
+                "role": "admin",
+                "spaces": [],
+                "must_change_password": True,
+                **build_password_record(DEFAULT_BOOTSTRAP_PASSWORD),
+            }
+        }
         changed = True
     if not any(record.get("role") == "admin" for record in users.values()):
         first_user = sorted(users.keys())[0]
@@ -784,78 +720,6 @@ def update_access_paths_for_space_change(
             changed = True
     if changed:
         save_users_store(users)
-
-
-def migrate_legacy_space_config_to_filesystem() -> None:
-    if not LEGACY_SPACES_META_FILE.exists():
-        return
-    try:
-        raw_text = LEGACY_SPACES_META_FILE.read_text(encoding="utf-8")
-        raw = json.loads(raw_text) if raw_text.strip() else {}
-    except Exception:
-        logger.exception(
-            "Failed to read legacy spaces config from %s",
-            LEGACY_SPACES_META_FILE,
-        )
-        return
-    if not isinstance(raw, dict):
-        return
-
-    folders = raw.get("folders")
-    if isinstance(folders, list):
-        for item in folders:
-            folder_name = normalize_folder_name(item)
-            if not folder_name or is_personal_folder_name(folder_name):
-                continue
-            try:
-                folder_path(folder_name).mkdir(parents=True, exist_ok=True)
-            except Exception:
-                logger.exception("Failed to create folder %s from legacy config", folder_name)
-
-    mapping = raw.get("space_folders")
-    if isinstance(mapping, dict):
-        for raw_space_id, raw_folder in mapping.items():
-            if not isinstance(raw_space_id, str):
-                continue
-            try:
-                space_id = sanitize_space(raw_space_id)
-            except HTTPException:
-                continue
-            folder_name = normalize_folder_name(raw_folder)
-            if not folder_name or is_personal_folder_name(folder_name):
-                continue
-            source = find_space_file(space_id)
-            if not source:
-                continue
-            target_dir = folder_path(folder_name)
-            target_dir.mkdir(parents=True, exist_ok=True)
-            target = target_dir / f"{space_id}.txt"
-            if source == target:
-                continue
-            if target.exists():
-                logger.warning(
-                    "Skipping legacy move for %s to %s because target exists",
-                    space_id,
-                    target,
-                )
-                continue
-            try:
-                source.rename(target)
-            except Exception:
-                logger.exception(
-                    "Failed to move %s to folder %s during legacy migration",
-                    source,
-                    folder_name,
-                )
-
-    backup = LEGACY_SPACES_META_FILE.with_name(
-        f"{LEGACY_SPACES_META_FILE.stem}.migrated.{int(time.time())}.json"
-    )
-    try:
-        LEGACY_SPACES_META_FILE.rename(backup)
-        logger.info("Legacy spaces config migrated and archived to %s", backup)
-    except Exception:
-        logger.exception("Failed to archive legacy spaces config %s", LEGACY_SPACES_META_FILE)
 
 
 def user_record_to_auth(username: str, record: Dict[str, Any]) -> AuthUser:
@@ -1211,11 +1075,16 @@ def schedule_space_snapshot(space_id: str, room) -> None:
 
 async def hydrate_room_from_storage(space_id: str, room) -> None:
     store_path = ystore_path(space_id)
+    loaded_from_ystore = False
     if store_path.exists():
         try:
             await room.ystore.apply_updates(room.ydoc)
+            loaded_from_ystore = True
         except Exception:
-            logger.exception("Failed to apply ystore for %s; rebuilding from snapshot", space_id)
+            logger.exception(
+                "Failed to apply ystore for %s; falling back to snapshot",
+                space_id,
+            )
             backup_path = store_path.with_suffix(f".ystore.corrupt.{int(time.time())}")
             try:
                 store_path.rename(backup_path)
@@ -1226,19 +1095,17 @@ async def hydrate_room_from_storage(space_id: str, room) -> None:
                     logger.warning("Corrupt ystore removed for %s", space_id)
                 except Exception:
                     logger.exception("Failed to remove corrupt ystore for %s", space_id)
-            content_path = space_path(space_id)
-            if content_path.exists():
-                content = content_path.read_text(encoding="utf-8")
-                if content:
-                    replace_ydoc_text(room.ydoc, content)
-                    await room.ystore.encode_state_as_update(room.ydoc)
-    else:
+
+    if not loaded_from_ystore:
         content_path = space_path(space_id)
         if content_path.exists():
             content = content_path.read_text(encoding="utf-8")
             if content:
                 replace_ydoc_text(room.ydoc, content)
-                await room.ystore.encode_state_as_update(room.ydoc)
+                try:
+                    await room.ystore.encode_state_as_update(room.ydoc)
+                except Exception:
+                    logger.exception("Failed to seed ystore for %s from snapshot", space_id)
     room.ready = True
     schedule_space_snapshot(space_id, room)
 
@@ -1254,41 +1121,98 @@ def attach_snapshot_hook(space_id: str, room) -> None:
     room._snapshot_hook = True
 
 
-async def scan_ystore_files() -> None:
+def attach_awareness_hook(room) -> None:
+    if getattr(room, "_awareness_hook", False):
+        return
+
+    previous_handler = getattr(room, "on_message", None)
+
+    def _on_message(message: bytes) -> bool:
+        try:
+            if message and message[0] == int(YMessageType.AWARENESS):
+                room.awareness.get_changes(message[1:])
+        except Exception:
+            logger.exception("Failed to parse awareness message")
+        if callable(previous_handler):
+            result = previous_handler(message)
+            return bool(result)
+        return False
+
+    room.on_message = _on_message
+    room._awareness_hook = True
+
+
+def _cleanup_room_awareness(room) -> None:
+    awareness = getattr(room, "awareness", None)
+    if awareness is None:
+        return
+    now_ms = int(time.time() * 1000)
+    stale_client_ids = []
+    for client_id, meta in list(getattr(awareness, "meta", {}).items()):
+        last_updated = meta.get("last_updated") if isinstance(meta, dict) else None
+        if not isinstance(last_updated, (int, float)):
+            continue
+        if now_ms - int(last_updated) > AWARENESS_TTL_MS:
+            stale_client_ids.append(client_id)
+    for client_id in stale_client_ids:
+        awareness.meta.pop(client_id, None)
+        awareness.states.pop(client_id, None)
+
+
+async def sync_snapshots_from_ystore_on_startup() -> None:
     if not YSTORE_DIR.exists():
         return
     for store_path in YSTORE_DIR.glob("*.ystore"):
         space_id = store_path.stem
-        logger.info("Scanning ystore for %s", space_id)
+        logger.info("Boot sync: loading ystore for %s", space_id)
         ydoc = Y.YDoc()
         store = FileYStore(str(store_path))
         try:
             await store.apply_updates(ydoc)
+        except Exception:
+            logger.exception("Failed to load ystore for %s during boot sync", space_id)
+            backup_path = store_path.with_suffix(f".ystore.corrupt.{int(time.time())}")
+            try:
+                store_path.rename(backup_path)
+                logger.warning("Corrupt ystore moved to %s", backup_path)
+            except Exception:
+                try:
+                    store_path.unlink()
+                    logger.warning("Corrupt ystore removed for %s", space_id)
+                except Exception:
+                    logger.exception("Failed to remove corrupt ystore for %s", space_id)
             continue
-        except Exception:
-            logger.exception("Corrupt ystore detected for %s; rebuilding", space_id)
-        backup_path = store_path.with_suffix(f".ystore.corrupt.{int(time.time())}")
-        try:
-            store_path.rename(backup_path)
-            logger.warning("Corrupt ystore moved to %s", backup_path)
-        except Exception:
-            try:
-                store_path.unlink()
-                logger.warning("Corrupt ystore removed for %s", space_id)
-            except Exception:
-                logger.exception("Failed to remove corrupt ystore for %s", space_id)
+
         content_path = space_path(space_id)
-        if content_path.exists():
-            content = content_path.read_text(encoding="utf-8")
-            if content:
-                replace_ydoc_text(ydoc, content)
+        try:
+            content_path.parent.mkdir(parents=True, exist_ok=True)
+            content_path.write_text(ydoc_to_text(ydoc), encoding="utf-8")
+            logger.info("Boot sync: wrote snapshot for %s from %s", space_id, store_path.name)
+        except Exception:
+            logger.exception("Failed boot snapshot sync for %s", space_id)
+
+        temp_store_path = store_path.with_name(f"{store_path.name}.compact.tmp")
+        try:
+            if temp_store_path.exists():
+                temp_store_path.unlink()
+            compacted_store = FileYStore(str(temp_store_path))
+            await compacted_store.encode_state_as_update(ydoc)
+            before_size = store_path.stat().st_size if store_path.exists() else 0
+            after_size = temp_store_path.stat().st_size
+            temp_store_path.replace(store_path)
+            logger.info(
+                "Boot compaction: compacted ystore for %s (%d -> %d bytes)",
+                space_id,
+                before_size,
+                after_size,
+            )
+        except Exception:
+            logger.exception("Failed boot ystore compaction for %s", space_id)
             try:
-                await store.encode_state_as_update(ydoc)
-                logger.info("Rebuilt ystore for %s from snapshot", space_id)
+                if temp_store_path.exists():
+                    temp_store_path.unlink()
             except Exception:
-                logger.exception("Failed to rebuild ystore for %s", space_id)
-        else:
-            logger.warning("No snapshot found for %s; skipping rebuild", space_id)
+                logger.exception("Failed to clean temp compacted ystore for %s", space_id)
 
 
 app = FastAPI()
@@ -1402,6 +1326,7 @@ def list_users(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     rows = [
         user_view(username, users[username], user)
         for username in sorted(users.keys())
+        if not is_hidden_system_user(username)
     ]
     return {
         "users": rows,
@@ -1417,6 +1342,8 @@ def create_user(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid user payload.")
     username = normalize_username(str(payload.get("username") or ""))
+    if is_hidden_system_user(username):
+        raise HTTPException(status_code=400, detail="Reserved username.")
     password = payload.get("password")
     if not isinstance(password, str) or not password:
         raise HTTPException(status_code=400, detail="Password is required.")
@@ -1458,6 +1385,8 @@ def update_user(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid user payload.")
     target_username = normalize_username(username)
+    if is_hidden_system_user(target_username):
+        raise HTTPException(status_code=404, detail="User not found.")
     users = load_users_store()
     target = users.get(target_username)
     if not target:
@@ -1523,6 +1452,8 @@ def update_user(
 @app.delete("/api/users/{username}")
 def delete_user(username: str, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     target_username = normalize_username(username)
+    if is_hidden_system_user(target_username):
+        raise HTTPException(status_code=404, detail="User not found.")
     users = load_users_store()
     target = users.get(target_username)
     if not target:
@@ -1700,6 +1631,7 @@ def write_jira_config(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid Jira config payload.")
     config = save_jira_config(payload)
+    ensure_jira_daemon_credentials()
     return {
         "ok": True,
         "base_url": config.base_url,
@@ -1898,9 +1830,66 @@ def remove_presence(space_id: str, username: str) -> None:
 
 
 def users_for_space(space_id: str) -> List[str]:
+    room = websocket_server.rooms.get(room_name(space_id))
+    if room is not None and getattr(room, "awareness", None) is not None:
+        _cleanup_room_awareness(room)
+        names: Set[str] = set()
+        for state in getattr(room.awareness, "states", {}).values():
+            if not isinstance(state, dict):
+                continue
+            user = state.get("user")
+            if isinstance(user, dict):
+                display_name = user.get("name")
+                if isinstance(display_name, str) and display_name.strip():
+                    names.add(display_name.strip())
+                    continue
+                username = user.get("username")
+                if isinstance(username, str) and username.strip():
+                    names.add(username.strip())
+                    continue
+            # Fallback for non-standard awareness payloads.
+            if isinstance(state.get("name"), str) and state["name"].strip():
+                names.add(state["name"].strip())
+        if names:
+            return sorted(names)
     cleanup_presence()
     users = presence.get(space_id, {})
     return sorted(users.keys())
+
+
+def ensure_jira_daemon_credentials() -> None:
+    jira_data = load_jira_config_data()
+    username = JIRA_DAEMON_USERNAME
+    worker_username = (
+        str(jira_data.get("worker_username") or "").strip() or username
+    )
+    if worker_username != username:
+        worker_username = username
+
+    worker_password = str(jira_data.get("worker_password") or "").strip()
+    if not worker_password:
+        worker_password = secrets.token_urlsafe(24)
+
+    users = load_users_store()
+    users[username] = normalize_user_record(
+        username,
+        {
+            "display_name": JIRA_DAEMON_DISPLAY_NAME,
+            "role": "manager",
+            "spaces": [],
+            "must_change_password": False,
+            **build_password_record(worker_password),
+        },
+    )
+    save_users_store(users)
+
+    if (
+        jira_data.get("worker_username") != worker_username
+        or jira_data.get("worker_password") != worker_password
+    ):
+        jira_data["worker_username"] = worker_username
+        jira_data["worker_password"] = worker_password
+        save_jira_config_data(jira_data)
 
 
 def space_from_path(path: str) -> Optional[str]:
@@ -1985,31 +1974,146 @@ class PersistentWebsocketServer(WebsocketServer):
                 self.rooms[name] = room
                 await hydrate_room_from_storage(space_id, room)
                 attach_snapshot_hook(space_id, room)
+                attach_awareness_hook(room)
             else:
-                self.rooms[name] = YRoom(ready=self.rooms_ready, log=self.log)
+                room = YRoom(ready=self.rooms_ready, log=self.log)
+                self.rooms[name] = room
+                attach_awareness_hook(room)
         room = self.rooms[name]
         await self.start_room(room)
         return room
 
 
 websocket_server = PersistentWebsocketServer()
-app.mount("/ws", ASGIServer(websocket_server, on_connect=on_connect))
+def _is_benign_shutdown_error(exc: BaseException) -> bool:
+    if isinstance(exc, RuntimeError):
+        message = str(exc)
+        if (
+            "Unexpected ASGI message 'websocket.send'" in message
+            and "after sending 'websocket.close'" in message
+        ):
+            return True
+    return (
+        isinstance(exc, (ClientDisconnected, ConnectionClosedOK, asyncio.CancelledError))
+    )
+
+
+class _SuppressBenignShutdownASGI:
+    def __init__(self, app: Any) -> None:
+        self._app = app
+
+    async def __call__(self, scope: Dict[str, Any], receive: Any, send: Any) -> Any:
+        response_started = False
+        response_completed = False
+
+        async def tracked_send(message: Dict[str, Any]) -> Any:
+            nonlocal response_started, response_completed
+            message_type = message.get("type")
+            if scope.get("type") == "http":
+                if message_type == "http.response.start":
+                    response_started = True
+                elif message_type == "http.response.body" and not message.get("more_body", False):
+                    response_completed = True
+            elif scope.get("type") == "websocket":
+                if message_type == "websocket.close":
+                    response_completed = True
+            return await send(message)
+
+        try:
+            return await self._app(scope, receive, tracked_send)
+        except BaseException as exc:
+            if isinstance(exc, BaseExceptionGroup):
+                benign, remainder = exc.split(_is_benign_shutdown_error)
+                if remainder is None:
+                    if scope.get("type") == "http":
+                        await self._finish_cancelled_http_response(
+                            send,
+                            response_started=response_started,
+                            response_completed=response_completed,
+                        )
+                    logger.info(
+                        "Suppressed benign %s shutdown errors during ASGI request.",
+                        scope.get("type", "unknown"),
+                    )
+                    return None
+                raise remainder
+            if _is_benign_shutdown_error(exc):
+                if scope.get("type") == "http":
+                    await self._finish_cancelled_http_response(
+                        send,
+                        response_started=response_started,
+                        response_completed=response_completed,
+                    )
+                logger.info(
+                    "Suppressed benign %s disconnect/cancel during ASGI request shutdown.",
+                    scope.get("type", "unknown"),
+                )
+                return None
+            raise
+
+    async def _finish_cancelled_http_response(
+        self,
+        send: Any,
+        *,
+        response_started: bool,
+        response_completed: bool,
+    ) -> None:
+        if response_completed:
+            return
+        try:
+            if not response_started:
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 204,
+                        "headers": [],
+                    }
+                )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b"",
+                    "more_body": False,
+                }
+            )
+        except BaseException:
+            # Client is usually already gone during shutdown; best effort only.
+            pass
+
+
+app.mount(
+    "/ws",
+    _SuppressBenignShutdownASGI(ASGIServer(websocket_server, on_connect=on_connect)),
+)
 app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
 
 
 async def main() -> None:
-    migrate_legacy_space_config_to_filesystem()
     load_users_store()
-    await scan_ystore_files()
+    await sync_snapshots_from_ystore_on_startup()
     port_value = os.getenv("PORT", "5000").strip()
     try:
         port = int(port_value)
     except ValueError:
         port = 5000
-    config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
+    # We don't use FastAPI lifespan hooks here, and disabling lifespan avoids
+    # noisy CancelledError traces during server shutdown on Python 3.12.
+    config = uvicorn.Config(
+        _SuppressBenignShutdownASGI(app),
+        host="0.0.0.0",
+        port=port,
+        log_level="info",
+        lifespan="off",
+    )
     server = uvicorn.Server(config)
-    async with websocket_server:
-        await server.serve()
+    try:
+        async with websocket_server:
+            await server.serve()
+    except* BaseException as exc_group:
+        _benign, remainder = exc_group.split(_is_benign_shutdown_error)
+        if remainder is not None:
+            raise remainder
+        logger.info("Suppressed benign websocket disconnect errors during shutdown.")
 
 
 if __name__ == "__main__":

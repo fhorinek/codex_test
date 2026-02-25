@@ -1,0 +1,16 @@
+[run]
+branch = True
+source =
+    server
+    jira
+omit =
+    */tests/*
+    */.venv/*
+
+[report]
+show_missing = True
+skip_covered = False
+precision = 1
+
+[html]
+directory = htmlcov

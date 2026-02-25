@@ -24,3 +24,10 @@ backend/jira/jira_config.json
 backend/users_config.json
 backend/sessions.json
 backend/spaces/**
+frontend/test-artifacts/
+backend/.coverage
+backend/.coverage.*
+backend/htmlcov/
+backend/coverage.xml
+frontend/coverage/
+frontend/.nyc_output/

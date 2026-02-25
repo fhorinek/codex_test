@@ -14,6 +14,20 @@ export function colorFromString(value) {
   return hslToHex(hue, 60, 52);
 }
 
+function normalizeConfiguredColorValue(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return "";
+  }
+  if (/^#[0-9a-fA-F]{3}$/.test(raw) || /^#[0-9a-fA-F]{6}$/.test(raw)) {
+    return raw;
+  }
+  if (/^[0-9a-fA-F]{3}$/.test(raw) || /^[0-9a-fA-F]{6}$/.test(raw)) {
+    return `#${raw}`;
+  }
+  return raw;
+}
+
 function hslToHex(hue, saturation, lightness) {
   const s = saturation / 100;
   const l = lightness / 100;
@@ -47,21 +61,22 @@ function hslToHex(hue, saturation, lightness) {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
-const JIRA_KEY_RE = /\[JIRA:([A-Z][A-Z0-9]+-\d+)\]/;
-const JIRA_KEY_GLOBAL_RE = /\s*\[JIRA:[A-Z][A-Z0-9]+-\d+\]\s*/g;
+const JIRA_MARKER_RE = /\[JIRA:([A-Z][A-Z0-9]+(?:-\d+)?)\]/;
+const JIRA_MARKER_GLOBAL_RE = /\s*\[JIRA:[A-Z][A-Z0-9]+(?:-\d+)?\]\s*/g;
 
 export function parseJiraTitle(title) {
   const raw = typeof title === "string" ? title : "";
   const trimmed = raw.replace(/^%\s*/, "");
-  const match = trimmed.match(JIRA_KEY_RE);
+  const match = trimmed.match(JIRA_MARKER_RE);
   if (!match) {
     return { key: null, title: trimmed.trim() };
   }
+  const value = match[1];
   const cleaned = trimmed
-    .replace(JIRA_KEY_GLOBAL_RE, " ")
+    .replace(JIRA_MARKER_GLOBAL_RE, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
-  return { key: match[1], title: cleaned };
+  return { key: /-\d+$/.test(value) ? value : null, title: cleaned };
 }
 
 export function applyInlineown(text) {
@@ -95,7 +110,7 @@ export function applyInlineMarkdownWithOptions(text, options = {}) {
     "$1<span class=\"pill inline-pill\" data-type=\"person\" data-value=\"@$2\">👤 $2</span>"
   );
   value = value.replace(
-    /\[JIRA:([A-Z][A-Z0-9]+-\d+)\]/g,
+    /\[JIRA:([A-Z][A-Z0-9]+(?:-\d+)?)\]/g,
     "<span class=\"pill inline-pill jira-pill\" data-type=\"jira\" data-value=\"$1\">$1</span>"
   );
   value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, alt, src) =>
@@ -341,13 +356,13 @@ function parseConfig(lines) {
     if (indent === 8 && currentSection) {
       const match = trimmed.match(/^([^\s:]+)\s*:\s*(.*)?$/);
       const key = match ? match[1] : trimmed;
-      const autoColor =
-        currentSection === "tags" ||
-          currentSection === "people" ||
-          currentSection === "states"
-          ? colorFromString(key)
-          : "";
-      const entry = { key, name: key, color: autoColor };
+      const entry = { key, name: key, color: "" };
+      if (currentSection === "people") {
+        entry.email = "";
+      }
+      if (currentSection === "states") {
+        entry.jiraState = "";
+      }
       if (match && match[2]) {
         entry.name = match[2].trim() || entry.name;
       }
@@ -362,14 +377,22 @@ function parseConfig(lines) {
       continue;
     }
     if (indent === 12 && currentEntry) {
-      const propMatch = trimmed.match(/^([a-zA-Z]+)\s*:\s*(.*)$/);
+      const propMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
       if (propMatch) {
         const prop = propMatch[1].toLowerCase();
+        const propKey = prop.replace(/[_-]/g, "");
         const value = propMatch[2].trim();
-        if (prop === "name") {
+        if (propKey === "name") {
           currentEntry.name = value || currentEntry.name;
-        } else if (prop === "color") {
-          currentEntry.color = value;
+        } else if (propKey === "color") {
+          currentEntry.color = normalizeConfiguredColorValue(value);
+        } else if ((propKey === "email" || propKey === "mail") && currentSection === "people") {
+          currentEntry.email = value;
+        } else if (
+          (propKey === "jirastate" || propKey === "jira")
+          && currentSection === "states"
+        ) {
+          currentEntry.jiraState = value;
         }
       }
     }
@@ -391,6 +414,15 @@ export function parseTasks(text) {
   const tagMeta = new Map();
   const peopleMeta = new Map();
   const stateMeta = new Map();
+  const isTokenLine = (line) => {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      return false;
+    }
+    return trimmed.split(/\s+/).every((token) => (
+      /^~\d+(?:\.\d+)?$/.test(token) || /^[#@!][^\s#@~]+$/.test(token)
+    ));
+  };
 
   config.tags.forEach((tag) => {
     const value = `#${tag.key}`;
@@ -503,7 +535,7 @@ export function parseTasks(text) {
         currentTask.references.push(reference);
       }
     }
-    const stateMatches = descriptionLine.matchAll(/(^|\s)(![^\s#@]+)/g);
+    const stateMatches = descriptionLine.matchAll(/(^|\s)(![^\s#@~]+)/g);
     for (const match of stateMatches) {
       const stateTag = match[2];
       if (!stateTag || stateTag.length <= 1) {

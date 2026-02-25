@@ -28,3 +28,33 @@ test("app source contains normalized task lookup for references", async () => {
   assert.match(source, /name\.trim\(\)/);
   assert.match(source, /toLowerCase\(\)/);
 });
+
+// Regression guard for connect-to-space duplication:
+// hydrateFromRemote must not run before websocket provider sync, otherwise
+// local hydration can race with synced Yjs content and duplicate text.
+test("connectToSpace hydrates only after provider sync", async () => {
+  const source = await readAppSource();
+  const connectStart = source.indexOf("async function connectToSpace(");
+  assert.notEqual(connectStart, -1, "connectToSpace function should exist");
+
+  const nextFunctionStart = source.indexOf("\nfunction matchesFilters(", connectStart);
+  assert.notEqual(nextFunctionStart, -1, "expected matchesFilters after connectToSpace");
+
+  const connectBlock = source.slice(connectStart, nextFunctionStart);
+  const syncHandlerIndex = connectBlock.indexOf('provider.on("sync"');
+  assert.ok(syncHandlerIndex > -1, 'connectToSpace should register a provider "sync" handler');
+
+  const beforeSync = connectBlock.slice(0, syncHandlerIndex);
+  assert.equal(
+    beforeSync.includes("hydrateFromRemote(spaceId, ytext)"),
+    false,
+    "hydrateFromRemote must not run before provider sync handler registration"
+  );
+
+  const syncSection = connectBlock.slice(syncHandlerIndex);
+  assert.equal(
+    syncSection.includes("if (synced) {\n      hydrateFromRemote(spaceId, ytext);"),
+    true,
+    "hydrateFromRemote should run inside the synced branch of provider.on(\"sync\")"
+  );
+});

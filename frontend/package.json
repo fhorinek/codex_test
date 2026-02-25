@@ -4,9 +4,14 @@
   "description": "Task Script Board is a script-first planner with live code, graph, and kanban views, collaborative spaces/folders, role-based user management, Jira/profile settings, slug rename tools, and persistent sessions.",
   "main": "index.js",
   "scripts": {
-    "test": "npm run test:unit",
-    "test:unit": "node --test tests/task.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js",
-    "test:e2e": "node --test tests/app.e2e.test.js && node --test tests/backend.contract.e2e.test.js"
+    "test": "npm run test:all",
+    "test:all": "npm run test:unit && npm run test:e2e && npm run test:e2e:chrome-connect",
+    "test:coverage": "npm run test:unit:coverage",
+    "test:coverage:all": "npm run test:unit:coverage && npm run test:e2e && npm run test:e2e:chrome-connect",
+    "test:unit": "node --test tests/task.unit.test.js tests/kanban.unit.test.js tests/formatter.unit.test.js tests/canvas.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js",
+    "test:unit:coverage": "sh -c 'if command -v c8 >/dev/null 2>&1; then exec c8 node --test tests/task.unit.test.js tests/kanban.unit.test.js tests/formatter.unit.test.js tests/canvas.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js; fi; echo \"c8 not found; running unit tests without coverage\" >&2; exec node --test tests/task.unit.test.js tests/kanban.unit.test.js tests/formatter.unit.test.js tests/canvas.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js'",
+    "test:e2e": "node --test tests/app.e2e.test.js && node --test tests/backend.contract.e2e.test.js",
+    "test:e2e:chrome-connect": "node --test tests/connect_space.chrome.e2e.test.js"
   },
   "keywords": [],
   "author": "",
@@ -20,8 +25,12 @@
     "@codemirror/view": "^6.23.1",
     "@fortawesome/fontawesome-free": "^7.1.0",
     "@replit/codemirror-indentation-markers": "^6.2.1",
-    "y-textarea": "^1.0.2",
+    "y-codemirror.next": "^0.3.5",
     "y-websocket": "^3.0.0",
     "yjs": "^13.6.29"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "c8": "^10.1.3"
   }
 }

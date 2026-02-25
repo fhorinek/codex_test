@@ -4,8 +4,27 @@
       "display_name": "František Horínek",
       "role": "admin",
       "spaces": [],
-      "password_salt": "d249c051217fd22b",
-      "password_hash": "d2eadffb771051d4b661aef3da7b5526"
+      "must_change_password": false,
+      "password_salt": "42952960cae0a46f",
+      "password_hash": "23105905c0ddeb8f87bf0140fa901427"
+    },
+    "test": {
+      "display_name": "Tester test",
+      "role": "user",
+      "spaces": [
+        "jira_test"
+      ],
+      "must_change_password": false,
+      "password_salt": "bd1ae8ceab9fc4ff",
+      "password_hash": "4c65e6251681e90cc84474e54fbad033"
+    },
+    "jira-daemon": {
+      "display_name": "Jira Daemon",
+      "role": "manager",
+      "spaces": [],
+      "must_change_password": false,
+      "password_salt": "f4dc79c554a39a9c",
+      "password_hash": "abf7bb6635e4e4c8d73c1fc64f3e99fe"
     }
   }
 }

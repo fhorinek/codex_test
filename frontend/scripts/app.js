@@ -14,7 +14,7 @@ const AUTH_TOKEN = "";
 const COLLAB_LIBS = {
   yjs: "yjs",
   ywebsocket: "y-websocket",
-  ytextarea: "y-textarea",
+  ycodemirror: "y-codemirror.next",
 };
 const COLLAB_COLORS = [
   { r: 45, g: 80, b: 237 },
@@ -282,6 +282,21 @@ const dom = {
   slugRenameMessage: document.getElementById("slug-rename-message"),
   slugRenameCurrent: document.getElementById("slug-rename-current"),
   slugRenameNew: document.getElementById("slug-rename-new"),
+  slugRenameDisplayNameField: document.getElementById("slug-rename-display-name-field"),
+  slugRenameDisplayNameLabel: document.getElementById("slug-rename-display-name-label"),
+  slugRenameDisplayName: document.getElementById("slug-rename-display-name"),
+  slugRenameColorField: document.getElementById("slug-rename-color-field"),
+  slugRenameColor: document.getElementById("slug-rename-color"),
+  slugRenameColorSwatches: document.getElementById("slug-rename-color-swatches"),
+  slugRenameColorPicker: document.getElementById("slug-rename-color-picker"),
+  slugRenameColorClear: document.getElementById("slug-rename-color-clear"),
+  slugRenameColorPreview: document.getElementById("slug-rename-color-preview"),
+  slugRenameEmailField: document.getElementById("slug-rename-email-field"),
+  slugRenameEmailLabel: document.getElementById("slug-rename-email-label"),
+  slugRenameEmail: document.getElementById("slug-rename-email"),
+  slugRenameJiraStateField: document.getElementById("slug-rename-jira-state-field"),
+  slugRenameJiraStateLabel: document.getElementById("slug-rename-jira-state-label"),
+  slugRenameJiraState: document.getElementById("slug-rename-jira-state"),
   slugRenameCancel: document.getElementById("slug-rename-cancel"),
   slugRenameSave: document.getElementById("slug-rename-save"),
   boardRenameModal: document.getElementById("board-rename-modal"),
@@ -452,7 +467,7 @@ const collab = {
   ydoc: null,
   ytext: null,
   binding: null,
-  bindingOptions: null,
+  bindingMode: null,
   saveTimer: null,
   presenceTimer: null,
   spacePoller: null,
@@ -491,6 +506,7 @@ let pendingDeleteFolder = null;
 let pendingDeleteUser = null;
 let pendingPasswordUser = null;
 let pendingSlugRename = null;
+let slugRenameColorControlsBound = false;
 let pendingBoardRename = false;
 let createUserSpacesPicker = null;
 let toastContainer = null;
@@ -686,17 +702,8 @@ function applyAuthFromInputs({ store = true, markDirty = true } = {}) {
     collab.mustChangePassword = false;
     collab.permissions = normalizePermissions(null);
   }
-  if (collab.bindingOptions) {
-    collab.bindingOptions.clientName = collab.identity.name;
-    collab.bindingOptions.color = collab.identity.color;
-    if (collab.provider?.awareness && dom.editor?.id) {
-      collab.provider.awareness.setLocalStateField(dom.editor.id, {
-        user: collab.provider.awareness.clientID,
-        selection: false,
-        name: collab.identity.name,
-        color: collab.identity.color,
-      });
-    }
+  if (collab.binding || collab.provider) {
+    publishCollabIdentityAwareness();
   }
   updateBoardConnectionLabel();
   if (collab.spaceId) {
@@ -909,84 +916,21 @@ dom.editor.value = getInitialEditorValue();
 
 let editorController;
 
-function updateCollabSelection(start, end, active = true) {
-  if (!collab.provider?.awareness || !collab.ytext || !collab.modules?.Y) {
-    return;
-  }
-  const identity =
-    collab.identity || getCollabIdentity(collab.displayName || collab.username || "user");
-  if (!active) {
-    collab.provider.awareness.setLocalStateField(dom.editor.id, {
-      user: collab.provider.awareness.clientID,
-      selection: false,
-      name: identity.name,
-      color: identity.color,
-    });
-    return;
-  }
-  const { Y } = collab.modules;
-  const safeStart = Math.max(0, Math.min(start ?? 0, collab.ytext.length));
-  const safeEnd = Math.max(0, Math.min(end ?? safeStart, collab.ytext.length));
-  const startRel = Y.createRelativePositionFromTypeIndex(collab.ytext, safeStart);
-  const endRel = Y.createRelativePositionFromTypeIndex(collab.ytext, safeEnd);
-  collab.provider.awareness.setLocalStateField(dom.editor.id, {
-    user: collab.provider.awareness.clientID,
-    selection: true,
-    start: JSON.stringify(startRel),
-    end: JSON.stringify(endRel),
-    name: identity.name,
-    color: identity.color,
-  });
-}
-
-function syncYTextFromEditor(value) {
+function shouldSuppressTextareaInputEcho(value) {
+  void value;
   if (!collab.ytext || !collab.ydoc) {
     return false;
   }
-  const current = collab.ytext.toString();
-  if (current === value) {
-    return true;
-  }
-  let prefix = 0;
-  const maxPrefix = Math.min(current.length, value.length);
-  while (prefix < maxPrefix && current[prefix] === value[prefix]) {
-    prefix += 1;
-  }
-  let suffix = 0;
-  const maxSuffix = Math.min(current.length - prefix, value.length - prefix);
-  while (
-    suffix < maxSuffix &&
-    current[current.length - 1 - suffix] === value[value.length - 1 - suffix]
-  ) {
-    suffix += 1;
-  }
-  const deleteFrom = prefix;
-  const deleteLength = current.length - prefix - suffix;
-  const insert = value.slice(prefix, value.length - suffix);
-  collab.ydoc.transact(() => {
-    if (deleteLength > 0) {
-      collab.ytext.delete(deleteFrom, deleteLength);
-    }
-    if (insert) {
-      collab.ytext.insert(deleteFrom, insert);
-    }
-  });
-  return true;
+  // yCollab already propagates CodeMirror document updates into Y.Text, so the
+  // hidden textarea "input" echo event is unnecessary while connected.
+  return collab.bindingMode === "cm6";
 }
 editorController = createEditor({
   state,
   dom,
   onSync: sync,
   onSelectTask: handleEditorSelection,
-  onLocalChange: syncYTextFromEditor,
-  onSelectionChange: (start, end) => updateCollabSelection(start, end, true),
-  onFocusChange: (focused, start, end) => {
-    if (!focused) {
-      updateCollabSelection(0, 0, false);
-      return;
-    }
-    updateCollabSelection(start, end, true);
-  },
+  onLocalChange: shouldSuppressTextareaInputEcho,
   onTaskTitleDoubleClick: ({ lineIndex }) => {
     const task = state.allTasks.find((item) => item.lineIndex === lineIndex);
     if (!task) {
@@ -1011,6 +955,7 @@ const canvasController = createCanvas({
   onUpdateTaskToken: updateTaskToken,
   onUpdateTaskState: updateTaskState,
   onMakeSubtask: moveTaskAsSubtask,
+  onReorderTask: reorderKanbanTask,
   onToggleCheckbox: toggleCheckboxAtLine,
   onFiltersChange: () => {
     buildTagPersonLists();
@@ -1019,6 +964,32 @@ const canvasController = createCanvas({
     renderStoryPointsSummary();
   },
 });
+
+if (typeof window !== "undefined") {
+  window.__taskScriptTestHooks = {
+    setEditorSelectionRange(start, end) {
+      if (!editorController?.setSelectionRange) {
+        return null;
+      }
+      editorController.setSelectionRange(start, end);
+      return editorController.getSelectionRange?.() || null;
+    },
+    getEditorSelectionRange() {
+      return editorController?.getSelectionRange?.() || null;
+    },
+    getEditorDisplayRects() {
+      return {
+        selection:
+          editorController?.getDisplaySelectionRects?.() || [],
+        cursor:
+          editorController?.getDisplayCursorRects?.() || [],
+      };
+    },
+    syncEditorOverlayMetrics() {
+      editorController?.syncOverlayMetrics?.();
+    },
+  };
+}
 
 let modalEditorController = null;
 let modalEditorState = null;
@@ -1307,12 +1278,14 @@ function buildKanban() {
   buildKanbanView({
     state,
     dom,
+    renderMarkdown,
     selectTask,
     onEditTask: (task) => openTaskEditModal(task),
     matchesSearchTask,
     filtersActive,
     matchesFilters,
     updateTaskState,
+    onToggleCheckbox: toggleCheckboxAtLine,
     groupBy: state.kanbanGroupBy,
   });
 }
@@ -1415,6 +1388,23 @@ const SLUG_SECTION_BY_KIND = {
   state: "states",
 };
 
+const SLUG_CONFIG_PROPS_BY_KIND = {
+  tag: ["name", "color"],
+  person: ["name", "color", "email"],
+  state: ["name", "color", "jiraState"],
+};
+
+const SLUG_RENAME_SWATCH_COLORS = [
+  "#e85d75",
+  "#f28a2e",
+  "#d6b100",
+  "#5ea63a",
+  "#0fa58a",
+  "#1d8fe1",
+  "#5d6bff",
+  "#b24be0",
+];
+
 const SLUG_VALUE_RE = /^[A-Za-z0-9_-]+$/;
 
 function normalizeSlugInput(value, prefix) {
@@ -1442,64 +1432,406 @@ function replaceSlugTokenOccurrences(text, oldToken, newToken) {
   return { text: nextText, count };
 }
 
-function renameSlugConfigEntries(lines, { kind, oldSlug, newSlug }) {
+function getSlugConfigEntry(kind, slug) {
+  const section = SLUG_SECTION_BY_KIND[kind];
+  const entries = Array.isArray(state.config?.[section]) ? state.config[section] : [];
+  return entries.find((entry) => entry?.key === slug) || null;
+}
+
+function normalizeSlugMetadata(kind, metadata = {}) {
+  const normalized = {
+    name: typeof metadata.name === "string" ? metadata.name.trim() : "",
+    color: typeof metadata.color === "string" ? metadata.color.trim() : "",
+    email: "",
+    jiraState: "",
+  };
+  if (kind === "person") {
+    normalized.email = typeof metadata.email === "string" ? metadata.email.trim() : "";
+  }
+  if (kind === "state") {
+    normalized.jiraState =
+      typeof metadata.jiraState === "string" ? metadata.jiraState.trim() : "";
+  }
+  return normalized;
+}
+
+function hasSlugMetadataInput(kind, metadata = {}) {
+  const keys = SLUG_CONFIG_PROPS_BY_KIND[kind] || [];
+  return keys.some((key) => {
+    const value = metadata[key];
+    return typeof value === "string" && value.trim() !== "";
+  });
+}
+
+function slugMetadataEqual(kind, left = {}, right = {}) {
+  const keys = SLUG_CONFIG_PROPS_BY_KIND[kind] || [];
+  return keys.every((key) => {
+    const a = typeof left[key] === "string" ? left[key].trim() : "";
+    const b = typeof right[key] === "string" ? right[key].trim() : "";
+    return a === b;
+  });
+}
+
+function buildSlugRenameMetadata(kind, slug) {
+  const entry = getSlugConfigEntry(kind, slug);
+  return normalizeSlugMetadata(kind, {
+    name: entry?.name && entry.name !== slug ? entry.name : "",
+    color: entry?.color || "",
+    email: entry?.email || "",
+    jiraState: entry?.jiraState || "",
+  });
+}
+
+function setSlugRenameFieldVisibility(kind) {
+  dom.slugRenameDisplayNameField?.classList.remove("hidden");
+  dom.slugRenameColorField?.classList.remove("hidden");
+  dom.slugRenameEmailField?.classList.toggle("hidden", kind !== "person");
+  dom.slugRenameJiraStateField?.classList.toggle("hidden", kind !== "state");
+}
+
+function normalizeHexColorValue(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) {
+    return "";
+  }
+  const hex = raw.startsWith("#") ? raw : `#${raw}`;
+  if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
+    return hex.toLowerCase();
+  }
+  const shortMatch = hex.match(/^#([0-9a-fA-F]{3})$/);
+  if (!shortMatch) {
+    return "";
+  }
+  const [r, g, b] = shortMatch[1].split("");
+  return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+}
+
+function updateSlugRenameColorPreview(value) {
+  if (!dom.slugRenameColorPreview) {
+    return;
+  }
+  const raw = typeof value === "string" ? value.trim() : "";
+  const hex = normalizeHexColorValue(raw);
+  dom.slugRenameColorPreview.textContent = raw || "Auto";
+  dom.slugRenameColorPreview.style.setProperty(
+    "--slug-rename-preview-color",
+    hex || "transparent"
+  );
+  dom.slugRenameColorPreview.classList.toggle("has-color", Boolean(hex));
+}
+
+function setSlugRenameColorValue(value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (dom.slugRenameColor) {
+    dom.slugRenameColor.value = raw;
+  }
+  const hex = normalizeHexColorValue(raw);
+  if (dom.slugRenameColorPicker && hex) {
+    dom.slugRenameColorPicker.value = hex;
+  }
+  if (dom.slugRenameColorSwatches) {
+    dom.slugRenameColorSwatches
+      .querySelectorAll("button[data-color]")
+      .forEach((button) => {
+        const swatchColor = normalizeHexColorValue(button.dataset.color || "");
+        button.classList.toggle("active", Boolean(hex) && swatchColor === hex);
+        button.setAttribute(
+          "aria-pressed",
+          Boolean(hex) && swatchColor === hex ? "true" : "false"
+        );
+      });
+  }
+  updateSlugRenameColorPreview(raw);
+}
+
+function ensureSlugRenameColorControls() {
+  if (slugRenameColorControlsBound) {
+    return;
+  }
+  slugRenameColorControlsBound = true;
+  if (dom.slugRenameColorSwatches) {
+    dom.slugRenameColorSwatches.innerHTML = "";
+    SLUG_RENAME_SWATCH_COLORS.forEach((color, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "slug-color-swatch";
+      button.dataset.color = color;
+      button.style.setProperty("--swatch-color", color);
+      button.setAttribute("aria-label", `Color ${index + 1}`);
+      button.setAttribute("aria-pressed", "false");
+      button.addEventListener("click", () => {
+        setSlugRenameColorValue(color);
+      });
+      dom.slugRenameColorSwatches.appendChild(button);
+    });
+  }
+  dom.slugRenameColorPicker?.addEventListener("input", (event) => {
+    const value = event.currentTarget?.value || "";
+    setSlugRenameColorValue(value);
+  });
+  dom.slugRenameColorClear?.addEventListener("click", () => {
+    setSlugRenameColorValue("");
+  });
+  setSlugRenameColorValue("");
+}
+
+function configureSlugRenameContext(kind) {
+  const displayLabel = "Display name";
+
+  if (dom.slugRenameDisplayNameLabel) {
+    dom.slugRenameDisplayNameLabel.textContent = displayLabel;
+  }
+  if (dom.slugRenameDisplayName) {
+    dom.slugRenameDisplayName.placeholder = "";
+    dom.slugRenameDisplayName.autocomplete = kind === "person" ? "name" : "off";
+  }
+
+  if (dom.slugRenameEmailLabel) {
+    dom.slugRenameEmailLabel.textContent = "Email";
+  }
+  if (dom.slugRenameEmail) {
+    dom.slugRenameEmail.placeholder = "";
+    dom.slugRenameEmail.autocomplete = "email";
+  }
+
+  if (dom.slugRenameJiraStateLabel) {
+    dom.slugRenameJiraStateLabel.textContent = "Jira state";
+  }
+  if (dom.slugRenameJiraState) {
+    dom.slugRenameJiraState.placeholder = "";
+    dom.slugRenameJiraState.autocomplete = "off";
+  }
+}
+
+function slugConfigPropOutputName(kind, prop) {
+  if (kind === "person" && prop === "email") {
+    return "mail";
+  }
+  if (kind === "state" && prop === "jiraState") {
+    return "jira";
+  }
+  return prop;
+}
+
+function slugConfigPropOutputValue(prop, value) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (prop === "color") {
+    const normalized = normalizeHexColorValue(raw);
+    if (normalized) {
+      return normalized.slice(1);
+    }
+  }
+  return raw;
+}
+
+function formatSlugConfigPropLine(kind, prop, value) {
+  const outputProp = slugConfigPropOutputName(kind, prop);
+  const outputValue = slugConfigPropOutputValue(prop, value);
+  return `            ${outputProp}: ${outputValue}`;
+}
+
+function normalizeSlugConfigPropName(prop) {
+  const raw = typeof prop === "string" ? prop.trim() : "";
+  const compact = raw.toLowerCase().replace(/[_-]/g, "");
+  if (compact === "jira" || compact === "jirastate") {
+    return "jiraState";
+  }
+  if (compact === "name") {
+    return "name";
+  }
+  if (compact === "color") {
+    return "color";
+  }
+  if (compact === "email") {
+    return "email";
+  }
+  return "";
+}
+
+function buildSlugConfigEntryLines(kind, slug, metadata) {
+  const normalizedMeta = normalizeSlugMetadata(kind, metadata);
+  const props = SLUG_CONFIG_PROPS_BY_KIND[kind] || [];
+  const propLines = props
+    .filter((prop) => normalizedMeta[prop])
+    .map((prop) => formatSlugConfigPropLine(kind, prop, normalizedMeta[prop]));
+  const header = `        ${slug}${propLines.length ? ":" : ""}`;
+  return [header, ...propLines];
+}
+
+function updateSlugConfigEntryBlock(entryLines, { kind, newSlug, metadata }) {
+  if (!Array.isArray(entryLines) || !entryLines.length) {
+    return { lines: buildSlugConfigEntryLines(kind, newSlug, metadata), changed: true };
+  }
+  const normalizedMeta = normalizeSlugMetadata(kind, metadata);
+  const targetProps = SLUG_CONFIG_PROPS_BY_KIND[kind] || [];
+  const headerRaw = entryLines[0] || "";
+  const headerIndent = headerRaw.match(/^\s*/)?.[0] || "        ";
+  let bodyLines = entryLines.slice(1);
+  const propIndexes = new Map();
+  bodyLines.forEach((line, index) => {
+    const trimmed = (line || "").trim();
+    const indent = line?.match?.(/^\s*/)?.[0]?.length || 0;
+    if (indent !== 12 || !trimmed) {
+      return;
+    }
+    const propMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
+    if (!propMatch) {
+      return;
+    }
+    const propName = normalizeSlugConfigPropName(propMatch[1]);
+    if (targetProps.includes(propName) && !propIndexes.has(propName)) {
+      propIndexes.set(propName, index);
+    }
+  });
+
+  targetProps.forEach((prop) => {
+    const nextValue = normalizedMeta[prop] || "";
+    const existingIndex = propIndexes.get(prop);
+    if (nextValue) {
+      const nextLine = formatSlugConfigPropLine(kind, prop, nextValue);
+      if (Number.isInteger(existingIndex)) {
+        bodyLines[existingIndex] = nextLine;
+      } else {
+        bodyLines.push(nextLine);
+      }
+      return;
+    }
+    if (Number.isInteger(existingIndex)) {
+      bodyLines[existingIndex] = null;
+    }
+  });
+
+  bodyLines = bodyLines.filter((line) => line !== null);
+  const hasNestedContent = bodyLines.some((line) => (line || "").trim() !== "");
+  const nextHeader = `${headerIndent}${newSlug}${hasNestedContent ? ":" : ""}`;
+  const nextLines = [nextHeader, ...bodyLines];
+  const changed = nextLines.join("\n") !== entryLines.join("\n");
+  return { lines: nextLines, changed };
+}
+
+function renameSlugConfigEntries(lines, { kind, oldSlug, newSlug, metadata }) {
   const targetSection = SLUG_SECTION_BY_KIND[kind];
   if (!targetSection || !Array.isArray(lines) || !lines.length) {
     return { changed: false };
   }
-  let currentSection = "";
-  let changed = false;
+  const normalizedMeta = normalizeSlugMetadata(kind, metadata);
+  const shouldCreateEntry = hasSlugMetadataInput(kind, normalizedMeta);
+  let configEnd = lines.length;
   for (let index = 0; index < lines.length; index += 1) {
-    const raw = lines[index] || "";
-    if (/^\s*%/.test(raw)) {
+    if (/^\s*%/.test(lines[index] || "")) {
+      configEnd = index;
       break;
     }
+  }
+
+  let sectionStart = -1;
+  let sectionEnd = configEnd;
+  for (let index = 0; index < configEnd; index += 1) {
+    const raw = lines[index] || "";
     const trimmed = raw.trim();
     if (!trimmed) {
       continue;
     }
     const indent = raw.match(/^\s*/)?.[0].length || 0;
-    if (indent === 4 && trimmed.endsWith(":")) {
-      currentSection = trimmed.slice(0, -1).trim().toLowerCase();
+    if (indent !== 4 || !trimmed.endsWith(":")) {
       continue;
     }
-    if (currentSection !== targetSection || indent !== 8) {
-      continue;
+    const sectionName = trimmed.slice(0, -1).trim().toLowerCase();
+    if (sectionStart !== -1) {
+      sectionEnd = index;
+      break;
     }
-    const entryMatch = trimmed.match(/^([^\s:]+)(\s*:.*)?$/);
-    if (!entryMatch || entryMatch[1] !== oldSlug) {
-      continue;
+    if (sectionName === targetSection) {
+      sectionStart = index;
+      sectionEnd = configEnd;
     }
-
-    lines[index] = raw.replace(
-      /^(\s*)([^\s:]+)(\s*:.*)?$/,
-      `$1${newSlug}$3`
-    );
-    changed = true;
   }
-  return { changed };
+
+  let entryStart = -1;
+  let entryEnd = -1;
+  if (sectionStart !== -1) {
+    for (let index = sectionStart + 1; index < sectionEnd; index += 1) {
+      const raw = lines[index] || "";
+      const trimmed = raw.trim();
+      if (!trimmed) {
+        continue;
+      }
+      const indent = raw.match(/^\s*/)?.[0].length || 0;
+      if (indent !== 8) {
+        continue;
+      }
+      const entryMatch = trimmed.match(/^([^\s:]+)(\s*:.*)?$/);
+      if (!entryMatch || entryMatch[1] !== oldSlug) {
+        continue;
+      }
+      entryStart = index;
+      entryEnd = sectionEnd;
+      for (let next = index + 1; next < sectionEnd; next += 1) {
+        const nextRaw = lines[next] || "";
+        const nextTrimmed = nextRaw.trim();
+        if (!nextTrimmed) {
+          continue;
+        }
+        const nextIndent = nextRaw.match(/^\s*/)?.[0].length || 0;
+        if (nextIndent <= 8) {
+          entryEnd = next;
+          break;
+        }
+      }
+      break;
+    }
+  }
+
+  let changed = false;
+  if (entryStart !== -1) {
+    const existingBlock = lines.slice(entryStart, entryEnd);
+    const updatedBlock = updateSlugConfigEntryBlock(existingBlock, {
+      kind,
+      newSlug,
+      metadata: normalizedMeta,
+    });
+    if (updatedBlock.changed) {
+      lines.splice(entryStart, entryEnd - entryStart, ...updatedBlock.lines);
+      changed = true;
+    }
+    return { changed };
+  }
+
+  if (!shouldCreateEntry) {
+    return { changed };
+  }
+
+  const entryLines = buildSlugConfigEntryLines(kind, newSlug, normalizedMeta);
+  if (sectionStart === -1) {
+    lines.splice(configEnd, 0, `    ${targetSection}:`, ...entryLines);
+    return { changed: true };
+  }
+  lines.splice(sectionEnd, 0, ...entryLines);
+  return { changed: true };
 }
 
-function renameSlugInWholeFile(text, { kind, prefix, oldSlug, newSlug }) {
+function renameSlugInWholeFile(text, { kind, prefix, oldSlug, newSlug, metadata }) {
   const oldToken = `${prefix}${oldSlug}`;
   const newToken = `${prefix}${newSlug}`;
-  const tokenResult = replaceSlugTokenOccurrences(text, oldToken, newToken);
+  const tokenResult =
+    oldToken === newToken
+      ? { text, count: 0 }
+      : replaceSlugTokenOccurrences(text, oldToken, newToken);
   const lines = tokenResult.text.split("\n");
   const configResult = renameSlugConfigEntries(lines, {
     kind,
     oldSlug,
     newSlug,
+    metadata,
   });
-  const nextText =
-    configResult.changed
-      ? lines.join("\n")
-      : tokenResult.text;
+  const nextText = configResult.changed ? lines.join("\n") : tokenResult.text;
   return {
     oldToken,
     newToken,
     text: nextText,
     changed: nextText !== text,
     replacements: tokenResult.count,
+    configChanged: configResult.changed,
   };
 }
 
@@ -2099,6 +2431,7 @@ function openSlugRenameModal(token) {
     kind,
     prefix,
     slug,
+    metadata: buildSlugRenameMetadata(kind, slug),
   };
   if (dom.slugRenameMessage) {
     dom.slugRenameMessage.textContent = `Rename ${slugKindLabel(kind).toLowerCase()} slug "${prefix}${slug}" in whole file.`;
@@ -2108,6 +2441,19 @@ function openSlugRenameModal(token) {
   }
   if (dom.slugRenameNew) {
     dom.slugRenameNew.value = slug;
+  }
+  ensureSlugRenameColorControls();
+  setSlugRenameFieldVisibility(kind);
+  configureSlugRenameContext(kind);
+  if (dom.slugRenameDisplayName) {
+    dom.slugRenameDisplayName.value = pendingSlugRename.metadata.name || "";
+  }
+  setSlugRenameColorValue(pendingSlugRename.metadata.color || "");
+  if (dom.slugRenameEmail) {
+    dom.slugRenameEmail.value = pendingSlugRename.metadata.email || "";
+  }
+  if (dom.slugRenameJiraState) {
+    dom.slugRenameJiraState.value = pendingSlugRename.metadata.jiraState || "";
   }
   dom.slugRenameModal.classList.remove("hidden");
   dom.slugRenameNew?.focus();
@@ -2119,6 +2465,16 @@ function closeSlugRenameModal() {
     return;
   }
   dom.slugRenameModal.classList.add("hidden");
+  if (dom.slugRenameDisplayName) {
+    dom.slugRenameDisplayName.value = "";
+  }
+  setSlugRenameColorValue("");
+  if (dom.slugRenameEmail) {
+    dom.slugRenameEmail.value = "";
+  }
+  if (dom.slugRenameJiraState) {
+    dom.slugRenameJiraState.value = "";
+  }
   pendingSlugRename = null;
 }
 
@@ -2136,7 +2492,19 @@ function submitSlugRename() {
     showToast("Slug can contain only letters, numbers, '-' and '_'.", "error");
     return;
   }
-  if (nextSlug === pendingSlugRename.slug) {
+  const nextMetadata = normalizeSlugMetadata(pendingSlugRename.kind, {
+    name: dom.slugRenameDisplayName?.value || "",
+    color: dom.slugRenameColor?.value || "",
+    email: dom.slugRenameEmail?.value || "",
+    jiraState: dom.slugRenameJiraState?.value || "",
+  });
+  const slugChanged = nextSlug !== pendingSlugRename.slug;
+  const metadataChanged = !slugMetadataEqual(
+    pendingSlugRename.kind,
+    pendingSlugRename.metadata,
+    nextMetadata
+  );
+  if (!slugChanged && !metadataChanged) {
     closeSlugRenameModal();
     return;
   }
@@ -2147,6 +2515,7 @@ function submitSlugRename() {
     prefix: pendingSlugRename.prefix,
     oldSlug: pendingSlugRename.slug,
     newSlug: nextSlug,
+    metadata: nextMetadata,
   });
   if (!result.changed) {
     showToast(`No '${oldToken}' slug occurrences found.`, "error");
@@ -2159,16 +2528,24 @@ function submitSlugRename() {
     && !dom.taskEditModal.classList.contains("hidden")
   ) {
     const modalValue = modalEditorController.getValue();
-    const modalRename = replaceSlugTokenOccurrences(
-      modalValue,
-      result.oldToken,
-      result.newToken
-    );
-    if (modalRename.text !== modalValue) {
-      modalEditorController.setValue(modalRename.text);
+    if (slugChanged) {
+      const modalRename = replaceSlugTokenOccurrences(
+        modalValue,
+        result.oldToken,
+        result.newToken
+      );
+      if (modalRename.text !== modalValue) {
+        modalEditorController.setValue(modalRename.text);
+      }
     }
   }
-  showToast(`${slugKindLabel(pendingSlugRename.kind)} slug '${result.oldToken}' renamed to '${result.newToken}'.`);
+  if (slugChanged) {
+    showToast(
+      `${slugKindLabel(pendingSlugRename.kind)} slug '${result.oldToken}' renamed to '${result.newToken}'.`
+    );
+  } else {
+    showToast(`${slugKindLabel(pendingSlugRename.kind)} metadata updated.`);
+  }
   closeSlugRenameModal();
 }
 
@@ -2400,10 +2777,12 @@ function moveTaskAsSubtask(sourceTask, targetTask) {
   if (!sourceTask || !targetTask || sourceTask.id === targetTask.id) {
     return;
   }
+  let targetIsDescendantOfSource = false;
   let current = targetTask.parent;
   while (current) {
     if (current.id === sourceTask.id) {
-      return;
+      targetIsDescendantOfSource = true;
+      break;
     }
     current = current.parent;
   }
@@ -2411,6 +2790,36 @@ function moveTaskAsSubtask(sourceTask, targetTask) {
   const sourceBlock = findTaskBlock(lines, sourceTask.lineIndex);
   const targetBlock = findTaskBlock(lines, targetTask.lineIndex);
   if (!sourceBlock || !targetBlock) {
+    return;
+  }
+  if (targetIsDescendantOfSource) {
+    if (targetBlock.start <= sourceBlock.start || targetBlock.end > sourceBlock.end) {
+      return;
+    }
+    const sourceLines = lines.slice(sourceBlock.start, sourceBlock.end);
+    const relStart = targetBlock.start - sourceBlock.start;
+    const relEnd = targetBlock.end - sourceBlock.start;
+    const targetLines = sourceLines.slice(relStart, relEnd);
+    const sourceWithoutTargetLines = [
+      ...sourceLines.slice(0, relStart),
+      ...sourceLines.slice(relEnd),
+    ];
+    if (!targetLines.length || !sourceWithoutTargetLines.length) {
+      return;
+    }
+    // Switch relation: promote the target child to the source depth, then
+    // demote the source block (without that child) under the promoted target.
+    const promoteDelta = (sourceBlock.depth - targetBlock.depth) * 4;
+    const promotedTargetLines = targetLines.map((line) => adjustIndent(line, promoteDelta));
+    const demotedSourceLines = sourceWithoutTargetLines.map((line) => adjustIndent(line, 4));
+    lines.splice(
+      sourceBlock.start,
+      sourceBlock.end - sourceBlock.start,
+      ...promotedTargetLines,
+      ...demotedSourceLines
+    );
+    applyEditorValue(lines.join("\n"));
+    syncEditorState();
     return;
   }
   // Move the entire source block and re-indent it under the target task.
@@ -2425,6 +2834,62 @@ function moveTaskAsSubtask(sourceTask, targetTask) {
   lines.splice(insertIndex, 0, ...adjustedLines);
   applyEditorValue(lines.join("\n"));
   syncEditorState();
+}
+
+function reorderKanbanTask(sourceTask, targetTask, position, options = {}) {
+  if (
+    !sourceTask ||
+    !targetTask ||
+    sourceTask.id === targetTask.id ||
+    (position !== "before" && position !== "after")
+  ) {
+    return false;
+  }
+  const allowRootReparent = Boolean(options.allowRootReparent);
+  const sourceParentId = sourceTask.parent?.id || null;
+  const targetParentId = targetTask.parent?.id || null;
+  const allowDifferentParent =
+    allowRootReparent &&
+    sourceParentId !== null &&
+    targetParentId === null;
+  if (sourceParentId !== targetParentId && !allowDifferentParent) {
+    return false;
+  }
+  const lines = editorController.getValue().split("\n");
+  const sourceBlock = findTaskBlock(lines, sourceTask.lineIndex);
+  const targetBlock = findTaskBlock(lines, targetTask.lineIndex);
+  if (!sourceBlock || !targetBlock) {
+    return false;
+  }
+  const targetDepth = targetBlock.depth;
+  if (sourceBlock.depth !== targetDepth && !allowDifferentParent) {
+    return false;
+  }
+  if (targetBlock.start >= sourceBlock.start && targetBlock.start < sourceBlock.end) {
+    return false;
+  }
+  const insertAt = position === "before" ? targetBlock.start : targetBlock.end;
+  const blockLines = lines.slice(sourceBlock.start, sourceBlock.end);
+  if (!blockLines.length) {
+    return false;
+  }
+  const indentDelta = (targetDepth - sourceBlock.depth) * 4;
+  const adjustedBlockLines = indentDelta
+    ? blockLines.map((line) => adjustIndent(line, indentDelta))
+    : blockLines;
+  lines.splice(sourceBlock.start, sourceBlock.end - sourceBlock.start);
+  let nextInsertAt = insertAt;
+  if (sourceBlock.start < nextInsertAt) {
+    nextInsertAt -= adjustedBlockLines.length;
+  }
+  const originalStart = sourceBlock.start;
+  if (nextInsertAt === originalStart && indentDelta === 0) {
+    return false;
+  }
+  lines.splice(nextInsertAt, 0, ...adjustedBlockLines);
+  applyEditorValue(lines.join("\n"));
+  syncEditorState();
+  return true;
 }
 
 function parseTaskTitleFromLine(line) {
@@ -2740,17 +3205,58 @@ async function loadCollabModules() {
   if (collab.modules) {
     return collab.modules;
   }
-  const [Y, websocket, textarea] = await Promise.all([
+  const [Y, websocket, cmYjs] = await Promise.all([
     import(COLLAB_LIBS.yjs),
     import(COLLAB_LIBS.ywebsocket),
-    import(COLLAB_LIBS.ytextarea),
+    import(COLLAB_LIBS.ycodemirror),
   ]);
   collab.modules = {
     Y,
     WebsocketProvider: websocket.WebsocketProvider,
-    TextAreaBinding: textarea.TextAreaBinding || textarea.TextareaBinding,
+    yCollab: cmYjs?.yCollab || cmYjs?.default?.yCollab || null,
   };
   return collab.modules;
+}
+
+function collabUserAwarenessState(identity) {
+  const rawColor = identity?.color;
+  let color = "rgb(45, 80, 237)";
+  let colorLight = "rgba(45, 80, 237, 0.2)";
+
+  if (
+    rawColor &&
+    typeof rawColor === "object" &&
+    Number.isFinite(rawColor.r) &&
+    Number.isFinite(rawColor.g) &&
+    Number.isFinite(rawColor.b)
+  ) {
+    const r = Math.max(0, Math.min(255, Math.round(rawColor.r)));
+    const g = Math.max(0, Math.min(255, Math.round(rawColor.g)));
+    const b = Math.max(0, Math.min(255, Math.round(rawColor.b)));
+    color = `rgb(${r}, ${g}, ${b})`;
+    colorLight = `rgba(${r}, ${g}, ${b}, 0.2)`;
+  } else if (typeof rawColor === "string" && rawColor.trim()) {
+    color = rawColor;
+    const rgbMatch = rawColor.match(/\brgba?\(\s*(\d+)\s*[,\s]+(\d+)\s*[,\s]+(\d+)/i);
+    if (rgbMatch) {
+      const [, r, g, b] = rgbMatch;
+      colorLight = `rgba(${r}, ${g}, ${b}, 0.2)`;
+    }
+  }
+  return {
+    name: identity?.name || "user",
+    color,
+    colorLight,
+  };
+}
+
+function publishCollabIdentityAwareness() {
+  if (!collab.provider?.awareness) {
+    return;
+  }
+  const identity =
+    collab.identity || getCollabIdentity(collab.displayName || collab.username || "user");
+  collab.provider.awareness.setLocalStateField("user", collabUserAwarenessState(identity));
 }
 
 function authHeaders({ includeBasic = false } = {}) {
@@ -5070,8 +5576,8 @@ async function restoreSessionFromCookie() {
 }
 
 async function logout() {
-  await logoutRequest();
   disconnectSpace();
+  await logoutRequest();
   collab.isAuthenticated = false;
   collab.username = "";
   collab.displayName = "";
@@ -5195,34 +5701,20 @@ async function renameSpace(oldName, newName) {
   }
 }
 
-async function reportPresence(spaceId, remove = false) {
-  if (!spaceId) {
-    return;
-  }
-  const method = remove ? "DELETE" : "POST";
-  fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/presence`, {
-    method,
-    headers: authHeaders(),
-  }).catch(() => { });
-}
-
 function startPresenceHeartbeat(spaceId) {
-  if (collab.presenceTimer) {
-    clearInterval(collab.presenceTimer);
-  }
-  reportPresence(spaceId);
-  collab.presenceTimer = setInterval(() => {
-    reportPresence(spaceId);
-  }, 15000);
-}
-
-function stopPresenceHeartbeat(spaceId) {
+  void spaceId;
   if (collab.presenceTimer) {
     clearInterval(collab.presenceTimer);
     collab.presenceTimer = null;
   }
-  if (spaceId) {
-    reportPresence(spaceId, true);
+  // Space-list presence is derived from Yjs awareness on the backend now.
+}
+
+function stopPresenceHeartbeat(spaceId) {
+  void spaceId;
+  if (collab.presenceTimer) {
+    clearInterval(collab.presenceTimer);
+    collab.presenceTimer = null;
   }
 }
 
@@ -5328,6 +5820,7 @@ function updateConnectButtonLabel() {
 function disconnectSpace() {
   stopPresenceHeartbeat(collab.spaceId);
   stopIdleWatch();
+  editorController?.setCollabExtensions?.([]);
   if (collab.binding?.destroy) {
     collab.binding.destroy();
   }
@@ -5346,7 +5839,7 @@ function disconnectSpace() {
   collab.ydoc = null;
   collab.ytext = null;
   collab.binding = null;
-  collab.bindingOptions = null;
+  collab.bindingMode = null;
   collab.saveTimer = null;
   collab.presenceTimer = null;
   collab.synced = false;
@@ -5371,59 +5864,25 @@ async function hydrateFromRemote(spaceId, ytext) {
       if (current) {
         ytext.delete(0, ytext.length);
       }
-      forceEditorRefresh("");
+      if (collab.bindingMode !== "cm6") {
+        forceEditorRefresh("");
+      }
       return;
     }
     if (!current && content) {
       ytext.insert(0, content);
-      forceEditorRefresh(content);
+      if (collab.bindingMode !== "cm6") {
+        forceEditorRefresh(content);
+      }
       return;
     }
     if (current && current !== content) {
-      scheduleRemoteSave();
+      // Backend persists Yjs room state to the space text file; no client-side
+      // REST PUT echo is needed here.
     }
   } catch {
     // Ignore hydration errors.
   }
-}
-
-function scheduleRemoteSave() {
-  if (!collab.spaceId) {
-    return;
-  }
-  if (collab.saveTimer) {
-    clearTimeout(collab.saveTimer);
-  }
-  collab.saveTimer = setTimeout(() => {
-    const body = editorController.getValue();
-    fetch(`${REMOTE_BASE}/api/spaces/${collab.spaceId}`, {
-      method: "PUT",
-      headers: {
-        ...authHeaders(),
-        "Content-Type": "text/plain",
-      },
-      body,
-    })
-      .then((response) => {
-        if (response.ok) {
-          return;
-        }
-        if (response.status === 401) {
-          setConnectionStatus("auth-failed");
-        } else if (response.status === 403) {
-          setConnectionStatus("read-only");
-        } else {
-          setConnectionStatus("disconnected");
-        }
-      })
-      .catch(() => {
-        if (!navigator.onLine) {
-          setConnectionStatus("offline");
-        } else {
-          setConnectionStatus("disconnected");
-        }
-      });
-  }, 600);
 }
 
 function scheduleCollabSync() {
@@ -5445,8 +5904,8 @@ async function connectToSpace(spaceId, spacePath = "") {
     typeof spacePath === "string" && spacePath.trim() ? spacePath.trim() : spaceId;
   applyAuthFromInputs({ markDirty: false });
   closeSpacesModal();
-  const { Y, WebsocketProvider, TextAreaBinding } = await loadCollabModules();
-  if (!TextAreaBinding) {
+  const { Y, WebsocketProvider, yCollab } = await loadCollabModules();
+  if (!yCollab) {
     return;
   }
   disconnectSpace();
@@ -5469,23 +5928,20 @@ async function connectToSpace(spaceId, spacePath = "") {
     collab.identity ||
     getCollabIdentity(collab.displayName || collab.username || "user");
   const ytext = ydoc.getText("content");
-  const bindingOptions = {
-    awareness: provider.awareness,
-    clientName: identity.name,
-    color: identity.color,
+
+  // y-codemirror.next applies Y.Text deltas onto the existing CodeMirror document.
+  // Clear the pre-connect local editor content first so remote hydration/sync doesn't
+  // prepend/merge with whatever was previously open (sample/offline draft/local space).
+  editorController?.setValue("");
+
+  const collabExtension = yCollab(ytext, provider.awareness);
+  editorController?.setCollabExtensions?.([collabExtension]);
+  const binding = {
+    destroy() {
+      editorController?.setCollabExtensions?.([]);
+    },
   };
-  const binding = new TextAreaBinding(ytext, dom.editor, bindingOptions);
-  const selection = editorController?.getSelectionRange?.();
-  if (selection) {
-    updateCollabSelection(selection.start, selection.end, true);
-  } else {
-    provider.awareness.setLocalStateField(dom.editor.id, {
-      user: provider.awareness.clientID,
-      selection: false,
-      name: identity.name,
-      color: identity.color,
-    });
-  }
+  const bindingMode = "cm6";
 
   collab.spaceId = spaceId;
   collab.spacePath = normalizedPath;
@@ -5493,7 +5949,8 @@ async function connectToSpace(spaceId, spacePath = "") {
   collab.ydoc = ydoc;
   collab.ytext = ytext;
   collab.binding = binding;
-  collab.bindingOptions = bindingOptions;
+  collab.bindingMode = bindingMode;
+  publishCollabIdentityAwareness();
   updateConnectButtonLabel();
   updateBoardConnectionLabel();
   startPresenceHeartbeat(spaceId);
@@ -5528,11 +5985,9 @@ async function connectToSpace(spaceId, spacePath = "") {
   });
 
   ytext.observe((event, transaction) => {
-    if (transaction && transaction.local === false) {
-      editorController.setValueFromRemote(ytext.toString());
-    }
+    void event;
+    void transaction;
     markActivity();
-    scheduleRemoteSave();
     scheduleCollabSync();
   });
 }
@@ -6318,6 +6773,46 @@ function setLegendHiddenForRightSnap(leftPercent, maxPercent) {
   applyLegendHiddenState();
 }
 
+function setGraphHiddenForLeftSnap(leftPercent) {
+  const graphHidden = Number.isFinite(leftPercent) && leftPercent <= 0.01;
+  if (graphHidden) {
+    document.documentElement.setAttribute("data-graph-hidden", "true");
+  } else {
+    document.documentElement.removeAttribute("data-graph-hidden");
+  }
+}
+
+function setGraphTopHiddenForKanbanHeight(kanbanHeightPx, maxHeightPx) {
+  const graphTopHidden =
+    Number.isFinite(kanbanHeightPx)
+    && Number.isFinite(maxHeightPx)
+    && maxHeightPx >= 0
+    && (maxHeightPx - kanbanHeightPx) <= 0.5;
+  if (graphTopHidden) {
+    document.documentElement.setAttribute("data-graph-top-hidden", "true");
+  } else {
+    document.documentElement.removeAttribute("data-graph-top-hidden");
+  }
+}
+
+function updateGraphTopHiddenFromLayout() {
+  const panelRect = (dom.graphPanel || dom.graphCanvas)?.getBoundingClientRect?.();
+  if (!panelRect) {
+    return;
+  }
+  const dividerHeight = dom.kanbanDivider?.offsetHeight || 0;
+  const legendHeight = dom.legend?.getBoundingClientRect?.().height || 0;
+  const maxHeight = Math.max(0, panelRect.height - legendHeight - dividerHeight);
+  const rawKanbanHeight = getComputedStyle(document.documentElement)
+    .getPropertyValue("--kanban-height")
+    .trim();
+  const kanbanHeight = Number.parseFloat(rawKanbanHeight);
+  setGraphTopHiddenForKanbanHeight(
+    Number.isFinite(kanbanHeight) ? kanbanHeight : 180,
+    maxHeight
+  );
+}
+
 function updateLegendHiddenFromLayout() {
   const rect = document.body.getBoundingClientRect();
   if (!rect.width) {
@@ -6329,6 +6824,8 @@ function updateLegendHiddenFromLayout() {
     .getPropertyValue("--left-width")
     .trim();
   const leftPercent = Number.parseFloat(rawLeftWidth);
+  setGraphHiddenForLeftSnap(Number.isFinite(leftPercent) ? leftPercent : 45);
+  updateGraphTopHiddenFromLayout();
   setLegendHiddenForRightSnap(
     Number.isFinite(leftPercent) ? leftPercent : 45,
     maxPercent
@@ -6366,6 +6863,7 @@ window.addEventListener("mousemove", (event) => {
         document.documentElement.removeAttribute("data-kanban-collapsed");
       }
       document.documentElement.style.setProperty("--kanban-height", `${clamped}px`);
+      setGraphTopHiddenForKanbanHeight(clamped, maxHeight);
       scheduleGraphRender();
       return;
     }
@@ -6385,6 +6883,7 @@ window.addEventListener("mousemove", (event) => {
     clamped = maxPercent;
   }
   document.documentElement.style.setProperty("--left-width", `${clamped}%`);
+  setGraphHiddenForLeftSnap(clamped);
   setLegendHiddenForRightSnap(clamped, maxPercent);
   scheduleGraphRender();
 });

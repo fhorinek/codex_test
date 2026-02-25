@@ -10,6 +10,7 @@ export function createCanvas({
   onUpdateTaskToken,
   onUpdateTaskState,
   onMakeSubtask,
+  onReorderTask,
   onToggleCheckbox,
   onFiltersChange,
 }) {
@@ -26,6 +27,12 @@ export function createCanvas({
   let lastClickTaskId = "";
   let zoomRedrawTimeout = null;
   let openReferenceDropdown = null;
+  let activeDraggedTaskId = "";
+  let activeGraphReorder = null;
+  const GRAPH_REORDER_EDGE_PX = 18;
+  const GRAPH_DROP_LINE_HEIGHT_PX = 3;
+  const GRAPH_DROP_OUTER_SPACING_PX = 12;
+  const GRAPH_DROP_PREVIEW_SHIFT_MAX_PX = 18;
 
   const formatStoryPointsNumber = (value) => {
     if (!Number.isFinite(value)) {
@@ -227,6 +234,9 @@ export function createCanvas({
   };
 
   const getDraggedTaskId = (event) => {
+    if (activeDraggedTaskId) {
+      return activeDraggedTaskId;
+    }
     const dataTransfer = event.dataTransfer;
     if (!dataTransfer) {
       return null;
@@ -244,6 +254,251 @@ export function createCanvas({
     }
     const text = dataTransfer.getData("text/plain");
     return text || null;
+  };
+
+  const clearGraphParentTargets = () => {
+    graphNodes?.querySelectorAll?.(".task-node.drag-parent-target").forEach((node) => {
+      node.classList.remove("drag-parent-target");
+    });
+  };
+
+  const clearGraphReorderIndicators = () => {
+    graphNodes?.querySelectorAll?.(".task-node").forEach((node) => {
+      node.classList.remove("drop-before", "drop-after", "drop-gap-prev", "drop-gap-next");
+      node.style.removeProperty("--task-drop-before-offset");
+      node.style.removeProperty("--task-drop-after-offset");
+      node.style.removeProperty("--task-drop-shift-y");
+    });
+    activeGraphReorder = null;
+  };
+
+  const clearGraphDropIndicators = () => {
+    clearGraphParentTargets();
+    clearGraphReorderIndicators();
+  };
+
+  const applyGraphReorderIndicator = (target) => {
+    if (
+      activeGraphReorder &&
+      target &&
+      activeGraphReorder.targetTaskId === target.targetTaskId &&
+      activeGraphReorder.position === target.position
+    ) {
+      clearGraphParentTargets();
+      return;
+    }
+    clearGraphParentTargets();
+    clearGraphReorderIndicators();
+    if (!target?.node) {
+      return;
+    }
+    // Keep reorder targeting state/animation, but do not render horizontal drop lines.
+    target.node.style.removeProperty("--task-drop-before-offset");
+    target.node.style.removeProperty("--task-drop-after-offset");
+    if (target.previewPrevNode && target.previewNextNode && Number.isFinite(target.previewShiftPx)) {
+      target.previewPrevNode.classList.add("drop-gap-prev");
+      target.previewNextNode.classList.add("drop-gap-next");
+      target.previewPrevNode.style.setProperty("--task-drop-shift-y", `${-target.previewShiftPx}px`);
+      target.previewNextNode.style.setProperty("--task-drop-shift-y", `${target.previewShiftPx}px`);
+    } else if (Number.isFinite(target.previewShiftPx)) {
+      if (target.previewPrevNode) {
+        target.previewPrevNode.classList.add("drop-gap-prev");
+        target.previewPrevNode.style.setProperty("--task-drop-shift-y", `${-target.previewShiftPx}px`);
+      }
+      if (target.previewNextNode) {
+        target.previewNextNode.classList.add("drop-gap-next");
+        target.previewNextNode.style.setProperty("--task-drop-shift-y", `${target.previewShiftPx}px`);
+      }
+    }
+    activeGraphReorder = {
+      targetTaskId: target.targetTaskId,
+      position: target.position,
+      allowRootReparent: Boolean(target.allowRootReparent),
+      beforeOffsetPx: Number.isFinite(target.beforeOffsetPx) ? target.beforeOffsetPx : null,
+      afterOffsetPx: Number.isFinite(target.afterOffsetPx) ? target.afterOffsetPx : null,
+    };
+  };
+
+  const getGraphReorderMode = (draggedTask, targetTask) => {
+    if (!draggedTask || !targetTask || draggedTask.id === targetTask.id) {
+      return null;
+    }
+    const draggedParentId = draggedTask.parent?.id || null;
+    const targetParentId = targetTask.parent?.id || null;
+    if (draggedParentId === targetParentId) {
+      return "sibling";
+    }
+    if (draggedParentId !== null && targetParentId === null) {
+      return "to-root";
+    }
+    return null;
+  };
+
+  const isCurrentParentTarget = (draggedTask, targetTask) => (
+    Boolean(draggedTask && targetTask && (draggedTask.parent?.id || null) === targetTask.id)
+  );
+
+  const getGraphReorderCandidates = (draggedTask, clientX) => {
+    if (!draggedTask || !Number.isFinite(clientX)) {
+      return [];
+    }
+    const candidates = [];
+    graphNodes.querySelectorAll(".task-node[data-task-id]").forEach((node) => {
+      const targetTaskId = node.dataset.taskId;
+      if (!targetTaskId || targetTaskId === draggedTask.id) {
+        return;
+      }
+      const targetTask = getTaskById(targetTaskId);
+      const reorderMode = getGraphReorderMode(draggedTask, targetTask);
+      if (!reorderMode) {
+        return;
+      }
+      const rect = node.getBoundingClientRect();
+      if (
+        !Number.isFinite(rect.left) ||
+        !Number.isFinite(rect.right) ||
+        !Number.isFinite(rect.top) ||
+        !Number.isFinite(rect.bottom)
+      ) {
+        return;
+      }
+      if (clientX < rect.left || clientX > rect.right) {
+        return;
+      }
+      candidates.push({
+        node,
+        rect,
+        targetTaskId,
+        allowRootReparent: reorderMode === "to-root",
+      });
+    });
+    candidates.sort((a, b) => a.rect.top - b.rect.top);
+    return candidates;
+  };
+
+  const buildBeforeTargetFromCandidate = (candidates, index) => {
+    const candidate = candidates[index];
+    if (!candidate) {
+      return null;
+    }
+    let beforeOffsetPx = null;
+    let previewPrevNode = null;
+    let previewNextNode = null;
+    let previewShiftPx = null;
+    if (index > 0) {
+      const previous = candidates[index - 1];
+      const gap = Math.max(0, candidate.rect.top - previous.rect.bottom);
+      const midpointY = previous.rect.bottom + (gap / 2);
+      beforeOffsetPx = midpointY - candidate.rect.top - (GRAPH_DROP_LINE_HEIGHT_PX / 2);
+      const shift = Math.min(GRAPH_DROP_PREVIEW_SHIFT_MAX_PX, gap / 3);
+      if (shift > 0.5) {
+        previewPrevNode = previous.node;
+        previewNextNode = candidate.node;
+        previewShiftPx = shift;
+      }
+    } else {
+      let outerSpacing = GRAPH_DROP_OUTER_SPACING_PX;
+      if (candidates.length > 1) {
+        const next = candidates[1];
+        const gap = Math.max(0, next.rect.top - candidate.rect.bottom);
+        outerSpacing = gap > 0 ? (gap / 2) : GRAPH_DROP_OUTER_SPACING_PX;
+      }
+      beforeOffsetPx = -(outerSpacing + (GRAPH_DROP_LINE_HEIGHT_PX / 2));
+      const shift = Math.min(GRAPH_DROP_PREVIEW_SHIFT_MAX_PX, outerSpacing * 0.75);
+      if (shift > 0.5) {
+        previewNextNode = candidate.node;
+        previewShiftPx = shift;
+      }
+    }
+    return {
+      node: candidate.node,
+      targetTaskId: candidate.targetTaskId,
+      position: "before",
+      allowRootReparent: Boolean(candidate.allowRootReparent),
+      beforeOffsetPx,
+      previewPrevNode,
+      previewNextNode,
+      previewShiftPx,
+    };
+  };
+
+  const buildAfterTargetFromCandidate = (candidates, index) => {
+    const candidate = candidates[index];
+    if (!candidate) {
+      return null;
+    }
+    let afterOffsetPx = null;
+    let previewPrevNode = null;
+    let previewNextNode = null;
+    let previewShiftPx = null;
+    if (index >= 0 && index < candidates.length - 1) {
+      const next = candidates[index + 1];
+      const gap = Math.max(0, next.rect.top - candidate.rect.bottom);
+      const midpointY = candidate.rect.bottom + (gap / 2);
+      afterOffsetPx = candidate.rect.bottom - midpointY - (GRAPH_DROP_LINE_HEIGHT_PX / 2);
+    } else {
+      let outerSpacing = GRAPH_DROP_OUTER_SPACING_PX;
+      if (candidates.length > 1) {
+        const previous = candidates[candidates.length - 2];
+        const gap = Math.max(0, candidate.rect.top - previous.rect.bottom);
+        outerSpacing = gap > 0 ? (gap / 2) : GRAPH_DROP_OUTER_SPACING_PX;
+      }
+      afterOffsetPx = -(outerSpacing + (GRAPH_DROP_LINE_HEIGHT_PX / 2));
+      const shift = Math.min(GRAPH_DROP_PREVIEW_SHIFT_MAX_PX, outerSpacing * 0.75);
+      if (shift > 0.5) {
+        previewPrevNode = candidate.node;
+        previewShiftPx = shift;
+      }
+    }
+    return {
+      node: candidate.node,
+      targetTaskId: candidate.targetTaskId,
+      position: "after",
+      allowRootReparent: Boolean(candidate.allowRootReparent),
+      afterOffsetPx,
+      previewPrevNode,
+      previewNextNode,
+      previewShiftPx,
+    };
+  };
+
+  const getGraphReorderTarget = (event) => {
+    if (!onReorderTask || !event || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) {
+      return null;
+    }
+    const draggedTask = getTaskById(activeDraggedTaskId || getDraggedTaskId(event));
+    if (!draggedTask) {
+      return null;
+    }
+    const candidates = getGraphReorderCandidates(draggedTask, event.clientX);
+    if (!candidates.length) {
+      return null;
+    }
+    const first = candidates[0];
+    if (event.clientY < first.rect.top) {
+      return buildBeforeTargetFromCandidate(candidates, 0);
+    }
+    const last = candidates[candidates.length - 1];
+    if (event.clientY > last.rect.bottom) {
+      return buildAfterTargetFromCandidate(candidates, candidates.length - 1);
+    }
+    let best = null;
+    for (let index = 1; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      // Canonicalize every internal boundary to a single target:
+      // "before" the lower task. This avoids showing two equivalent
+      // targets for the same gap ("after" upper vs "before" lower).
+      const previous = candidates[index - 1];
+      const lineY = (previous.rect.bottom + candidate.rect.top) / 2;
+      const distance = Math.abs(event.clientY - lineY);
+      if (!best || distance < best.distance) {
+        best = {
+          target: buildBeforeTargetFromCandidate(candidates, index),
+          distance,
+        };
+      }
+    }
+    return best ? best.target : buildBeforeTargetFromCandidate(candidates, 0);
   };
 
   const bindTaskNode = (node) => {
@@ -294,6 +549,7 @@ export function createCanvas({
         })
       );
       node.classList.add("dragging");
+      activeDraggedTaskId = task.id;
       window.dispatchEvent(new CustomEvent("taskdragstart"));
       const rect = node.getBoundingClientRect();
       const ghost = node.cloneNode(true);
@@ -324,10 +580,20 @@ export function createCanvas({
         node._dragGhost = null;
       }
       node.classList.remove("dragging");
+      activeDraggedTaskId = "";
+      clearGraphDropIndicators();
       window.dispatchEvent(new CustomEvent("taskdragend"));
     });
     node.addEventListener("dragover", (event) => {
       event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = "move";
+      }
+      if (node.classList.contains("dragging")) {
+        applyGraphReorderIndicator(null);
+        node.classList.remove("drag-parent-target");
+        return;
+      }
       if (!isTaskDrag(event)) {
         node.classList.remove("drag-parent-target");
         return;
@@ -339,22 +605,106 @@ export function createCanvas({
       }
       const draggedId = getDraggedTaskId(event);
       if (draggedId && draggedId === task.id) {
+        applyGraphReorderIndicator(null);
+        node.classList.remove("drag-parent-target");
+        return;
+      }
+      const draggedTask = draggedId ? getTaskById(draggedId) : null;
+      const targetIsCurrentParent = isCurrentParentTarget(draggedTask, task);
+      const rect = node.getBoundingClientRect();
+      const withinX = (
+        Number.isFinite(event.clientX)
+        && Number.isFinite(rect.left)
+        && Number.isFinite(rect.right)
+        && event.clientX >= rect.left
+        && event.clientX <= rect.right
+      );
+      const edgeThreshold = Math.min(28, Math.max(GRAPH_REORDER_EDGE_PX, rect.height * 0.22));
+      const reorderMode = getGraphReorderMode(draggedTask, task);
+      const canEdgeReorder = Boolean(reorderMode && withinX && onReorderTask);
+      if (
+        canEdgeReorder &&
+        Number.isFinite(event.clientY) &&
+        (event.clientY <= rect.top + edgeThreshold || event.clientY >= rect.bottom - edgeThreshold)
+      ) {
+        const candidates = getGraphReorderCandidates(draggedTask, event.clientX);
+        const currentIndex = candidates.findIndex((candidate) => candidate.targetTaskId === task.id);
+        const isTopEdge = event.clientY <= rect.top + edgeThreshold;
+        let indicatorTarget = null;
+        if (isTopEdge) {
+          indicatorTarget = buildBeforeTargetFromCandidate(
+            candidates,
+            currentIndex >= 0 ? currentIndex : 0
+          );
+        } else if (currentIndex >= 0 && currentIndex + 1 < candidates.length) {
+          indicatorTarget = buildBeforeTargetFromCandidate(candidates, currentIndex + 1);
+        } else {
+          indicatorTarget = buildAfterTargetFromCandidate(
+            candidates,
+            currentIndex >= 0 ? currentIndex : (candidates.length - 1)
+          );
+        }
+        applyGraphReorderIndicator({
+          ...indicatorTarget,
+        });
+        node.classList.remove("drag-parent-target");
+        return;
+      }
+      applyGraphReorderIndicator(null);
+      if (targetIsCurrentParent) {
         node.classList.remove("drag-parent-target");
         return;
       }
       node.classList.add("drag-parent-target");
     });
-    node.addEventListener("dragleave", () => {
+    node.addEventListener("dragleave", (event) => {
+      // Drag events can fire `dragleave` when moving between child elements
+      // inside the same task node. Only clear when the pointer actually leaves
+      // the node bounds.
+      const related = event.relatedTarget;
+      if (related && node.contains(related)) {
+        return;
+      }
+      const rect = node.getBoundingClientRect();
+      if (
+        Number.isFinite(event.clientX) &&
+        Number.isFinite(event.clientY) &&
+        event.clientX >= rect.left &&
+        event.clientX <= rect.right &&
+        event.clientY >= rect.top &&
+        event.clientY <= rect.bottom
+      ) {
+        return;
+      }
       node.classList.remove("drag-parent-target");
     });
     node.addEventListener("drop", (event) => {
       event.preventDefault();
       event.stopPropagation();
+      const parentTargetVisible = node.classList.contains("drag-parent-target");
       node.classList.remove("drag-parent-target");
       isDraggingToken = false;
       const task = getTaskById(node.dataset.taskId);
       if (!task) {
         return;
+      }
+      const draggedTaskId = activeDraggedTaskId || getDraggedTaskId(event);
+      const dropReorderTarget = activeGraphReorder || getGraphReorderTarget(event);
+      if (!parentTargetVisible && draggedTaskId && dropReorderTarget && onReorderTask) {
+        const sourceTask = getTaskById(draggedTaskId);
+        const targetTask = getTaskById(dropReorderTarget.targetTaskId);
+        clearGraphDropIndicators();
+        if (
+          sourceTask &&
+          targetTask &&
+          onReorderTask(sourceTask, targetTask, dropReorderTarget.position, {
+            allowRootReparent: Boolean(dropReorderTarget.allowRootReparent),
+          })
+        ) {
+          return;
+        }
+      } else {
+        clearGraphReorderIndicators();
       }
       const payload = event.dataTransfer.getData("application/json");
       if (payload) {
@@ -368,7 +718,7 @@ export function createCanvas({
         }
         if (data.type === "task" && onMakeSubtask) {
           const sourceTask = getTaskById(data.taskId);
-          if (sourceTask) {
+          if (sourceTask && !isCurrentParentTarget(sourceTask, task)) {
             onMakeSubtask(sourceTask, task);
           }
           return;
@@ -377,7 +727,7 @@ export function createCanvas({
       const taskId = event.dataTransfer.getData("text/plain");
       if (taskId && onMakeSubtask) {
         const sourceTask = getTaskById(taskId);
-        if (sourceTask) {
+        if (sourceTask && !isCurrentParentTarget(sourceTask, task)) {
           onMakeSubtask(sourceTask, task);
         }
       }
@@ -996,11 +1346,15 @@ export function createCanvas({
   window.addEventListener("dragend", () => {
     isDraggingToken = false;
     clearTokenDragGhost();
+    activeDraggedTaskId = "";
+    clearGraphDropIndicators();
   });
 
   window.addEventListener("drop", () => {
     isDraggingToken = false;
     clearTokenDragGhost();
+    activeDraggedTaskId = "";
+    clearGraphDropIndicators();
   });
 
   graphCanvas.addEventListener("drop", () => {
@@ -1057,6 +1411,17 @@ export function createCanvas({
 
   graphCanvas.addEventListener("dragover", (event) => {
     event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = "move";
+    }
+    if (event.target.closest(".task-node")) {
+      return;
+    }
+    if (!onReorderTask || !activeDraggedTaskId) {
+      applyGraphReorderIndicator(null);
+      return;
+    }
+    applyGraphReorderIndicator(getGraphReorderTarget(event));
   });
 
   graphCanvas.addEventListener("drop", (event) => {
@@ -1064,6 +1429,24 @@ export function createCanvas({
       return;
     }
     event.preventDefault();
+    const dropReorderTarget = activeGraphReorder || getGraphReorderTarget(event);
+    const draggedTaskId = activeDraggedTaskId || getDraggedTaskId(event);
+    if (draggedTaskId && dropReorderTarget && onReorderTask) {
+      const sourceTask = getTaskById(draggedTaskId);
+      const targetTask = getTaskById(dropReorderTarget.targetTaskId);
+      clearGraphDropIndicators();
+      if (
+        sourceTask &&
+        targetTask &&
+        onReorderTask(sourceTask, targetTask, dropReorderTarget.position, {
+          allowRootReparent: Boolean(dropReorderTarget.allowRootReparent),
+        })
+      ) {
+        return;
+      }
+    } else {
+      clearGraphReorderIndicators();
+    }
     const payload = event.dataTransfer.getData("application/json");
     if (!payload) {
       return;

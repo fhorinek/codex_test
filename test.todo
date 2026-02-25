@@ -1,0 +1,106 @@
+Test Coverage Checklist (Runtime + UI + Collaboration)
+
+Legend:
+- [x] Covered
+- [~] Partial
+- [ ] Missing
+
+Backend Auth / Sessions
+- [x] Bootstrap admin created when no users_config.json (`admin/admin`)
+- [x] Bootstrap admin login works
+- [x] `must_change_password` returned by `/api/login`
+- [x] `must_change_password` returned by `/api/me`
+- [x] Password change via `/api/me` clears `must_change_password`
+- [x] Changed password is persisted (old password fails, new password works)
+- [x] Invalid login payload validation matrix
+- [~] Session restore basic behavior (`/api/me`) contract
+- [x] Session expiry cleanup behavior
+- [ ] Multiple concurrent sessions for one user
+- [x] Logout invalidates session cookie/session persistence
+
+Backend Users / Permissions
+- [x] Backend role/permission matrix (admin/manager/user) via backend E2E contract test
+- [x] Space access rules exercised in backend E2E contract test
+- [~] Manager restrictions (self edit / role assignment) edge cases
+- [ ] User create payload validation matrix
+- [ ] User update payload validation matrix
+- [ ] User delete edge cases (protected/admin constraints) matrix
+- [ ] Personal space access behavior after user rename/delete edge cases
+
+Backend Spaces / Files / YStore
+- [x] Space CRUD lifecycle (create/read/update/delete) via backend E2E
+- [x] Session `last_space` propagation in backend E2E contract test
+- [x] Presence visibility and cleanup via backend E2E contract test
+- [x] Websocket disconnect/shutdown regression (backend should not crash on benign disconnect)
+- [~] Rename/move folder conflict and path propagation edge cases
+- [ ] YStore corruption recovery path (`hydrate_room_from_storage` rebuild behavior)
+- [ ] Snapshot scheduling / delayed save race conditions
+- [ ] Filesystem write/read failure handling paths
+- [ ] Room lifecycle under repeated connect/disconnect stress
+
+Backend Jira Integration
+- [x] Jira task text modifications (tag/people/state/reference add/remove)
+- [x] Jira task parsing coverage (through worker/space helpers used by modification tests)
+- [x] Jira API client behavior (`backend/jira/client.py`) success + failure handling
+- [x] Jira worker sync end-to-end flows (`backend/jira/worker.py`)
+- [x] Jira config persistence and validation edge cases
+
+Frontend Parser / Domain Logic
+- [x] Task parser basic coverage (`frontend/tests/task.unit.test.js`)
+- [x] Story points `~n` parsing
+- [x] Recursive story-point totals (parent + subtasks)
+- [~] Malformed indentation / malformed token edge cases
+- [ ] Parser fuzz/property-style cases for random task text
+- [ ] Formatter round-trip stability tests (`formatter.js`)
+
+Frontend Editor / Sync Logic
+- [x] Connect to preloaded space does not duplicate content (single user, Chrome E2E)
+- [x] Second user connects to same space without duplication (Chrome E2E)
+- [x] Backend disconnect during websocket shutdown no longer crashes (backend E2E regression)
+- [~] Local edit -> remote sync correctness under normal conditions
+- [ ] Simultaneous edits conflict/resolution scenarios
+- [ ] Reconnect/offline recovery and resync behavior
+- [ ] Large document collaboration performance smoke test
+
+Frontend Auth / Collaboration UI Flows (Browser E2E)
+- [x] Login -> open spaces -> connect to space
+- [x] Two-user connect flow to same space
+- [~] Default admin forced password change UI flow (modal auto-open + update path)
+- [ ] Logout UI flow and re-login
+- [ ] Session restore on page reload with last opened space
+- [ ] Spaces modal create/rename/delete/move flows
+
+Frontend UI Features (Functional)
+- [~] Source-contract tests for app/editor/style wiring
+- [ ] Search filter behavior (search text + checkboxes)
+- [ ] Highlight state behavior via tags/people/search
+- [ ] Story points selected/total summary logic under filtering combinations
+- [ ] Legend layout state combinations:
+  - People (L) Story points (C) Tags (R)
+  - Story points (L) Tags (R)
+  - Story points (L)
+  - People (L) Tags (R)
+  - People (L) Story points (R)
+- [ ] Board title double-click rename modal flow
+- [ ] Story point pills render in graph/kanban/edit modal (position/content variants)
+- [ ] Dragging task shows "Remove task" replacement in toolbar center and deletes on drop
+
+Frontend Visual / UX Regression
+- [~] Playwright screenshots are generated for manual inspection (artifacts)
+- [ ] Automated visual snapshot assertions (toolbar/legend/task cards)
+- [ ] Mobile viewport layout smoke tests
+- [ ] Dark mode visual smoke tests
+
+Coverage Tooling / Reports
+- [x] Backend coverage.py configured (`backend/.coveragerc`)
+- [x] Frontend c8 configured (`frontend/.c8rc.json`)
+- [x] `run_test.sh` runs backend coverage + frontend c8 + e2e suites
+- [~] Frontend c8 meaningful runtime coverage (currently low because many tests are source-contract tests)
+- [~] Add executable frontend unit tests to improve c8 coverage for `app.js`, `canvas.js`, `kanban.js`
+
+Nice-to-Have Next Tests (High ROI)
+- [ ] Frontend unit test for legend layout state calculation (`data-legend-layout`)
+- [ ] Frontend unit test for selected story-points total under search/tag/person highlights
+- [ ] Frontend unit/integration test for board rename header rewrite logic
+- [ ] Backend test for ystore corruption rebuild from space snapshot
+- [ ] Browser E2E for forced admin password change on first login

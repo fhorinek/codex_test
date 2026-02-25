@@ -1,0 +1,19 @@
+{
+  "all": true,
+  "src": [
+    "scripts"
+  ],
+  "exclude": [
+    "tests/**",
+    "node_modules/**",
+    "coverage/**",
+    "test-artifacts/**"
+  ],
+  "report-dir": "coverage/c8",
+  "reporter": [
+    "text-summary",
+    "text",
+    "html",
+    "lcov"
+  ]
+}
