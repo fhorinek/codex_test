@@ -57,6 +57,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("server")
 
+try:
+    BASE_EXCEPTION_GROUP_TYPE = BaseExceptionGroup  # type: ignore[name-defined]
+except NameError:  # pragma: no cover - Python < 3.11
+    BASE_EXCEPTION_GROUP_TYPE = None
+
 SPACE_ID_RE = re.compile(r"[a-zA-Z0-9_-]+")
 VALID_ROLES = {"admin", "manager", "user"}
 PASSWORD_SALT_BYTES = 8
@@ -2692,7 +2697,7 @@ class _SuppressBenignShutdownASGI:
         try:
             return await self._app(scope, receive, tracked_send)
         except BaseException as exc:
-            if isinstance(exc, BaseExceptionGroup):
+            if BASE_EXCEPTION_GROUP_TYPE is not None and isinstance(exc, BASE_EXCEPTION_GROUP_TYPE):
                 benign, remainder = exc.split(_is_benign_shutdown_error)
                 if remainder is None:
                     if scope.get("type") == "http":
@@ -2781,11 +2786,16 @@ async def main() -> None:
     try:
         async with websocket_server:
             await server.serve()
-    except* BaseException as exc_group:
-        _benign, remainder = exc_group.split(_is_benign_shutdown_error)
-        if remainder is not None:
-            raise remainder
-        logger.info("Suppressed benign websocket disconnect errors during shutdown.")
+    except BaseException as exc:
+        if BASE_EXCEPTION_GROUP_TYPE is not None and isinstance(exc, BASE_EXCEPTION_GROUP_TYPE):
+            _benign, remainder = exc.split(_is_benign_shutdown_error)
+            if remainder is not None:
+                raise remainder
+            logger.info("Suppressed benign websocket disconnect errors during shutdown.")
+        elif _is_benign_shutdown_error(exc):
+            logger.info("Suppressed benign websocket disconnect error during shutdown.")
+        else:
+            raise
     finally:
         pending_save_tasks = list(space_save_tasks.values())
         for task in pending_save_tasks:
