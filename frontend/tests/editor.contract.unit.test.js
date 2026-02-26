@@ -4,7 +4,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 
 async function readEditorSource() {
-  const sourcePath = path.resolve(__dirname, "../scripts/editor.js");
+  const sourcePath = path.resolve(__dirname, "../scripts/editor.ts");
   return fs.readFile(sourcePath, "utf8");
 }
 
@@ -12,7 +12,7 @@ async function readEditorSource() {
 // ctrl/cmd + click path exists and routes both reference and token jumps.
 test("editor source contains ctrl/cmd click navigation hooks", async () => {
   const source = await readEditorSource();
-  assert.match(source, /addEventListener\("click",\s*\(event\)\s*=>/);
+  assert.match(source, /addEventListener\("click",\s*\(event(?:\s*:\s*[^)]*)?\)\s*=>/);
   assert.match(source, /event\.ctrlKey\s*\|\|\s*event\.metaKey/);
   assert.match(source, /referenceTokenAtPosition/);
   assert.match(source, /findTaskLineByTitle/);

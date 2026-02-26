@@ -1,7 +1,49 @@
+// @ts-check
+
 import { splitIndent, normalizeContent, prependTokenToLine } from "./formatter.js";
 import { parseJiraTitle } from "./task.js";
+import {
+  buildTaskDescriptionText,
+  decorateDescriptionPills,
+  decorateDescriptionReferences,
+  renderTaskDescriptionNode,
+  wireDescriptionCheckboxes,
+} from "./taskDescription.js";
 
-function lightenColor(color, amount = 0.4) {
+type KanbanGroupBy = "none" | "person" | "tag";
+
+type BuildKanbanOptions = {
+  state: any;
+  dom: any;
+  renderMarkdown?: ((text: string, options?: any) => string) | null;
+  selectTask: (task: any) => void;
+  onEditTask?: ((task: any) => void) | null;
+  matchesSearchTask: (task: any) => boolean;
+  filtersActive: () => boolean | number;
+  matchesFilters: (task: any) => boolean;
+  updateTaskState: (task: any, nextState: string) => void;
+  onToggleCheckbox?: ((lineIndex: number, checked: boolean) => void) | null;
+  groupBy?: string;
+};
+
+type UpdateTaskStateOptions = {
+  task: any;
+  newState: string;
+  dom: any;
+  sync: () => void;
+  applyEditorValue?: ((value: string) => void) | null;
+};
+
+type UpdateTaskTokenOptions = {
+  task: any;
+  token: string;
+  action: "add" | "remove";
+  dom: any;
+  sync: () => void;
+  applyEditorValue?: ((value: string) => void) | null;
+};
+
+function lightenColor(color: string, amount = 0.4): string {
   const hex = color.replace("#", "");
   if (hex.length !== 6) {
     return color;
@@ -10,19 +52,19 @@ function lightenColor(color, amount = 0.4) {
   const r = (num >> 16) & 0xff;
   const g = (num >> 8) & 0xff;
   const b = num & 0xff;
-  const mix = (channel) => Math.min(255, Math.round(channel + (255 - channel) * amount));
-  const toHex = (channel) => channel.toString(16).padStart(2, "0");
+  const mix = (channel: number) => Math.min(255, Math.round(channel + (255 - channel) * amount));
+  const toHex = (channel: number) => channel.toString(16).padStart(2, "0");
   return `#${toHex(mix(r))}${toHex(mix(g))}${toHex(mix(b))}`;
 }
 
-function formatStoryPointsNumber(value) {
+function formatStoryPointsNumber(value: any): string {
   if (!Number.isFinite(value)) {
     return "0";
   }
   return Number.isInteger(value) ? String(value) : String(value);
 }
 
-function buildTaskStoryPointsLabel(task) {
+function buildTaskStoryPointsLabel(task: any): string {
   if (!task) {
     return "";
   }
@@ -40,11 +82,11 @@ function buildTaskStoryPointsLabel(task) {
   return "";
 }
 
-function escapeRegExp(value) {
+function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function insertTokenRespectState(line, token) {
+function insertTokenRespectState(line: string, token: string): string {
   const { indent, content } = splitIndent(line);
   const trimmed = content.trim();
   if (!trimmed) {
@@ -62,16 +104,16 @@ function insertTokenRespectState(line, token) {
   return `${indent}${normalizeContent(`${token} ${trimmed}`)}`;
 }
 
-function findFirstNonEmptyLine(lines, start, end) {
+function findFirstNonEmptyLine(lines: string[], start: number, end: number): number {
   for (let i = start; i < end; i += 1) {
-    if (lines[i].trim() !== "") {
+    if ((lines[i] ?? "").trim() !== "") {
       return i;
     }
   }
   return -1;
 }
 
-function lineHasTokens(line) {
+function lineHasTokens(line: string): boolean {
   const { content } = splitIndent(line);
   const trimmed = content.trim();
   if (!trimmed) {
@@ -82,15 +124,15 @@ function lineHasTokens(line) {
   ));
 }
 
-function isEstimateToken(token) {
+function isEstimateToken(token: string): boolean {
   return /^~\d+(?:\.\d+)?$/.test((token || "").trim());
 }
 
-function removeEstimateTokensFromContent(content) {
+function removeEstimateTokensFromContent(content: string): string {
   return normalizeContent(content.replace(/(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g, "$1"));
 }
 
-function appendEstimateTokenToLine(line, token) {
+function appendEstimateTokenToLine(line: string, token: string): string {
   const { indent, content } = splitIndent(line);
   const cleaned = removeEstimateTokensFromContent(content);
   if (!cleaned) {
@@ -99,9 +141,9 @@ function appendEstimateTokenToLine(line, token) {
   return `${indent}${normalizeContent(`${cleaned} ${token}`)}`;
 }
 
-function removeLeadingBlankLines(lines, start, end) {
+function removeLeadingBlankLines(lines: string[], start: number, end: number): number {
   let currentEnd = end;
-  while (start < currentEnd && lines[start].trim() === "") {
+  while (start < currentEnd && (lines[start] ?? "").trim() === "") {
     lines.splice(start, 1);
     currentEnd -= 1;
   }
@@ -111,7 +153,7 @@ function removeLeadingBlankLines(lines, start, end) {
 const UNASSIGNED_GROUP = "__unassigned__";
 let lastKanbanClickAt = 0;
 let lastKanbanClickId = "";
-let openReferenceDropdown = null;
+let openReferenceDropdown: HTMLElement | null = null;
 let referenceDropdownHandlersBound = false;
 
 function closeReferenceDropdown() {
@@ -137,33 +179,33 @@ function ensureReferenceDropdownHandlers() {
   });
 }
 
-function normalizeGroupBy(value) {
+function normalizeGroupBy(value: any): KanbanGroupBy {
   return value === "person" || value === "tag" ? value : "none";
 }
 
-function uniqueTokens(tokens) {
+function uniqueTokens(tokens: any[]): any[] {
   return Array.from(new Set(tokens));
 }
 
-function getGroupTokens(state, groupBy) {
+function getGroupTokens(state: any, groupBy: KanbanGroupBy): string[] {
   if (groupBy === "person") {
-    const order = state.config?.people?.map((person) => `@${person.key}`) || [];
+    const order = state.config?.people?.map((person: any) => `@${person.key}`) || [];
     const extras = Array.from(state.people)
-      .filter((person) => !order.includes(person))
-      .sort((a, b) => a.localeCompare(b));
+      .filter((person: any) => !order.includes(person))
+      .sort((a, b) => String(a).localeCompare(String(b)));
     return [...order, ...extras];
   }
   if (groupBy === "tag") {
-    const order = state.config?.tags?.map((tag) => `#${tag.key}`) || [];
+    const order = state.config?.tags?.map((tag: any) => `#${tag.key}`) || [];
     const extras = Array.from(state.tags)
-      .filter((tag) => !order.includes(tag))
-      .sort((a, b) => a.localeCompare(b));
+      .filter((tag: any) => !order.includes(tag))
+      .sort((a, b) => String(a).localeCompare(String(b)));
     return [...order, ...extras];
   }
   return [];
 }
 
-function getGroupMeta(state, groupBy, token) {
+function getGroupMeta(state: any, groupBy: KanbanGroupBy, token: string): any {
   if (groupBy === "person") {
     return state.peopleMeta?.get(token);
   }
@@ -173,7 +215,7 @@ function getGroupMeta(state, groupBy, token) {
   return null;
 }
 
-function getGroupLabel(groupBy, token, meta) {
+function getGroupLabel(groupBy: KanbanGroupBy, token: string, meta: any): string {
   if (token === UNASSIGNED_GROUP) {
     return groupBy === "person" ? "Unassigned" : "No tag";
   }
@@ -187,7 +229,7 @@ function getGroupLabel(groupBy, token, meta) {
   return fallback;
 }
 
-function getTaskGroupKeys(task, groupBy) {
+function getTaskGroupKeys(task: any, groupBy: KanbanGroupBy): string[] {
   if (groupBy === "person") {
     const people = uniqueTokens(task.people || []);
     return people.length ? people : [UNASSIGNED_GROUP];
@@ -199,13 +241,13 @@ function getTaskGroupKeys(task, groupBy) {
   return [UNASSIGNED_GROUP];
 }
 
-function getIncomingReferenceTasks(task) {
+function getIncomingReferenceTasks(task: any): any[] {
   if (!task || !Array.isArray(task.incomingReferences)) {
     return [];
   }
-  const unique = [];
+  const unique: any[] = [];
   const seen = new Set();
-  task.incomingReferences.forEach((sourceTask) => {
+  task.incomingReferences.forEach((sourceTask: any) => {
     const id = sourceTask?.id;
     if (!id || seen.has(id) || id === task.id) {
       return;
@@ -217,96 +259,60 @@ function getIncomingReferenceTasks(task) {
   return unique;
 }
 
-function buildKanbanDescriptionText(task) {
-  if (!task || !Array.isArray(task.description) || !task.description.length) {
-    return "";
+function renderKanbanDescription(
+  { task, state, renderMarkdown, onToggleCheckbox }: {
+    task: any;
+    state: any;
+    renderMarkdown?: ((text: string, options?: any) => string) | null;
+    onToggleCheckbox?: ((lineIndex: number, checked: boolean) => void) | null;
   }
-  return task.description
-    .map((line) => {
-      const rawLine = typeof line === "string" ? line : "";
-      const indent = rawLine.match(/^\s*/)?.[0] || "";
-      const content = rawLine
-        .slice(indent.length)
-        .replace(/(^|\s)![^\s#@~]+/g, "$1")
-        .replace(/(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g, "$1")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-      return content ? `${indent}${content}` : "";
-    })
-    .join("\n");
-}
-
-function renderKanbanDescription({ task, state, renderMarkdown, onToggleCheckbox }) {
-  const descriptionText = buildKanbanDescriptionText(task);
+): HTMLElement | null {
+  const descriptionText = buildTaskDescriptionText(task);
   if (!descriptionText || !descriptionText.trim()) {
     return null;
   }
-  if (typeof renderMarkdown !== "function") {
-    const fallback = document.createElement("pre");
-    fallback.className = "kanban-card-description";
-    fallback.textContent = descriptionText;
-    return fallback;
-  }
-  const node = document.createElement("div");
-  node.className = "kanban-card-description description";
-  const lineIndexes = Array.isArray(task?.descriptionLineIndexes)
-    ? task.descriptionLineIndexes
-    : undefined;
-  node.innerHTML = renderMarkdown(descriptionText, {
-    lineIndexes,
+  const descriptionOptions: any = {
+    task,
+    className: "kanban-card-description description",
+    fallbackClassName: "kanban-card-description",
     baseIndent: Number.isFinite(task?.indent) ? task.indent : 0,
-  });
+  };
+  if (renderMarkdown !== undefined) {
+    descriptionOptions.renderMarkdown = renderMarkdown;
+  }
+  if (Array.isArray(task?.descriptionLineIndexes)) {
+    descriptionOptions.lineIndexes = task.descriptionLineIndexes;
+  }
+  const { node } = renderTaskDescriptionNode(descriptionOptions);
 
-  node.querySelectorAll(".references").forEach((link) => {
-    const referenceName = typeof link.dataset.ref === "string" ? link.dataset.ref.trim() : "";
-    const target = state.allTasks?.find((item) => (item?.name || "").trim() === referenceName);
-    if (!target) {
-      link.classList.add("unresolved");
-      link.title = "Reference target not found";
-    }
+  decorateDescriptionReferences(node, {
+    resolveTaskByName: (name: string) =>
+      state.allTasks?.find((item: any) => (item?.name || "").trim() === name) || null,
   });
-
-  node.querySelectorAll(".inline-pill").forEach((pill) => {
-    const type = pill.dataset.type;
-    const value = pill.dataset.value;
-    if (type === "tag") {
-      const meta = state.tagMeta?.get(value);
-      pill.textContent = `#${meta?.name || value.replace("#", "")}`;
-      if (meta?.color) {
-        pill.style.borderColor = meta.color;
+  decorateDescriptionPills(node, {
+    tagMeta: state.tagMeta,
+    peopleMeta: state.peopleMeta,
+  });
+  wireDescriptionCheckboxes(node, {
+    lineFromClosest: false,
+    stopPropagationEvents: ["click", "change"],
+    triggerEvent: "change",
+    disableWhenUnavailable: true,
+    invalidTabIndex: -1,
+    onToggle: ({ lineIndex, checked }) => {
+      if (typeof onToggleCheckbox === "function") {
+        onToggleCheckbox(lineIndex, checked);
       }
-    } else if (type === "person") {
-      const meta = state.peopleMeta?.get(value);
-      pill.textContent = `👤 ${meta?.name || value.replace("@", "")}`;
-      if (meta?.color) {
-        pill.style.borderColor = meta.color;
-      }
-    } else if (type === "jira") {
-      pill.textContent = value;
-    }
-  });
-
-  node.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
-    const rawLine = checkbox.dataset.line;
-    const lineIndex = Number.parseInt(rawLine, 10);
-    if (!Number.isFinite(lineIndex) || typeof onToggleCheckbox !== "function") {
-      checkbox.disabled = true;
-      checkbox.tabIndex = -1;
-      return;
-    }
-    checkbox.addEventListener("click", (event) => {
-      event.stopPropagation();
-    });
-    checkbox.addEventListener("change", (event) => {
-      event.stopPropagation();
-      onToggleCheckbox(lineIndex, Boolean(event.currentTarget?.checked));
-    });
+    },
   });
 
   return node;
 }
 
-function createReferenceIndicator(task, { selectTask, getTaskById }) {
+function createReferenceIndicator(
+  task: any,
+  { selectTask, getTaskById }: { selectTask: (task: any) => void; getTaskById: (taskId: string) => any; }
+): HTMLElement | null {
   const referenceTasks = getIncomingReferenceTasks(task);
   const safeCount = referenceTasks.length;
   if (!safeCount) {
@@ -374,7 +380,7 @@ function renderKanbanCardContent({
   matchesFilters,
   selectTask,
   getTaskById,
-}) {
+}: any): void {
   const wasDragging = card.classList.contains("dragging");
   card.className = "kanban-card";
   if (wasDragging) {
@@ -446,7 +452,7 @@ function renderKanbanCardContent({
   }
   if (task.tags.length) {
     const seenTags = new Set();
-    task.tags.forEach((tag) => {
+    task.tags.forEach((tag: any) => {
       if (seenTags.has(tag)) {
         return;
       }
@@ -494,7 +500,7 @@ function renderKanbanCardContent({
   }
 }
 
-function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }) {
+function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }: any): void {
   if (card.dataset.bound) {
     return;
   }
@@ -526,9 +532,13 @@ function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }) {
       onEditTask(task);
     }
   });
-  card.addEventListener("dragstart", (event) => {
+  card.addEventListener("dragstart", (event: DragEvent) => {
     const task = getTaskById(card.dataset.taskId);
     if (!task) {
+      return;
+    }
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) {
       return;
     }
     const rect = card.getBoundingClientRect();
@@ -540,14 +550,14 @@ function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }) {
     ghost.style.width = `${rect.width}px`;
     ghost.style.height = `${rect.height}px`;
     document.body.appendChild(ghost);
-    event.dataTransfer.setDragImage(
+    dataTransfer.setDragImage(
       ghost,
       ghost.offsetWidth / 2,
       ghost.offsetHeight / 2
     );
     card.classList.add("dragging");
-    event.dataTransfer.setData("text/plain", task.id);
-    event.dataTransfer.setData(
+    dataTransfer.setData("text/plain", task.id);
+    dataTransfer.setData(
       "application/json",
       JSON.stringify({
         type: "task",
@@ -582,10 +592,10 @@ function createKanbanColumn({
   updateTaskState,
   existingCards,
   getTaskById,
-}) {
+}: any): HTMLDivElement {
   const column = document.createElement("div");
   column.className = "kanban-column";
-  column.dataset.stateTag = stateTag;
+  column.dataset["stateTag"] = stateTag;
   const metaColor = state.stateMeta?.get(stateTag)?.color;
   if (metaColor) {
     column.style.borderColor = lightenColor(metaColor, 0.5);
@@ -593,11 +603,11 @@ function createKanbanColumn({
   const title = document.createElement("h3");
   title.textContent =
     state.stateMeta?.get(stateTag)?.name ||
-    stateTag.replace(/^!/, "").replace(/^\w/, (char) => char.toUpperCase());
+    stateTag.replace(/^!/, "").replace(/^\w/, (char: string) => char.toUpperCase());
   column.appendChild(title);
   const list = document.createElement("div");
   list.className = "kanban-list";
-  tasks.forEach((task) => {
+  tasks.forEach((task: any) => {
     let card = existingCards?.get(task.id);
     if (!card) {
       card = document.createElement("button");
@@ -630,7 +640,7 @@ function createKanbanColumn({
     column.classList.add("drag-over");
   });
   column.addEventListener("dragleave", (event) => {
-    if (event.relatedTarget && column.contains(event.relatedTarget)) {
+    if (event.relatedTarget instanceof Node && column.contains(event.relatedTarget)) {
       return;
     }
     column.classList.remove("drag-over");
@@ -638,12 +648,16 @@ function createKanbanColumn({
   column.addEventListener("drop", (event) => {
     event.preventDefault();
     column.classList.remove("drag-over");
-    const taskId = event.dataTransfer.getData("text/plain");
-    const task = state.allTasks.find((item) => item.id === taskId);
+    const dataTransfer = event.dataTransfer;
+    if (!dataTransfer) {
+      return;
+    }
+    const taskId = dataTransfer.getData("text/plain");
+    const task = state.allTasks.find((item: any) => item.id === taskId);
     if (!task) {
       return;
     }
-    const nextState = column.dataset.stateTag;
+    const nextState = column.dataset["stateTag"];
     if (task.state === nextState) {
       return;
     }
@@ -664,22 +678,26 @@ export function buildKanban({
   updateTaskState,
   onToggleCheckbox,
   groupBy = "none",
-}) {
+}: BuildKanbanOptions): void {
   if (!dom.kanbanBoard) {
     return;
   }
   ensureReferenceDropdownHandlers();
   closeReferenceDropdown();
-  const getTaskById = (taskId) =>
-    state.allTasks.find((item) => item.id === taskId) || null;
+  const getTaskById = (taskId: string) =>
+    state.allTasks.find((item: any) => item.id === taskId) || null;
   const normalizedGroupBy = normalizeGroupBy(groupBy);
   const reuseCards = normalizedGroupBy === "none";
   const existingCards = reuseCards ? new Map() : null;
   if (reuseCards) {
+    const existingCardsMap = existingCards;
+    if (!existingCardsMap) {
+      return;
+    }
     dom.kanbanBoard
       .querySelectorAll(".kanban-card[data-task-id]")
-      .forEach((card) => {
-        existingCards.set(card.dataset.taskId, card);
+      .forEach((card: any) => {
+        existingCardsMap.set(card.dataset.taskId, card);
       });
   }
   const content = dom.kanbanContent || dom.kanbanBoard;
@@ -695,23 +713,23 @@ export function buildKanban({
     content.appendChild(groupFloat);
   }
   dom.kanbanBoard.classList.toggle("kanban-grouped", normalizedGroupBy !== "none");
-  const stateOrder = state.config?.states?.map((stateItem) => `!${stateItem.key}`) || [];
+  const stateOrder = state.config?.states?.map((stateItem: any) => `!${stateItem.key}`) || [];
   const extraStates = Array.from(state.states)
-    .filter((stateTag) => !stateOrder.includes(stateTag))
-    .sort((a, b) => a.localeCompare(b));
+    .filter((stateTag: any) => !stateOrder.includes(stateTag))
+    .sort((a, b) => String(a).localeCompare(String(b)));
   const states = [...stateOrder, ...extraStates];
   const stateSet = new Set(states);
   const filterEnabled = filtersActive();
-  const shouldIncludeTask = (task) => !filterEnabled || matchesFilters(task);
+  const shouldIncludeTask = (task: any) => !filterEnabled || matchesFilters(task);
   if (normalizedGroupBy === "none") {
     const tasksByState = new Map();
     states.forEach((stateTag) => tasksByState.set(stateTag, []));
-    state.allTasks.forEach((task) => {
+    state.allTasks.forEach((task: any) => {
       if (task.state && tasksByState.has(task.state)) {
         if (!shouldIncludeTask(task)) {
           return;
         }
-        tasksByState.get(task.state).push(task);
+        tasksByState.get(task.state)?.push(task);
       }
     });
     states.forEach((stateTag) => {
@@ -735,7 +753,7 @@ export function buildKanban({
     return;
   }
 
-  const groups = getGroupTokens(state, normalizedGroupBy).map((token) => {
+  const groups = getGroupTokens(state, normalizedGroupBy).map((token: string) => {
     const meta = getGroupMeta(state, normalizedGroupBy, token);
     return {
       key: token,
@@ -744,7 +762,7 @@ export function buildKanban({
     };
   });
 
-  const needsUnassigned = state.allTasks.some((task) => {
+  const needsUnassigned = state.allTasks.some((task: any) => {
     if (!task.state || !stateSet.has(task.state)) {
       return false;
     }
@@ -774,7 +792,7 @@ export function buildKanban({
     groupedTasks.set(group.key, byState);
   });
 
-  state.allTasks.forEach((task) => {
+  state.allTasks.forEach((task: any) => {
     if (!task.state || !stateSet.has(task.state)) {
       return;
     }
@@ -787,11 +805,11 @@ export function buildKanban({
       if (!groupBucket) {
         return;
       }
-      groupBucket.get(task.state).push(task);
+      groupBucket.get(task.state)?.push(task);
     });
   });
 
-  const visibleGroups = groups.filter((group) => {
+  const visibleGroups = groups.filter((group: any) => {
     const groupBucket = groupedTasks.get(group.key);
     if (!groupBucket) {
       return false;
@@ -804,10 +822,10 @@ export function buildKanban({
     return false;
   });
 
-  visibleGroups.forEach((group) => {
+  visibleGroups.forEach((group: any) => {
     const lane = document.createElement("div");
     lane.className = "kanban-lane";
-    lane.dataset.groupKey = group.key;
+    lane.dataset["groupKey"] = group.key;
     const header = document.createElement("div");
     header.className = "kanban-lane-header";
     const dot = document.createElement("span");
@@ -847,7 +865,9 @@ export function buildKanban({
   });
 }
 
-export function updateTaskState({ task, newState, dom, sync, applyEditorValue }) {
+export function updateTaskState(
+  { task, newState, dom, sync, applyEditorValue }: UpdateTaskStateOptions
+): void {
   const lines = dom.editor.value.split("\n");
   const taskLine = lines[task.lineIndex] || "";
   const indentMatch = taskLine.match(/^(\s*)%/) || ["", ""];
@@ -911,7 +931,9 @@ export function updateTaskState({ task, newState, dom, sync, applyEditorValue })
   sync();
 }
 
-export function updateTaskToken({ task, token, action, dom, sync, applyEditorValue }) {
+export function updateTaskToken(
+  { task, token, action, dom, sync, applyEditorValue }: UpdateTaskTokenOptions
+): void {
   const lines = dom.editor.value.split("\n");
   const taskLine = lines[task.lineIndex] || "";
   const indentMatch = taskLine.match(/^(\s*)%/) || ["", ""];
@@ -935,9 +957,9 @@ export function updateTaskToken({ task, token, action, dom, sync, applyEditorVal
     : new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
   const hasToken = lines
     .slice(start, end)
-    .some((line) => tokenMatch.test(splitIndent(line).content));
+    .some((line: string) => tokenMatch.test(splitIndent(line).content));
   if (action === "add") {
-    const stripToken = (line) => {
+    const stripToken = (line: string): string => {
       const { indent: lineIndent, content } = splitIndent(line);
       if (!tokenMatch.test(content)) {
         return line;

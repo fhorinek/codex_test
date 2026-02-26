@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "scripts/types.d.ts",
+    "scripts/formatter.ts",
+    "scripts/task.ts"
+  ]
+}

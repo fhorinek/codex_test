@@ -4,12 +4,21 @@
   "description": "Task Script Board is a script-first planner with live code, graph, and kanban views, collaborative spaces/folders, role-based user management, Jira/profile settings, slug rename tools, and persistent sessions.",
   "main": "index.js",
   "scripts": {
+    "build": "npm run build:dist",
+    "build:dist": "npm run build:dist:clean && tsc -p tsconfig.build.json && node scripts/build-dist.mjs",
+    "build:dist:clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build:dist:watch": "tsc -p tsconfig.build.json --watch",
+    "dev": "npm run build:dist && python3 -m http.server 4173",
     "test": "npm run test:all",
     "test:all": "npm run test:unit && npm run test:e2e && npm run test:e2e:chrome-connect",
     "test:coverage": "npm run test:unit:coverage",
     "test:coverage:all": "npm run test:unit:coverage && npm run test:e2e && npm run test:e2e:chrome-connect",
-    "test:unit": "node --test tests/task.unit.test.js tests/kanban.unit.test.js tests/formatter.unit.test.js tests/canvas.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js",
-    "test:unit:coverage": "sh -c 'if command -v c8 >/dev/null 2>&1; then exec c8 node --test tests/task.unit.test.js tests/kanban.unit.test.js tests/formatter.unit.test.js tests/canvas.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js; fi; echo \"c8 not found; running unit tests without coverage\" >&2; exec node --test tests/task.unit.test.js tests/kanban.unit.test.js tests/formatter.unit.test.js tests/canvas.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js'",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:core": "tsc -p tsconfig.core.json --noEmit",
+    "typecheck:strict:helpers": "tsc -p tsconfig.strict.helpers.json --noEmit",
+    "typecheck:watch": "tsc -p tsconfig.json --noEmit --watch",
+    "test:unit": "node --loader tsx --test tests/task.unit.test.js tests/kanban.unit.test.js tests/formatter.unit.test.js tests/canvas.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js",
+    "test:unit:coverage": "sh -c 'if command -v c8 >/dev/null 2>&1; then exec c8 node --loader tsx --test tests/task.unit.test.js tests/kanban.unit.test.js tests/formatter.unit.test.js tests/canvas.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js; fi; echo \"c8 not found; running unit tests without coverage\" >&2; exec node --loader tsx --test tests/task.unit.test.js tests/kanban.unit.test.js tests/formatter.unit.test.js tests/canvas.unit.test.js tests/app.contract.unit.test.js tests/editor.contract.unit.test.js tests/styles.contract.unit.test.js'",
     "test:e2e": "node --test tests/app.e2e.test.js && node --test tests/backend.contract.e2e.test.js",
     "test:e2e:chrome-connect": "node --test tests/connect_space.chrome.e2e.test.js"
   },
@@ -31,6 +40,9 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
-    "c8": "^10.1.3"
+    "@types/node": "^24.6.1",
+    "tsx": "^4.20.5",
+    "c8": "^10.1.3",
+    "typescript": "^5.9.3"
   }
 }

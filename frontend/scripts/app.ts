@@ -6,7 +6,37 @@ import {
   updateTaskState as updateTaskStateInEditor,
   updateTaskToken as updateTaskTokenInEditor,
 } from "./kanban.js";
-import { formatTaskScript, normalizeContent } from "./formatter.js";
+import { formatTaskScript } from "./formatter.js";
+import { createAppDom } from "./appDom.js";
+import {
+  setGraphHiddenForLeftSnap,
+  setGraphTopHiddenForKanbanHeight,
+  updateGraphTopHiddenFromLayout,
+} from "./layoutState.js";
+import { createSlugRenameUi } from "./slugRenameUi.js";
+import {
+  createSlugRenameModalController,
+} from "./slugRenameModal.js";
+import {
+  decorateDescriptionPills,
+  decorateDescriptionReferences,
+  renderTaskDescriptionNode,
+  wireDescriptionCheckboxes,
+} from "./taskDescription.js";
+import {
+  applyBoardNameToText,
+  buildTaskCreateDraft,
+  buildTaskEditDraft,
+  createTaskCommandController,
+  insertStateIntoBody,
+  insertTokenIntoBody,
+  normalizeBoardNameInput,
+  parseTaskBody,
+  removeStateFromBody,
+  removeTokenFromBody,
+  updateCheckboxInBody,
+} from "./taskCommands.js";
+import { createSyncEngine } from "./syncEngine.js";
 
 const REMOTE_BASE = window.location.origin;
 const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
@@ -30,7 +60,7 @@ const IDLE_CHECK_MS = 5000;
 const OFFLINE_DRAFT_STORAGE_KEY = "taskScript.offlineDraft.v1";
 const OFFLINE_DRAFT_SAVE_INTERVAL_MS = 10000;
 const SPELLCHECK_STORAGE_KEY = "taskScript.spellcheckEnabled.v1";
-const STATUS_LABELS = {
+const STATUS_LABELS: Record<string, string> = {
   connected: "live",
   connecting: "reconnecting",
   disconnected: "error/failed",
@@ -41,7 +71,7 @@ const STATUS_LABELS = {
   idle: "idle",
 };
 
-async function copyToClipboard(text) {
+async function copyToClipboard(text: any): Promise<void> {
   if (!text) {
     return;
   }
@@ -64,7 +94,7 @@ async function copyToClipboard(text) {
   }
 }
 
-function createJiraTitlePill(key) {
+function createJiraTitlePill(key: any) {
   const pill = document.createElement("span");
   pill.className = "pill jira-pill";
   pill.textContent = key;
@@ -76,7 +106,7 @@ function createJiraTitlePill(key) {
   return pill;
 }
 
-function ensureSecretVisibilityToggle(input) {
+function ensureSecretVisibilityToggle(input: any): void {
   if (!input || input.dataset.secretToggle === "true") {
     return;
   }
@@ -123,7 +153,7 @@ function ensureSecretVisibilityToggle(input) {
   refresh();
 }
 
-function updateTaskEditJiraPill(key) {
+function updateTaskEditJiraPill(key: any): void {
   if (!dom.taskEditJiraPill) {
     return;
   }
@@ -138,10 +168,42 @@ function updateTaskEditJiraPill(key) {
   dom.taskEditJiraPill.classList.remove("hidden");
 }
 
-function getCollabIdentity(preferredName) {
+function safeLocalStorageGet(key: string): string | null {
   try {
-    const cached = localStorage.getItem("collabIdentity");
-    if (cached) {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function safeLocalStorageSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function resetInlineError(element: HTMLElement | null | undefined): void {
+  if (!element) {
+    return;
+  }
+  element.textContent = "";
+  element.classList.add("hidden");
+}
+
+function setInlineToastError(element: HTMLElement | null | undefined, message: any): void {
+  const text = typeof message === "string" ? message.trim() : "";
+  resetInlineError(element);
+  if (text) {
+    showToast(text, "error");
+  }
+}
+
+function getCollabIdentity(preferredName?: string) {
+  const cached = safeLocalStorageGet("collabIdentity");
+  if (cached) {
+    try {
       const parsed = JSON.parse(cached);
       if (
         parsed &&
@@ -156,198 +218,24 @@ function getCollabIdentity(preferredName) {
           color: parsed.color,
         };
         if (preferredName && preferredName !== parsed.name) {
-          try {
-            localStorage.setItem("collabIdentity", JSON.stringify(nextIdentity));
-          } catch {
-            // Ignore storage failures.
-          }
+          safeLocalStorageSet("collabIdentity", JSON.stringify(nextIdentity));
         }
         return nextIdentity;
       }
+    } catch {
+      // Ignore cached identity errors.
     }
-  } catch {
-    // Ignore cached identity errors.
   }
   const name = preferredName || `User ${Math.floor(100 + Math.random() * 900)}`;
   const color = COLLAB_COLORS[Math.floor(Math.random() * COLLAB_COLORS.length)];
   const identity = { name, color };
-  try {
-    localStorage.setItem("collabIdentity", JSON.stringify(identity));
-  } catch {
-    // Ignore storage failures.
-  }
+  safeLocalStorageSet("collabIdentity", JSON.stringify(identity));
   return identity;
 }
 
-const dom = {
-  editor: document.getElementById("task-editor"),
-  editorHost: document.getElementById("code-editor"),
-  graphNodes: document.getElementById("graph-nodes"),
-  graphLines: document.getElementById("graph-lines"),
-  graphMinimap: document.getElementById("graph-minimap"),
-  minimapSvg: document.getElementById("minimap-svg"),
-  graphAddTask: document.getElementById("graph-add-task"),
-  searchInput: document.getElementById("search-input"),
-  searchName: document.getElementById("search-name"),
-  searchDescription: document.getElementById("search-description"),
-  searchTag: document.getElementById("search-tag"),
-  searchPerson: document.getElementById("search-person"),
-  boardTitle: document.getElementById("board-title"),
-  boardConnection: document.getElementById("board-connection"),
-  undoButton: document.getElementById("undo-button"),
-  redoButton: document.getElementById("redo-button"),
-  loadButton: document.getElementById("load-button"),
-  saveButton: document.getElementById("save-button"),
-  formatButton: document.getElementById("format-button"),
-  connectButton: document.getElementById("connect-button"),
-  themeButton: document.getElementById("theme-button"),
-  fullscreenButton: document.getElementById("fullscreen-button"),
-  fileInput: document.getElementById("file-input"),
-  loginModal: document.getElementById("login-modal"),
-  loginModalClose: document.getElementById("login-modal-close"),
-  loginUsername: document.getElementById("login-username"),
-  loginPassword: document.getElementById("login-password"),
-  loginSubmit: document.getElementById("login-submit"),
-  loginError: document.getElementById("login-error"),
-  spacesModal: document.getElementById("spaces-modal"),
-  spacesModalClose: document.getElementById("spaces-modal-close"),
-  spacesLogout: document.getElementById("spaces-logout"),
-  spacesTabCurrent: document.getElementById("spaces-tab-current"),
-  profileButton: document.getElementById("profile-button"),
-  jiraConfigButton: document.getElementById("jira-config-button"),
-  usersButton: document.getElementById("users-button"),
-  profileModal: document.getElementById("profile-modal"),
-  profileClose: document.getElementById("profile-close"),
-  profileError: document.getElementById("profile-error"),
-  profileDisplayName: document.getElementById("profile-display-name"),
-  profileCurrentPassword: document.getElementById("profile-current-password"),
-  profilePassword: document.getElementById("profile-password"),
-  profilePasswordConfirm: document.getElementById("profile-password-confirm"),
-  profileLogoutModal: document.getElementById("profile-logout-modal"),
-  profileLogoutCancel: document.getElementById("profile-logout-cancel"),
-  profileLogoutConfirm: document.getElementById("profile-logout-confirm"),
-  profileSave: document.getElementById("profile-save"),
-  jiraConfigModal: document.getElementById("jira-config-modal"),
-  jiraConfigClose: document.getElementById("jira-config-close"),
-  jiraConfigBaseUrl: document.getElementById("jira-config-base-url"),
-  jiraConfigEmail: document.getElementById("jira-config-email"),
-  jiraConfigToken: document.getElementById("jira-config-token"),
-  jiraConfigSave: document.getElementById("jira-config-save"),
-  jiraConfigCancel: document.getElementById("jira-config-cancel"),
-  jiraConfigError: document.getElementById("jira-config-error"),
-  usersModal: document.getElementById("users-modal"),
-  usersClose: document.getElementById("users-close"),
-  usersError: document.getElementById("users-error"),
-  usersAdminSection: document.getElementById("users-admin-section"),
-  usersList: document.getElementById("users-list"),
-  userOpenCreate: document.getElementById("user-open-create"),
-  userNewUsername: document.getElementById("user-new-username"),
-  userNewDisplayName: document.getElementById("user-new-display-name"),
-  userNewPassword: document.getElementById("user-new-password"),
-  userNewPasswordConfirm: document.getElementById("user-new-password-confirm"),
-  userNewRole: document.getElementById("user-new-role"),
-  userNewSpacesField: document.getElementById("user-new-spaces-field"),
-  userNewSpaces: document.getElementById("user-new-spaces"),
-  userCreateModal: document.getElementById("user-create-modal"),
-  userCreateClose: document.getElementById("user-create-close"),
-  userCreateError: document.getElementById("user-create-error"),
-  userCreate: document.getElementById("user-create"),
-  userPasswordModal: document.getElementById("user-password-modal"),
-  userPasswordClose: document.getElementById("user-password-close"),
-  userPasswordMessage: document.getElementById("user-password-message"),
-  userPasswordNew: document.getElementById("user-password-new"),
-  userPasswordRepeat: document.getElementById("user-password-repeat"),
-  userPasswordError: document.getElementById("user-password-error"),
-  userPasswordCancel: document.getElementById("user-password-cancel"),
-  userPasswordSave: document.getElementById("user-password-save"),
-  userDeleteModal: document.getElementById("user-delete-modal"),
-  userDeleteMessage: document.getElementById("user-delete-message"),
-  userDeleteCancel: document.getElementById("user-delete-cancel"),
-  userDeleteConfirm: document.getElementById("user-delete-confirm"),
-  taskEditModal: document.getElementById("task-edit-modal"),
-  taskEditTitleInput: document.getElementById("task-edit-title-input"),
-  taskEditJiraPill: document.getElementById("task-edit-jira-pill"),
-  taskEditPreview: document.getElementById("task-edit-preview"),
-  taskEditCode: document.getElementById("task-edit-code"),
-  taskEditCodeHost: document.getElementById("task-edit-code-editor"),
-  taskEditSide: document.getElementById("task-edit-side"),
-  taskEditStates: document.getElementById("task-edit-states"),
-  taskEditPeople: document.getElementById("task-edit-people"),
-  taskEditTags: document.getElementById("task-edit-tags"),
-  taskEditCancel: document.getElementById("task-edit-cancel"),
-  taskEditSave: document.getElementById("task-edit-save"),
-  taskEditError: document.getElementById("task-edit-error"),
-  slugRenameModal: document.getElementById("slug-rename-modal"),
-  slugRenameClose: document.getElementById("slug-rename-close"),
-  slugRenameMessage: document.getElementById("slug-rename-message"),
-  slugRenameCurrent: document.getElementById("slug-rename-current"),
-  slugRenameNew: document.getElementById("slug-rename-new"),
-  slugRenameDisplayNameField: document.getElementById("slug-rename-display-name-field"),
-  slugRenameDisplayNameLabel: document.getElementById("slug-rename-display-name-label"),
-  slugRenameDisplayName: document.getElementById("slug-rename-display-name"),
-  slugRenameColorField: document.getElementById("slug-rename-color-field"),
-  slugRenameColor: document.getElementById("slug-rename-color"),
-  slugRenameColorSwatches: document.getElementById("slug-rename-color-swatches"),
-  slugRenameColorPicker: document.getElementById("slug-rename-color-picker"),
-  slugRenameColorClear: document.getElementById("slug-rename-color-clear"),
-  slugRenameColorPreview: document.getElementById("slug-rename-color-preview"),
-  slugRenameEmailField: document.getElementById("slug-rename-email-field"),
-  slugRenameEmailLabel: document.getElementById("slug-rename-email-label"),
-  slugRenameEmail: document.getElementById("slug-rename-email"),
-  slugRenameJiraStateField: document.getElementById("slug-rename-jira-state-field"),
-  slugRenameJiraStateLabel: document.getElementById("slug-rename-jira-state-label"),
-  slugRenameJiraState: document.getElementById("slug-rename-jira-state"),
-  slugRenameCancel: document.getElementById("slug-rename-cancel"),
-  slugRenameSave: document.getElementById("slug-rename-save"),
-  boardRenameModal: document.getElementById("board-rename-modal"),
-  boardRenameClose: document.getElementById("board-rename-close"),
-  boardRenameInput: document.getElementById("board-rename-input"),
-  boardRenameCancel: document.getElementById("board-rename-cancel"),
-  boardRenameSave: document.getElementById("board-rename-save"),
-  taskTrash: document.getElementById("task-trash"),
-  taskDeleteModal: document.getElementById("task-delete-modal"),
-  taskDeleteMessage: document.getElementById("task-delete-message"),
-  taskDeleteCancel: document.getElementById("task-delete-cancel"),
-  taskDeleteConfirm: document.getElementById("task-delete-confirm"),
-  taskDeleteConfirmAll: document.getElementById("task-delete-confirm-all"),
-  spaceOpenCreate: document.getElementById("space-open-create"),
-  spaceOpenFolderCreate: document.getElementById("space-open-folder-create"),
-  spaceCreateModal: document.getElementById("space-create-modal"),
-  spaceCreateClose: document.getElementById("space-create-close"),
-  spaceCreateCancel: document.getElementById("space-create-cancel"),
-  spaceNew: document.getElementById("space-new"),
-  spaceCreate: document.getElementById("space-create"),
-  spaceFolderCreateModal: document.getElementById("space-folder-create-modal"),
-  spaceFolderCreateClose: document.getElementById("space-folder-create-close"),
-  spaceFolderCreateCancel: document.getElementById("space-folder-create-cancel"),
-  spaceFolderNew: document.getElementById("space-folder-new"),
-  spaceFolderCreate: document.getElementById("space-folder-create"),
-  folderDeleteModal: document.getElementById("folder-delete-modal"),
-  folderDeleteMessage: document.getElementById("folder-delete-message"),
-  folderDeleteCancel: document.getElementById("folder-delete-cancel"),
-  folderDeleteConfirm: document.getElementById("folder-delete-confirm"),
-  spaceError: document.getElementById("space-error"),
-  spaceList: document.getElementById("space-list"),
-  deleteModal: document.getElementById("delete-modal"),
-  deleteModalMessage: document.getElementById("delete-modal-message"),
-  deleteConfirm: document.getElementById("delete-confirm"),
-  deleteCancel: document.getElementById("delete-cancel"),
-  kanbanBoard: document.getElementById("kanban-board"),
-  kanbanContent: document.getElementById("kanban-content"),
-  kanbanDivider: document.getElementById("kanban-divider"),
-  kanbanGroup: document.getElementById("kanban-group"),
-  graphPanel: document.querySelector(".graph-panel"),
-  legend: document.querySelector(".legend"),
-  tagList: document.getElementById("tag-list"),
-  personList: document.getElementById("person-list"),
-  clearFilters: document.getElementById("clear-filters"),
-  storyPointsSummaryGraph: document.getElementById("story-points-summary-graph"),
-  storyPointsSummaryKanban: document.getElementById("story-points-summary-kanban"),
-  graphCanvas: document.getElementById("graph-canvas"),
-  divider: document.getElementById("divider"),
-  spellcheckToggleMain: document.getElementById("spellcheck-toggle-main"),
-  spellcheckToggleModal: document.getElementById("spellcheck-toggle-modal"),
-};
+/** @type {import("./appDom.js").AppDom} */
+const dom = createAppDom(document);
+const slugRenameUi = createSlugRenameUi(dom, document);
 
 function initializeSecretToggles() {
   [
@@ -361,7 +249,7 @@ function initializeSecretToggles() {
   ].forEach((input) => ensureSecretVisibilityToggle(input));
 }
 
-function setButtonIcon(button, icon) {
+function setButtonIcon(button: any, icon: any): void {
   if (!button) {
     return;
   }
@@ -376,14 +264,10 @@ function setButtonIcon(button, icon) {
 }
 
 function getStoredSpellcheckEnabled() {
-  try {
-    return localStorage.getItem(SPELLCHECK_STORAGE_KEY) === "1";
-  } catch {
-    return false;
-  }
+  return safeLocalStorageGet(SPELLCHECK_STORAGE_KEY) === "1";
 }
 
-const state = {
+const state: any = {
   tasks: [],
   allTasks: [],
   tags: new Set(),
@@ -415,7 +299,7 @@ const state = {
 
 const KANBAN_GROUPS = new Set(["none", "person", "tag"]);
 
-function normalizeKanbanGroup(value) {
+function normalizeKanbanGroup(value: any): string {
   if (typeof value !== "string") {
     return "none";
   }
@@ -424,11 +308,7 @@ function normalizeKanbanGroup(value) {
 }
 
 function getStoredKanbanGroup() {
-  try {
-    return normalizeKanbanGroup(localStorage.getItem("kanbanGroupBy"));
-  } catch {
-    return "none";
-  }
+  return normalizeKanbanGroup(safeLocalStorageGet("kanbanGroupBy"));
 }
 
 function updateKanbanGroupButtons() {
@@ -436,14 +316,15 @@ function updateKanbanGroupButtons() {
     return;
   }
   const buttons = dom.kanbanGroup.querySelectorAll("button[data-kanban-group]");
-  buttons.forEach((button) => {
-    const isActive = button.dataset.kanbanGroup === state.kanbanGroupBy;
-    button.classList.toggle("active", isActive);
-    button.setAttribute("aria-checked", isActive ? "true" : "false");
+  buttons.forEach((button: any) => {
+    const groupButton = /** @type {HTMLButtonElement} */ (button);
+    const isActive = groupButton.dataset.kanbanGroup === state.kanbanGroupBy;
+    groupButton.classList.toggle("active", isActive);
+    groupButton.setAttribute("aria-checked", isActive ? "true" : "false");
   });
 }
 
-function setKanbanGroupBy(value, { persist = true } = {}) {
+function setKanbanGroupBy(value: any, { persist = true }: { persist?: boolean } = {}) {
   const nextValue = normalizeKanbanGroup(value);
   if (nextValue === state.kanbanGroupBy) {
     return;
@@ -451,16 +332,12 @@ function setKanbanGroupBy(value, { persist = true } = {}) {
   state.kanbanGroupBy = nextValue;
   updateKanbanGroupButtons();
   if (persist) {
-    try {
-      localStorage.setItem("kanbanGroupBy", nextValue);
-    } catch {
-      // Ignore storage errors.
-    }
+    safeLocalStorageSet("kanbanGroupBy", nextValue);
   }
   buildKanban();
 }
 
-const collab = {
+const collab: any = {
   spaceId: null,
   spacePath: "",
   provider: null,
@@ -501,15 +378,13 @@ const collab = {
   offlineDraftSavedValue: "",
 };
 
-let pendingDeleteSpace = null;
-let pendingDeleteFolder = null;
-let pendingDeleteUser = null;
-let pendingPasswordUser = null;
-let pendingSlugRename = null;
-let slugRenameColorControlsBound = false;
+let pendingDeleteSpace: any = null;
+let pendingDeleteFolder: any = null;
+let pendingDeleteUser: any = null;
+let pendingPasswordUser: any = null;
 let pendingBoardRename = false;
-let createUserSpacesPicker = null;
-let toastContainer = null;
+let createUserSpacesPicker: any = null;
+let toastContainer: any = null;
 let lastToast = { message: "", kind: "", at: 0 };
 
 function ensureToastContainer() {
@@ -524,7 +399,7 @@ function ensureToastContainer() {
   return toastContainer;
 }
 
-function showToast(message, kind = "success", durationMs = 3200) {
+function showToast(message: any, kind: any = "success", durationMs = 3200): void {
   const text = typeof message === "string" ? message.trim() : "";
   if (!text) {
     return;
@@ -559,7 +434,7 @@ function showToast(message, kind = "success", durationMs = 3200) {
   setTimeout(closeToast, Math.max(1200, durationMs));
 }
 
-function normalizePermissions(value) {
+function normalizePermissions(value: any) {
   if (!value || typeof value !== "object") {
     return {
       can_manage_spaces: false,
@@ -576,7 +451,7 @@ function normalizePermissions(value) {
   };
 }
 
-function normalizeOptionalDisplayName(displayName, username) {
+function normalizeOptionalDisplayName(displayName: any, username: any) {
   const normalizedDisplayName =
     typeof displayName === "string" ? displayName.trim() : "";
   const normalizedUsername = typeof username === "string" ? username.trim() : "";
@@ -589,7 +464,7 @@ function normalizeOptionalDisplayName(displayName, username) {
   return normalizedDisplayName;
 }
 
-function applySessionFromServer(data) {
+function applySessionFromServer(data: any): void {
   if (!data || typeof data !== "object") {
     return;
   }
@@ -658,11 +533,11 @@ function updateRoleVisibility() {
 }
 
 function getStoredAuth() {
+  const cached = safeLocalStorageGet("collabAuth");
+  if (!cached) {
+    return null;
+  }
   try {
-    const cached = localStorage.getItem("collabAuth");
-    if (!cached) {
-      return null;
-    }
     const parsed = JSON.parse(cached);
     if (parsed && typeof parsed === "object") {
       return {
@@ -675,12 +550,8 @@ function getStoredAuth() {
   return null;
 }
 
-function persistAuth(auth) {
-  try {
-    localStorage.setItem("collabAuth", JSON.stringify(auth));
-  } catch {
-    // Ignore storage failures.
-  }
+function persistAuth(auth: any): void {
+  safeLocalStorageSet("collabAuth", JSON.stringify(auth));
 }
 
 function readAuthInputs() {
@@ -737,7 +608,7 @@ function getServerLabel() {
   }
 }
 
-function setConnectionStatus(status) {
+function setConnectionStatus(status: string): void {
   if (collab.connectionStatus === status) {
     return;
   }
@@ -783,7 +654,7 @@ function updateBoardConnectionLabel() {
   }
   if (collab.spaceId) {
     const status = collab.connectionStatus || "disconnected";
-    const statusLabel = STATUS_LABELS[status] || STATUS_LABELS.disconnected;
+    const statusLabel = STATUS_LABELS[status] ?? STATUS_LABELS["disconnected"] ?? "disconnected";
     const spaceRef = collab.spacePath || collab.spaceId;
     dom.boardConnection.textContent = "";
     const text = document.createElement("span");
@@ -807,37 +678,29 @@ function isOfflineMode() {
 }
 
 function readOfflineDraft() {
-  try {
-    const raw = localStorage.getItem(OFFLINE_DRAFT_STORAGE_KEY);
-    if (raw === null) {
-      return null;
-    }
-    try {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed.text === "string") {
-        return parsed.text;
-      }
-    } catch {
-      // Fallback to raw string format.
-    }
-    return raw;
-  } catch {
+  const raw = safeLocalStorageGet(OFFLINE_DRAFT_STORAGE_KEY);
+  if (raw === null) {
     return null;
   }
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed.text === "string") {
+      return parsed.text;
+    }
+  } catch {
+    // Fallback to raw string format.
+  }
+  return raw;
 }
 
-function writeOfflineDraft(text) {
-  try {
-    localStorage.setItem(
-      OFFLINE_DRAFT_STORAGE_KEY,
-      JSON.stringify({
-        text,
-        savedAt: Date.now(),
-      })
-    );
-  } catch {
-    // Ignore storage failures.
-  }
+function writeOfflineDraft(text: any): void {
+  safeLocalStorageSet(
+    OFFLINE_DRAFT_STORAGE_KEY,
+    JSON.stringify({
+      text,
+      savedAt: Date.now(),
+    })
+  );
 }
 
 function stopOfflineDraftTimer() {
@@ -886,7 +749,7 @@ function ensureOfflineDraftTimer() {
   }, OFFLINE_DRAFT_SAVE_INTERVAL_MS);
 }
 
-function trackOfflineDraftChange(value) {
+function trackOfflineDraftChange(value: any): void {
   if (!isOfflineMode()) {
     stopOfflineDraftTimer();
     collab.offlineDraftDirty = false;
@@ -912,11 +775,13 @@ function getInitialEditorValue() {
 
 const sample = `Example board:\n    people:\n        maya:\n            name: Maya Rivera\n        luis:\n            name: Luis Ortega\n        sam:\n            name: Sam Patel\n        nina:\n            name: Nina Lopez\n        zara:\n            name: Zara Chen\n    tags:\n        planning\n        backend\n        ux\n        research\n\n% Kickoff sprint\n!todo @maya #planning #ux\n**Goal:** Align scope, risks, and owners. {Architecture}\n- Define success metrics\n- Draft roadmap milestones\n[ ] Share notes with stakeholders\n[ ] Lock sprint goals\n\n    % Collect requirements\n    !inprogress @sam #research\n    Interview 5 users and summarize themes.\n    [ ] Write interview guide\n    [x] Schedule sessions\n\n        % Summarize insights\n        !todo @nina #research #planning\n        Capture themes and map to product risks.\n\n    % Create UX flow\n    !todo @maya #ux\n    Map onboarding screens and happy path.\n    - Wireframe key screens\n    - Validate navigation\n\n% Architecture\n!inprogress @luis #backend\nDefine data contracts and core services.\n| Area | Owner | Status |\n| --- | --- | --- |\n| API | Luis | Draft |\n| Data | Maya | Review |\n\n    % Build service skeleton\n    !todo @luis #backend\n    [ ] Set up repo and CI\n    [ ] Define API endpoints\n\n    % Integrate auth\n    !todo @sam #backend\n    Connect OAuth provider and session storage.\n\n        % Validate permissions\n        !todo @zara #backend #research\n        Check scopes and error handling.\n\n% Release prep\n!todo @maya #planning\nFinalize checklist and release timeline.\n{Kickoff sprint}\n`;
 
-dom.editor.value = getInitialEditorValue();
+if (dom.editor) {
+  dom.editor.value = getInitialEditorValue();
+}
 
-let editorController;
+let editorController: any;
 
-function shouldSuppressTextareaInputEcho(value) {
+function shouldSuppressTextareaInputEcho(value: any): boolean {
   void value;
   if (!collab.ytext || !collab.ydoc) {
     return false;
@@ -931,18 +796,28 @@ editorController = createEditor({
   onSync: sync,
   onSelectTask: handleEditorSelection,
   onLocalChange: shouldSuppressTextareaInputEcho,
-  onTaskTitleDoubleClick: ({ lineIndex }) => {
-    const task = state.allTasks.find((item) => item.lineIndex === lineIndex);
+  onTaskTitleDoubleClick: ({ lineIndex }: any) => {
+    const task = state.allTasks.find((item: any) => item.lineIndex === lineIndex);
     if (!task) {
       return;
     }
     openTaskEditModal(task);
   },
-  onTokenDoubleClick: (token) => {
+  onTokenDoubleClick: (token: any) => {
     openSlugRenameModal(token);
   },
   spellcheck: state.spellcheckEnabled,
   scopedSpellcheck: true,
+});
+
+const taskCommandController = createTaskCommandController({
+  getEditorValue: () => editorController.getValue(),
+  applyEditorValue: (value: string) => {
+    applyEditorValue(value);
+  },
+  syncEditorState: () => {
+    syncEditorState();
+  },
 });
 
 const canvasController = createCanvas({
@@ -950,7 +825,7 @@ const canvasController = createCanvas({
   dom,
   renderMarkdown,
   onSelectTask: selectTask,
-  onEditTask: (task) => openTaskEditModal(task),
+  onEditTask: (task: any) => openTaskEditModal(task),
   findTaskByName,
   onUpdateTaskToken: updateTaskToken,
   onUpdateTaskState: updateTaskState,
@@ -967,7 +842,7 @@ const canvasController = createCanvas({
 
 if (typeof window !== "undefined") {
   window.__taskScriptTestHooks = {
-    setEditorSelectionRange(start, end) {
+    setEditorSelectionRange(start: number, end: number) {
       if (!editorController?.setSelectionRange) {
         return null;
       }
@@ -991,12 +866,59 @@ if (typeof window !== "undefined") {
   };
 }
 
-let modalEditorController = null;
-let modalEditorState = null;
+let modalEditorController: any = null;
+let modalEditorState: any = null;
+
+const slugRenameModalController = createSlugRenameModalController({
+  dom,
+  slugRenameUi,
+  getConfig: () => state.config,
+  getEditorValue: () => editorController.getValue(),
+  applyEditorValue: (value: string) => {
+    forceEditorRefresh(value, { collapseSelection: true });
+  },
+  isTaskEditModalOpen: () => Boolean(
+    modalEditorController
+    && dom.taskEditModal
+    && !dom.taskEditModal.classList.contains("hidden")
+  ),
+  getTaskEditModalValue: () => modalEditorController?.getValue?.() || "",
+  setTaskEditModalValue: (value: string) => {
+    modalEditorController?.setValue?.(value);
+  },
+  showToast: (message: any, kind: any) => {
+    showToast(message, kind);
+  },
+});
 
 setScopedSpellcheckEnabled(state.spellcheckEnabled, { persist: false });
 
-function applyEditorValue(nextValue) {
+const syncEngine = createSyncEngine({
+  collab,
+  dom,
+  remoteBase: REMOTE_BASE,
+  wsBase: WS_BASE,
+  getEditorController: () => editorController,
+  applyAuthFromInputs,
+  closeSpacesModal,
+  loadCollabModules,
+  stopOfflineDraftTimer,
+  startIdleWatch,
+  stopIdleWatch,
+  setConnectionStatus,
+  markActivity,
+  publishCollabIdentityAwareness,
+  updateConnectButtonLabel,
+  updateBoardConnectionLabel,
+  startPresenceHeartbeat,
+  stopPresenceHeartbeat,
+  authHeaders,
+  forceEditorRefresh,
+  syncEditorState,
+  trackOfflineDraftChange,
+});
+
+function applyEditorValue(nextValue: string): void {
   const currentValue = editorController.getValue();
   const { start, end } = editorController.getSelectionRange();
   const { top: scrollTop, left: scrollLeft } = editorController.getScroll();
@@ -1027,7 +949,7 @@ function applyEditorValue(nextValue) {
   editorController.focus();
   editorController.replaceRange(oldReplaceStart, oldReplaceEnd, newReplace);
   const delta = nextValue.length - currentValue.length;
-  const adjustOffset = (pos) => {
+  const adjustOffset = (pos: number): number => {
     if (pos <= oldReplaceStart) {
       return pos;
     }
@@ -1046,7 +968,7 @@ function dispatchEditorInput() {
   editorController.dispatchInput();
 }
 
-function forceEditorRefresh(value, { collapseSelection = false } = {}) {
+function forceEditorRefresh(value: string, { collapseSelection = false }: { collapseSelection?: boolean } = {}): void {
   applyEditorValue(value);
   if (collapseSelection) {
     const selection = editorController.getSelectionRange();
@@ -1057,9 +979,9 @@ function forceEditorRefresh(value, { collapseSelection = false } = {}) {
   dispatchEditorInput();
 }
 
-function handleEditorSelection(line) {
+function handleEditorSelection(line: any): void {
   const task = state.allTasks.find(
-    (item) =>
+    (item: any) =>
       item.lineIndex === line ||
       (item.descriptionLineIndexes && item.descriptionLineIndexes.includes(line))
   );
@@ -1078,7 +1000,7 @@ function handleEditorSelection(line) {
   }
 }
 
-function selectTask(task) {
+function selectTask(task: any): void {
   state.selectedTaskId = task.id;
   state.selectedLine = task.lineIndex;
   let current = task.parent;
@@ -1088,7 +1010,9 @@ function selectTask(task) {
   }
   const lines = editorController.getValue().split("\n");
   const targetLine = task.lineIndex;
-  const caretPosition = lines.slice(0, targetLine).reduce((sum, line) => sum + line.length + 1, 0);
+  const caretPosition = lines
+    .slice(0, targetLine)
+    .reduce((sum: number, line: string) => sum + line.length + 1, 0);
   editorController.focus();
   editorController.setSelectionRange(caretPosition, caretPosition);
   editorController.updateSelectedLine();
@@ -1102,10 +1026,10 @@ function selectTask(task) {
 function buildTagPersonLists() {
   dom.tagList.innerHTML = "";
   dom.personList.innerHTML = "";
-  const tagOrder = state.config?.tags?.map((tag) => `#${tag.key}`) || [];
-  const extraTags = Array.from(state.tags).filter((tag) => !tagOrder.includes(tag)).sort();
+  const tagOrder = state.config?.tags?.map((tag: any) => `#${tag.key}`) || [];
+  const extraTags = Array.from(state.tags).filter((tag: any) => !tagOrder.includes(tag)).sort();
   const tags = [...tagOrder, ...extraTags];
-  tags.forEach((tag) => {
+  tags.forEach((tag: any) => {
     const meta = state.tagMeta?.get(tag);
     dom.tagList.appendChild(
       canvasController.buildPill(
@@ -1118,12 +1042,12 @@ function buildTagPersonLists() {
       )
     );
   });
-  const peopleOrder = state.config?.people?.map((person) => `@${person.key}`) || [];
+  const peopleOrder = state.config?.people?.map((person: any) => `@${person.key}`) || [];
   const extraPeople = Array.from(state.people)
     .filter((person) => !peopleOrder.includes(person))
     .sort();
   const people = [...peopleOrder, ...extraPeople];
-  people.forEach((person) => {
+  people.forEach((person: any) => {
     const meta = state.peopleMeta?.get(person);
     dom.personList.appendChild(
       canvasController.buildPill(
@@ -1136,9 +1060,9 @@ function buildTagPersonLists() {
       )
     );
   });
-  const peopleLegendGroup = dom.personList?.closest(".legend-group");
-  const tagsLegendGroup = dom.tagList?.closest(".legend-group");
-  const storyPointsLegendGroup = dom.storyPointsSummaryGraph?.closest(".legend-group");
+  const peopleLegendGroup = dom.personList?.closest(".legend-group") as HTMLElement | null;
+  const tagsLegendGroup = dom.tagList?.closest(".legend-group") as HTMLElement | null;
+  const storyPointsLegendGroup = dom.storyPointsSummaryGraph?.closest(".legend-group") as HTMLElement | null;
   if (peopleLegendGroup) {
     peopleLegendGroup.hidden = people.length === 0;
   }
@@ -1154,16 +1078,16 @@ function buildTagPersonLists() {
     !tagsLegendGroup?.hidden ? "tags" : "",
   ].filter(Boolean);
   if (dom.legend) {
-    dom.legend.dataset.legendLayout = visibleLegendParts.join("-") || "empty";
+    dom.legend.dataset["legendLayout"] = visibleLegendParts.join("-") || "empty";
   }
   const hasVisibleLegendGroups =
-    (Boolean(peopleLegendGroup) && !peopleLegendGroup.hidden)
-    || (Boolean(tagsLegendGroup) && !tagsLegendGroup.hidden)
-    || (Boolean(storyPointsLegendGroup) && !storyPointsLegendGroup.hidden);
+    (peopleLegendGroup !== null && !peopleLegendGroup.hidden)
+    || (tagsLegendGroup !== null && !tagsLegendGroup.hidden)
+    || (storyPointsLegendGroup !== null && !storyPointsLegendGroup.hidden);
   setLegendHasVisibleContent(hasVisibleLegendGroups);
 }
 
-function formatStoryPointsNumber(value) {
+function formatStoryPointsNumber(value: any): string {
   if (!Number.isFinite(value)) {
     return "0";
   }
@@ -1171,7 +1095,9 @@ function formatStoryPointsNumber(value) {
 }
 
 function renderStoryPointsSummary() {
-  const targets = [dom.storyPointsSummaryGraph, dom.storyPointsSummaryKanban].filter(Boolean);
+  const targets = [dom.storyPointsSummaryGraph, dom.storyPointsSummaryKanban].filter(
+    (pill): pill is HTMLElement => Boolean(pill)
+  );
   if (!targets.length) {
     return;
   }
@@ -1179,10 +1105,10 @@ function renderStoryPointsSummary() {
   const hasSearchSelection = Boolean(state.searchQuery && state.searchQuery.trim());
   const hasFilterSelection = Boolean(filtersActive());
   const hasSelection = hasSearchSelection || hasFilterSelection;
-  let selectedTotal = null;
+  let selectedTotal: number | null = null;
   if (hasSelection) {
     const selectedTasks = new Set();
-    state.allTasks.forEach((task) => {
+    state.allTasks.forEach((task: any) => {
       const selectedBySearch = hasSearchSelection && matchesSearchTask(task);
       const selectedByFilters = hasFilterSelection && matchesFilters(task);
       if (selectedBySearch || selectedByFilters) {
@@ -1190,7 +1116,7 @@ function renderStoryPointsSummary() {
       }
     });
     selectedTotal = 0;
-    state.allTasks.forEach((task) => {
+    state.allTasks.forEach((task: any) => {
       if (!selectedTasks.has(task.id)) {
         return;
       }
@@ -1223,7 +1149,7 @@ function renderStoryPointsSummary() {
   });
 }
 
-function sync() {
+function sync(): void {
   if (!editorController) {
     return;
   }
@@ -1243,7 +1169,7 @@ function sync() {
     incomingReferenceCountByName,
     totalStoryPoints,
   } = parseTasks(sourceText);
-  applyStableTaskIds({ allTasks });
+  applyStableTaskIds({ allTasks: Array.isArray(allTasks) ? allTasks : [] });
   state.tasks = tasks;
   state.allTasks = allTasks;
   state.tags = tags;
@@ -1274,13 +1200,13 @@ function sync() {
   updateClearFiltersVisibility();
 }
 
-function buildKanban() {
+function buildKanban(): void {
   buildKanbanView({
     state,
     dom,
     renderMarkdown,
     selectTask,
-    onEditTask: (task) => openTaskEditModal(task),
+    onEditTask: (task: any) => openTaskEditModal(task),
     matchesSearchTask,
     filtersActive,
     matchesFilters,
@@ -1290,35 +1216,23 @@ function buildKanban() {
   });
 }
 
-function updateTaskState(task, newState) {
+function updateTaskState(task: any, newState: any): void {
   updateTaskStateInEditor({ task, newState, dom, sync, applyEditorValue });
 }
 
-function updateTaskToken(task, token, action) {
+function updateTaskToken(task: any, token: any, action: any): void {
   updateTaskTokenInEditor({ task, token, action, dom, sync, applyEditorValue });
 }
 
-let editingTaskRange = null;
+let editingTaskRange: any = null;
 let editingTaskIndent = "";
-let editingTaskJiraKey = null;
+let editingTaskJiraKey: any = null;
 let creatingTask = false;
-let pendingDeleteTask = null;
+let pendingDeleteTask: any = null;
 let isTaskDragActive = false;
 let taskEditDragHandlersBound = false;
 
-function getTaskBlockRange(lines, lineIndex) {
-  let start = lineIndex;
-  let end = lineIndex + 1;
-  while (end < lines.length) {
-    if (/^\s*%/.test(lines[end])) {
-      break;
-    }
-    end += 1;
-  }
-  return { start, end };
-}
-
-function setTaskDragActive(active) {
+function setTaskDragActive(active: any): void {
   if (isTaskDragActive === active) {
     return;
   }
@@ -1330,603 +1244,12 @@ function setTaskDragActive(active) {
   }
 }
 
-function parseTaskBody(text) {
-  const lines = text.replace(/\r/g, "").split("\n");
-  const tags = new Set();
-  const people = new Set();
-  let stateToken = null;
-  let storyPoints = null;
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    let match;
-    const tagRegex = /(^|\s)(#[^\s#@]+)/g;
-    while ((match = tagRegex.exec(line)) !== null) {
-      tags.add(match[2]);
-    }
-    const personRegex = /(^|\s)(@[^\s#@]+)/g;
-    while ((match = personRegex.exec(line)) !== null) {
-      people.add(match[2]);
-    }
-    if (!stateToken) {
-      const stateMatch = line.match(/(^|\s)(![^\s#@]+)/);
-      if (stateMatch) {
-        stateToken = stateMatch[2];
-      }
-    }
-    if (storyPoints === null) {
-      const storyMatch = line.match(/(^|\s)~(\d+(?:\.\d+)?)(?=\s|$)/);
-      if (storyMatch) {
-        const parsedPoints = Number.parseFloat(storyMatch[2]);
-        if (Number.isFinite(parsedPoints)) {
-          storyPoints = parsedPoints;
-        }
-      }
-    }
-  }
-  return {
-    descriptionText: lines.join("\n"),
-    tags: Array.from(tags),
-    people: Array.from(people),
-    state: stateToken,
-    storyPoints,
-  };
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-const SLUG_KIND_LABELS = {
-  tag: "Tag",
-  person: "Person",
-  state: "State",
-};
-
-const SLUG_SECTION_BY_KIND = {
-  tag: "tags",
-  person: "people",
-  state: "states",
-};
-
-const SLUG_CONFIG_PROPS_BY_KIND = {
-  tag: ["name", "color"],
-  person: ["name", "color", "email"],
-  state: ["name", "color", "jiraState"],
-};
-
-const SLUG_RENAME_SWATCH_COLORS = [
-  "#e85d75",
-  "#f28a2e",
-  "#d6b100",
-  "#5ea63a",
-  "#0fa58a",
-  "#1d8fe1",
-  "#5d6bff",
-  "#b24be0",
-];
-
-const SLUG_VALUE_RE = /^[A-Za-z0-9_-]+$/;
-
-function normalizeSlugInput(value, prefix) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw) {
-    return "";
-  }
-  if (raw.startsWith(prefix)) {
-    return raw.slice(prefix.length).trim();
-  }
-  return raw.replace(/^[@#!]/, "").trim();
-}
-
-function slugKindLabel(kind) {
-  return SLUG_KIND_LABELS[kind] || "Token";
-}
-
-function replaceSlugTokenOccurrences(text, oldToken, newToken) {
-  const pattern = new RegExp(`(^|\\s)${escapeRegExp(oldToken)}(?=\\s|$)`, "gm");
-  let count = 0;
-  const nextText = text.replace(pattern, (match, leading) => {
-    count += 1;
-    return `${leading}${newToken}`;
-  });
-  return { text: nextText, count };
-}
-
-function getSlugConfigEntry(kind, slug) {
-  const section = SLUG_SECTION_BY_KIND[kind];
-  const entries = Array.isArray(state.config?.[section]) ? state.config[section] : [];
-  return entries.find((entry) => entry?.key === slug) || null;
-}
-
-function normalizeSlugMetadata(kind, metadata = {}) {
-  const normalized = {
-    name: typeof metadata.name === "string" ? metadata.name.trim() : "",
-    color: typeof metadata.color === "string" ? metadata.color.trim() : "",
-    email: "",
-    jiraState: "",
-  };
-  if (kind === "person") {
-    normalized.email = typeof metadata.email === "string" ? metadata.email.trim() : "";
-  }
-  if (kind === "state") {
-    normalized.jiraState =
-      typeof metadata.jiraState === "string" ? metadata.jiraState.trim() : "";
-  }
-  return normalized;
-}
-
-function hasSlugMetadataInput(kind, metadata = {}) {
-  const keys = SLUG_CONFIG_PROPS_BY_KIND[kind] || [];
-  return keys.some((key) => {
-    const value = metadata[key];
-    return typeof value === "string" && value.trim() !== "";
-  });
-}
-
-function slugMetadataEqual(kind, left = {}, right = {}) {
-  const keys = SLUG_CONFIG_PROPS_BY_KIND[kind] || [];
-  return keys.every((key) => {
-    const a = typeof left[key] === "string" ? left[key].trim() : "";
-    const b = typeof right[key] === "string" ? right[key].trim() : "";
-    return a === b;
-  });
-}
-
-function buildSlugRenameMetadata(kind, slug) {
-  const entry = getSlugConfigEntry(kind, slug);
-  return normalizeSlugMetadata(kind, {
-    name: entry?.name && entry.name !== slug ? entry.name : "",
-    color: entry?.color || "",
-    email: entry?.email || "",
-    jiraState: entry?.jiraState || "",
-  });
-}
-
-function setSlugRenameFieldVisibility(kind) {
-  dom.slugRenameDisplayNameField?.classList.remove("hidden");
-  dom.slugRenameColorField?.classList.remove("hidden");
-  dom.slugRenameEmailField?.classList.toggle("hidden", kind !== "person");
-  dom.slugRenameJiraStateField?.classList.toggle("hidden", kind !== "state");
-}
-
-function normalizeHexColorValue(value) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw) {
-    return "";
-  }
-  const hex = raw.startsWith("#") ? raw : `#${raw}`;
-  if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
-    return hex.toLowerCase();
-  }
-  const shortMatch = hex.match(/^#([0-9a-fA-F]{3})$/);
-  if (!shortMatch) {
-    return "";
-  }
-  const [r, g, b] = shortMatch[1].split("");
-  return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
-}
-
-function updateSlugRenameColorPreview(value) {
-  if (!dom.slugRenameColorPreview) {
-    return;
-  }
-  const raw = typeof value === "string" ? value.trim() : "";
-  const hex = normalizeHexColorValue(raw);
-  dom.slugRenameColorPreview.textContent = raw || "Auto";
-  dom.slugRenameColorPreview.style.setProperty(
-    "--slug-rename-preview-color",
-    hex || "transparent"
-  );
-  dom.slugRenameColorPreview.classList.toggle("has-color", Boolean(hex));
-}
-
-function setSlugRenameColorValue(value) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (dom.slugRenameColor) {
-    dom.slugRenameColor.value = raw;
-  }
-  const hex = normalizeHexColorValue(raw);
-  if (dom.slugRenameColorPicker && hex) {
-    dom.slugRenameColorPicker.value = hex;
-  }
-  if (dom.slugRenameColorSwatches) {
-    dom.slugRenameColorSwatches
-      .querySelectorAll("button[data-color]")
-      .forEach((button) => {
-        const swatchColor = normalizeHexColorValue(button.dataset.color || "");
-        button.classList.toggle("active", Boolean(hex) && swatchColor === hex);
-        button.setAttribute(
-          "aria-pressed",
-          Boolean(hex) && swatchColor === hex ? "true" : "false"
-        );
-      });
-  }
-  updateSlugRenameColorPreview(raw);
-}
-
-function ensureSlugRenameColorControls() {
-  if (slugRenameColorControlsBound) {
-    return;
-  }
-  slugRenameColorControlsBound = true;
-  if (dom.slugRenameColorSwatches) {
-    dom.slugRenameColorSwatches.innerHTML = "";
-    SLUG_RENAME_SWATCH_COLORS.forEach((color, index) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "slug-color-swatch";
-      button.dataset.color = color;
-      button.style.setProperty("--swatch-color", color);
-      button.setAttribute("aria-label", `Color ${index + 1}`);
-      button.setAttribute("aria-pressed", "false");
-      button.addEventListener("click", () => {
-        setSlugRenameColorValue(color);
-      });
-      dom.slugRenameColorSwatches.appendChild(button);
-    });
-  }
-  dom.slugRenameColorPicker?.addEventListener("input", (event) => {
-    const value = event.currentTarget?.value || "";
-    setSlugRenameColorValue(value);
-  });
-  dom.slugRenameColorClear?.addEventListener("click", () => {
-    setSlugRenameColorValue("");
-  });
-  setSlugRenameColorValue("");
-}
-
-function configureSlugRenameContext(kind) {
-  const displayLabel = "Display name";
-
-  if (dom.slugRenameDisplayNameLabel) {
-    dom.slugRenameDisplayNameLabel.textContent = displayLabel;
-  }
-  if (dom.slugRenameDisplayName) {
-    dom.slugRenameDisplayName.placeholder = "";
-    dom.slugRenameDisplayName.autocomplete = kind === "person" ? "name" : "off";
-  }
-
-  if (dom.slugRenameEmailLabel) {
-    dom.slugRenameEmailLabel.textContent = "Email";
-  }
-  if (dom.slugRenameEmail) {
-    dom.slugRenameEmail.placeholder = "";
-    dom.slugRenameEmail.autocomplete = "email";
-  }
-
-  if (dom.slugRenameJiraStateLabel) {
-    dom.slugRenameJiraStateLabel.textContent = "Jira state";
-  }
-  if (dom.slugRenameJiraState) {
-    dom.slugRenameJiraState.placeholder = "";
-    dom.slugRenameJiraState.autocomplete = "off";
-  }
-}
-
-function slugConfigPropOutputName(kind, prop) {
-  if (kind === "person" && prop === "email") {
-    return "mail";
-  }
-  if (kind === "state" && prop === "jiraState") {
-    return "jira";
-  }
-  return prop;
-}
-
-function slugConfigPropOutputValue(prop, value) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (prop === "color") {
-    const normalized = normalizeHexColorValue(raw);
-    if (normalized) {
-      return normalized.slice(1);
-    }
-  }
-  return raw;
-}
-
-function formatSlugConfigPropLine(kind, prop, value) {
-  const outputProp = slugConfigPropOutputName(kind, prop);
-  const outputValue = slugConfigPropOutputValue(prop, value);
-  return `            ${outputProp}: ${outputValue}`;
-}
-
-function normalizeSlugConfigPropName(prop) {
-  const raw = typeof prop === "string" ? prop.trim() : "";
-  const compact = raw.toLowerCase().replace(/[_-]/g, "");
-  if (compact === "jira" || compact === "jirastate") {
-    return "jiraState";
-  }
-  if (compact === "name") {
-    return "name";
-  }
-  if (compact === "color") {
-    return "color";
-  }
-  if (compact === "email") {
-    return "email";
-  }
-  return "";
-}
-
-function buildSlugConfigEntryLines(kind, slug, metadata) {
-  const normalizedMeta = normalizeSlugMetadata(kind, metadata);
-  const props = SLUG_CONFIG_PROPS_BY_KIND[kind] || [];
-  const propLines = props
-    .filter((prop) => normalizedMeta[prop])
-    .map((prop) => formatSlugConfigPropLine(kind, prop, normalizedMeta[prop]));
-  const header = `        ${slug}${propLines.length ? ":" : ""}`;
-  return [header, ...propLines];
-}
-
-function updateSlugConfigEntryBlock(entryLines, { kind, newSlug, metadata }) {
-  if (!Array.isArray(entryLines) || !entryLines.length) {
-    return { lines: buildSlugConfigEntryLines(kind, newSlug, metadata), changed: true };
-  }
-  const normalizedMeta = normalizeSlugMetadata(kind, metadata);
-  const targetProps = SLUG_CONFIG_PROPS_BY_KIND[kind] || [];
-  const headerRaw = entryLines[0] || "";
-  const headerIndent = headerRaw.match(/^\s*/)?.[0] || "        ";
-  let bodyLines = entryLines.slice(1);
-  const propIndexes = new Map();
-  bodyLines.forEach((line, index) => {
-    const trimmed = (line || "").trim();
-    const indent = line?.match?.(/^\s*/)?.[0]?.length || 0;
-    if (indent !== 12 || !trimmed) {
-      return;
-    }
-    const propMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
-    if (!propMatch) {
-      return;
-    }
-    const propName = normalizeSlugConfigPropName(propMatch[1]);
-    if (targetProps.includes(propName) && !propIndexes.has(propName)) {
-      propIndexes.set(propName, index);
-    }
-  });
-
-  targetProps.forEach((prop) => {
-    const nextValue = normalizedMeta[prop] || "";
-    const existingIndex = propIndexes.get(prop);
-    if (nextValue) {
-      const nextLine = formatSlugConfigPropLine(kind, prop, nextValue);
-      if (Number.isInteger(existingIndex)) {
-        bodyLines[existingIndex] = nextLine;
-      } else {
-        bodyLines.push(nextLine);
-      }
-      return;
-    }
-    if (Number.isInteger(existingIndex)) {
-      bodyLines[existingIndex] = null;
-    }
-  });
-
-  bodyLines = bodyLines.filter((line) => line !== null);
-  const hasNestedContent = bodyLines.some((line) => (line || "").trim() !== "");
-  const nextHeader = `${headerIndent}${newSlug}${hasNestedContent ? ":" : ""}`;
-  const nextLines = [nextHeader, ...bodyLines];
-  const changed = nextLines.join("\n") !== entryLines.join("\n");
-  return { lines: nextLines, changed };
-}
-
-function renameSlugConfigEntries(lines, { kind, oldSlug, newSlug, metadata }) {
-  const targetSection = SLUG_SECTION_BY_KIND[kind];
-  if (!targetSection || !Array.isArray(lines) || !lines.length) {
-    return { changed: false };
-  }
-  const normalizedMeta = normalizeSlugMetadata(kind, metadata);
-  const shouldCreateEntry = hasSlugMetadataInput(kind, normalizedMeta);
-  let configEnd = lines.length;
-  for (let index = 0; index < lines.length; index += 1) {
-    if (/^\s*%/.test(lines[index] || "")) {
-      configEnd = index;
-      break;
-    }
-  }
-
-  let sectionStart = -1;
-  let sectionEnd = configEnd;
-  for (let index = 0; index < configEnd; index += 1) {
-    const raw = lines[index] || "";
-    const trimmed = raw.trim();
-    if (!trimmed) {
-      continue;
-    }
-    const indent = raw.match(/^\s*/)?.[0].length || 0;
-    if (indent !== 4 || !trimmed.endsWith(":")) {
-      continue;
-    }
-    const sectionName = trimmed.slice(0, -1).trim().toLowerCase();
-    if (sectionStart !== -1) {
-      sectionEnd = index;
-      break;
-    }
-    if (sectionName === targetSection) {
-      sectionStart = index;
-      sectionEnd = configEnd;
-    }
-  }
-
-  let entryStart = -1;
-  let entryEnd = -1;
-  if (sectionStart !== -1) {
-    for (let index = sectionStart + 1; index < sectionEnd; index += 1) {
-      const raw = lines[index] || "";
-      const trimmed = raw.trim();
-      if (!trimmed) {
-        continue;
-      }
-      const indent = raw.match(/^\s*/)?.[0].length || 0;
-      if (indent !== 8) {
-        continue;
-      }
-      const entryMatch = trimmed.match(/^([^\s:]+)(\s*:.*)?$/);
-      if (!entryMatch || entryMatch[1] !== oldSlug) {
-        continue;
-      }
-      entryStart = index;
-      entryEnd = sectionEnd;
-      for (let next = index + 1; next < sectionEnd; next += 1) {
-        const nextRaw = lines[next] || "";
-        const nextTrimmed = nextRaw.trim();
-        if (!nextTrimmed) {
-          continue;
-        }
-        const nextIndent = nextRaw.match(/^\s*/)?.[0].length || 0;
-        if (nextIndent <= 8) {
-          entryEnd = next;
-          break;
-        }
-      }
-      break;
-    }
-  }
-
-  let changed = false;
-  if (entryStart !== -1) {
-    const existingBlock = lines.slice(entryStart, entryEnd);
-    const updatedBlock = updateSlugConfigEntryBlock(existingBlock, {
-      kind,
-      newSlug,
-      metadata: normalizedMeta,
-    });
-    if (updatedBlock.changed) {
-      lines.splice(entryStart, entryEnd - entryStart, ...updatedBlock.lines);
-      changed = true;
-    }
-    return { changed };
-  }
-
-  if (!shouldCreateEntry) {
-    return { changed };
-  }
-
-  const entryLines = buildSlugConfigEntryLines(kind, newSlug, normalizedMeta);
-  if (sectionStart === -1) {
-    lines.splice(configEnd, 0, `    ${targetSection}:`, ...entryLines);
-    return { changed: true };
-  }
-  lines.splice(sectionEnd, 0, ...entryLines);
-  return { changed: true };
-}
-
-function renameSlugInWholeFile(text, { kind, prefix, oldSlug, newSlug, metadata }) {
-  const oldToken = `${prefix}${oldSlug}`;
-  const newToken = `${prefix}${newSlug}`;
-  const tokenResult =
-    oldToken === newToken
-      ? { text, count: 0 }
-      : replaceSlugTokenOccurrences(text, oldToken, newToken);
-  const lines = tokenResult.text.split("\n");
-  const configResult = renameSlugConfigEntries(lines, {
-    kind,
-    oldSlug,
-    newSlug,
-    metadata,
-  });
-  const nextText = configResult.changed ? lines.join("\n") : tokenResult.text;
-  return {
-    oldToken,
-    newToken,
-    text: nextText,
-    changed: nextText !== text,
-    replacements: tokenResult.count,
-    configChanged: configResult.changed,
-  };
-}
-
-function insertTokenIntoBody(text, token) {
-  const tokenMatch = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`);
-  if (tokenMatch.test(text)) {
-    return text;
-  }
-  const lines = text.replace(/\r/g, "").split("\n");
-  let targetIndex = lines.findIndex((line) => line.trim() !== "");
-  if (targetIndex === -1) {
-    return `${token}\n`;
-  }
-  const trimmed = lines[targetIndex].trim();
-  const hasTokenLine = /(^|\s)([#@!][^\s#@]+)/.test(trimmed);
-  if (!hasTokenLine) {
-    lines.splice(targetIndex, 0, token);
-    return lines.join("\n");
-  }
-  const stateMatch = trimmed.match(/(^|\s)(![^\s#@]+)/);
-  if (stateMatch) {
-    const stateToken = stateMatch[2];
-    const rest = normalizeContent(trimmed.replace(/(^|\s)![^\s#@]+(?=\s|$)/g, "$1"));
-    lines[targetIndex] = rest ? `${stateToken} ${token} ${rest}` : `${stateToken} ${token}`;
-  } else {
-    lines[targetIndex] = normalizeContent(`${token} ${trimmed}`);
-  }
-  return lines.join("\n");
-}
-
-function insertStateIntoBody(text, stateToken) {
-  if (!stateToken) {
-    return text;
-  }
-  const lines = text.replace(/\r/g, "").split("\n");
-  const stateReplace = /(^|\s)![^\s#@]+(?=\s|$)/g;
-  const cleaned = lines.map((line) => normalizeContent(line.replace(stateReplace, "$1")));
-  let targetIndex = cleaned.findIndex((line) => line.trim() !== "");
-  if (targetIndex === -1) {
-    return `${stateToken}\n`;
-  }
-  const trimmed = cleaned[targetIndex].trim();
-  const hasTokenLine = /(^|\s)([#@!][^\s#@]+)/.test(trimmed);
-  if (!hasTokenLine) {
-    cleaned.splice(targetIndex, 0, stateToken);
-    return cleaned.join("\n");
-  }
-  cleaned[targetIndex] = trimmed ? `${stateToken} ${trimmed}` : stateToken;
-  return cleaned.join("\n");
-}
-
-function updateCheckboxInBody(text, lineIndex, checked) {
-  const lines = text.replace(/\r/g, "").split("\n");
-  if (!Number.isFinite(lineIndex) || lineIndex < 0 || lineIndex >= lines.length) {
-    return text;
-  }
-  const line = lines[lineIndex];
-  const updated = line.replace(/^(\s*)\[[ xX]\](\s+|$)/, `$1[${checked ? "x" : " "}]$2`);
-  if (updated === line) {
-    return text;
-  }
-  lines[lineIndex] = updated;
-  return lines.join("\n");
-}
-
-function removeTokenFromBody(text, token) {
-  const tokenReplace = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
-  const lines = text
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => normalizeContent(line.replace(tokenReplace, "$1")));
-  while (lines.length && lines[0].trim() === "") {
-    lines.shift();
-  }
-  return lines.join("\n");
-}
-
-function removeStateFromBody(text) {
-  const stateReplace = /(^|\s)![^\s#@]+(?=\s|$)/g;
-  const lines = text
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => normalizeContent(line.replace(stateReplace, "$1")));
-  while (lines.length && lines[0].trim() === "") {
-    lines.shift();
-  }
-  return lines.join("\n");
-}
-
-function renderTaskEditTokenList(container, tokens, metaMap, type) {
+function renderTaskEditTokenList(container: any, tokens: any[], metaMap: any, type: any): void {
   if (!container) {
     return;
   }
   container.innerHTML = "";
-  tokens.forEach((token) => {
+  tokens.forEach((token: any) => {
     const pill = document.createElement("button");
     pill.type = "button";
     pill.className = "pill";
@@ -1948,37 +1271,40 @@ function renderTaskEditTokenList(container, tokens, metaMap, type) {
     }
     pill.draggable = true;
     pill.addEventListener("dragstart", (event) => {
-      event.dataTransfer.setData(
+      const dragEvent = /** @type {DragEvent} */ (event);
+      dragEvent.dataTransfer?.setData(
         "application/json",
         JSON.stringify({ type, value: token, source: "palette" })
       );
-      event.dataTransfer.effectAllowed = "copy";
+      if (dragEvent.dataTransfer) {
+        dragEvent.dataTransfer.effectAllowed = "copy";
+      }
     });
     container.appendChild(pill);
   });
 }
 
-function refreshTaskEditTokenLists() {
-  const stateOrder = state.config?.states?.map((item) => `!${item.key}`) || [];
+function refreshTaskEditTokenLists(): void {
+  const stateOrder = state.config?.states?.map((item: any) => `!${item.key}`) || [];
   const extraStates = Array.from(state.states)
     .filter((value) => !stateOrder.includes(value))
-    .sort((a, b) => a.localeCompare(b));
+    .sort((a: string, b: string) => a.localeCompare(b));
   const stateTokens = [...stateOrder, ...extraStates];
-  const tagOrder = state.config?.tags?.map((tag) => `#${tag.key}`) || [];
+  const tagOrder = state.config?.tags?.map((tag: any) => `#${tag.key}`) || [];
   const extraTags = Array.from(state.tags)
     .filter((tag) => !tagOrder.includes(tag))
-    .sort((a, b) => a.localeCompare(b));
+    .sort((a: string, b: string) => a.localeCompare(b));
   const tagTokens = [...tagOrder, ...extraTags];
-  const peopleOrder = state.config?.people?.map((person) => `@${person.key}`) || [];
+  const peopleOrder = state.config?.people?.map((person: any) => `@${person.key}`) || [];
   const extraPeople = Array.from(state.people)
     .filter((person) => !peopleOrder.includes(person))
-    .sort((a, b) => a.localeCompare(b));
+    .sort((a: string, b: string) => a.localeCompare(b));
   const peopleTokens = [...peopleOrder, ...extraPeople];
   renderTaskEditTokenList(dom.taskEditStates, stateTokens, state.stateMeta, "state");
   renderTaskEditTokenList(dom.taskEditTags, tagTokens, state.tagMeta, "tag");
   renderTaskEditTokenList(dom.taskEditPeople, peopleTokens, state.peopleMeta, "person");
-  const peopleListSection = dom.taskEditPeople?.closest(".task-edit-list");
-  const tagsListSection = dom.taskEditTags?.closest(".task-edit-list");
+  const peopleListSection = dom.taskEditPeople?.closest(".task-edit-list") as HTMLElement | null;
+  const tagsListSection = dom.taskEditTags?.closest(".task-edit-list") as HTMLElement | null;
   if (peopleListSection) {
     peopleListSection.hidden = peopleTokens.length === 0;
   }
@@ -1987,23 +1313,24 @@ function refreshTaskEditTokenLists() {
   }
 }
 
-function ensureTaskEditDragHandlers() {
+function ensureTaskEditDragHandlers(): void {
   if (taskEditDragHandlersBound) {
     return;
   }
   taskEditDragHandlersBound = true;
   if (dom.taskEditPreview) {
-    dom.taskEditPreview.addEventListener("dragover", (event) => {
+    dom.taskEditPreview.addEventListener("dragover", (event: any) => {
       event.preventDefault();
       dom.taskEditPreview.classList.add("drag-over");
     });
     dom.taskEditPreview.addEventListener("dragleave", () => {
       dom.taskEditPreview.classList.remove("drag-over");
     });
-    dom.taskEditPreview.addEventListener("drop", (event) => {
+    dom.taskEditPreview.addEventListener("drop", (event: any) => {
+      const dragEvent = /** @type {DragEvent} */ (event);
       event.preventDefault();
       dom.taskEditPreview.classList.remove("drag-over");
-      const payload = event.dataTransfer?.getData("application/json");
+      const payload = dragEvent.dataTransfer?.getData("application/json");
       if (!payload || !modalEditorController) {
         return;
       }
@@ -2026,17 +1353,18 @@ function ensureTaskEditDragHandlers() {
     });
   }
   if (dom.taskEditSide) {
-    dom.taskEditSide.addEventListener("dragover", (event) => {
+    dom.taskEditSide.addEventListener("dragover", (event: any) => {
       event.preventDefault();
       dom.taskEditSide.classList.add("drag-over");
     });
     dom.taskEditSide.addEventListener("dragleave", () => {
       dom.taskEditSide.classList.remove("drag-over");
     });
-    dom.taskEditSide.addEventListener("drop", (event) => {
+    dom.taskEditSide.addEventListener("drop", (event: any) => {
+      const dragEvent = /** @type {DragEvent} */ (event);
       event.preventDefault();
       dom.taskEditSide.classList.remove("drag-over");
-      const payload = event.dataTransfer?.getData("application/json");
+      const payload = dragEvent.dataTransfer?.getData("application/json");
       if (!payload || !modalEditorController) {
         return;
       }
@@ -2060,7 +1388,7 @@ function ensureTaskEditDragHandlers() {
   }
 }
 
-function updateTaskEditPreviewFromText(text) {
+function updateTaskEditPreviewFromText(text: any): void {
   if (!dom.taskEditPreview) {
     return;
   }
@@ -2070,7 +1398,7 @@ function updateTaskEditPreviewFromText(text) {
   const displayKey = jiraKey || editingTaskJiraKey;
   updateTaskEditJiraPill(displayKey);
   const displayTitle = jiraTitle || "Untitled task";
-  const formatStoryPoints = (value) => (Number.isInteger(value) ? String(value) : String(value));
+  const formatStoryPoints = (value: any) => (Number.isInteger(value) ? String(value) : String(value));
   dom.taskEditPreview.innerHTML = "";
   const card = document.createElement("div");
   card.className = "task-preview-card";
@@ -2094,11 +1422,15 @@ function updateTaskEditPreviewFromText(text) {
       pill.style.color = stateColor;
     }
     pill.addEventListener("dragstart", (event) => {
-      event.dataTransfer.setData(
+      const dataTransfer = event.dataTransfer;
+      if (!dataTransfer) {
+        return;
+      }
+      dataTransfer.setData(
         "application/json",
         JSON.stringify({ type: "state", value: parsed.state, source: "preview" })
       );
-      event.dataTransfer.effectAllowed = "move";
+      dataTransfer.effectAllowed = "move";
     });
     header.appendChild(pill);
   }
@@ -2110,102 +1442,71 @@ function updateTaskEditPreviewFromText(text) {
     storyPill.title = "Story points";
     card.appendChild(storyPill);
   }
-  const desc = document.createElement("div");
-  desc.className = "description";
   const descriptionLines = (parsed.descriptionText || "").replace(/\r/g, "").split("\n");
-  const cleanedDescription = descriptionLines
-    .map((line) => {
-      const rawLine = typeof line === "string" ? line : "";
-      const indent = rawLine.match(/^\s*/)?.[0] || "";
-      const content = rawLine
-        .slice(indent.length)
-        .replace(/(^|\s)![^\s#@]+/g, "$1")
-        .replace(/(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g, "$1")
-        .replace(/\s{2,}/g, " ")
-        .trim();
-      return content ? `${indent}${content}` : "";
-    })
-    .join("\n");
   const lineIndexes = descriptionLines.map((_, index) => index);
-  desc.innerHTML = renderMarkdown(cleanedDescription, { lineIndexes, disableLinks: true });
-  desc.querySelectorAll("a").forEach((link) => {
+  const { node: desc } = renderTaskDescriptionNode({
+    task: {
+      description: descriptionLines,
+      descriptionLineIndexes: lineIndexes,
+    },
+    renderMarkdown,
+    className: "description",
+    lineIndexes,
+    disableLinks: true,
+  });
+  desc.querySelectorAll("a").forEach((link: any) => {
     const span = document.createElement("span");
     span.className = "inline-link";
     span.textContent = link.textContent || link.getAttribute("href") || "";
     link.replaceWith(span);
   });
-  desc.querySelectorAll(".references").forEach((ref) => {
-    ref.classList.add("inline-link");
-    const referenceName = typeof ref.dataset.ref === "string" ? ref.dataset.ref.trim() : "";
-    if (!findTaskByName(referenceName)) {
-      ref.classList.add("unresolved");
-      ref.title = "Reference target not found";
-    }
+  decorateDescriptionReferences(desc, {
+    addInlineLinkClass: true,
+    resolveTaskByName: (name: any) => findTaskByName(name),
   });
   card.appendChild(desc);
   dom.taskEditPreview.appendChild(card);
 
-  dom.taskEditPreview.querySelectorAll(".inline-pill").forEach((pill) => {
-    const type = pill.dataset.type;
-    const value = pill.dataset.value;
-    if (!type || !value) {
-      return;
-    }
-    if (type === "tag") {
-      const meta = state.tagMeta?.get(value);
-      const label = meta?.name || value.replace("#", "");
-      pill.textContent = `#${label}`;
-      if (meta?.color) {
-        pill.style.borderColor = meta.color;
-        pill.style.color = meta.color;
+  decorateDescriptionPills(dom.taskEditPreview, {
+    tagMeta: state.tagMeta,
+    peopleMeta: state.peopleMeta,
+    colorText: true,
+    onPill: ({ pill, type, value }: any) => {
+      if (type === "jira") {
+        pill.title = `Copy ${value}`;
+        pill.addEventListener("click", (event: any) => {
+          event.stopPropagation();
+          copyToClipboard(value);
+        });
+        pill.draggable = false;
+        return;
       }
-    } else if (type === "person") {
-      const meta = state.peopleMeta?.get(value);
-      const label = meta?.name || value.replace("@", "");
-      pill.textContent = `👤 ${label}`;
-      if (meta?.color) {
-        pill.style.borderColor = meta.color;
-        pill.style.color = meta.color;
-      }
-    } else if (type === "jira") {
-      pill.textContent = value;
-      pill.title = `Copy ${value}`;
-      pill.addEventListener("click", (event) => {
-        event.stopPropagation();
-        copyToClipboard(value);
-      });
-      pill.draggable = false;
-      return;
-    }
-    pill.draggable = true;
-    pill.addEventListener("dragstart", (event) => {
-      event.dataTransfer.setData(
-        "application/json",
-        JSON.stringify({ type, value, source: "preview" })
-      );
-      event.dataTransfer.effectAllowed = "move";
-    });
-  });
-  dom.taskEditPreview
-    .querySelectorAll('input[type="checkbox"][data-line]')
-    .forEach((checkbox) => {
-      checkbox.addEventListener("change", (event) => {
-        if (!modalEditorController) {
-          return;
-        }
-        const target = event.currentTarget;
-        const lineIndex = Number(target.dataset.line);
-        if (!Number.isFinite(lineIndex)) {
-          return;
-        }
-        const updated = updateCheckboxInBody(
-          modalEditorController.getValue(),
-          lineIndex,
-          target.checked
+      pill.draggable = true;
+      pill.addEventListener("dragstart", (event: any) => {
+        event.dataTransfer.setData(
+          "application/json",
+          JSON.stringify({ type, value, source: "preview" })
         );
-        modalEditorController.setValue(updated);
+        event.dataTransfer.effectAllowed = "move";
       });
-    });
+    },
+  });
+  wireDescriptionCheckboxes(dom.taskEditPreview, {
+    selector: 'input[type="checkbox"][data-line]',
+    lineFromClosest: false,
+    triggerEvent: "change",
+    onToggle: ({ lineIndex, checked }: any) => {
+      if (!modalEditorController) {
+        return;
+      }
+      const updated = updateCheckboxInBody(
+        modalEditorController.getValue(),
+        lineIndex,
+        checked
+      );
+      modalEditorController.setValue(updated);
+    },
+  });
   ensureTaskEditDragHandlers();
 }
 
@@ -2239,7 +1540,7 @@ function ensureTaskEditEditor() {
       onLocalChange: () => true,
       onSelectionChange: () => {},
       onFocusChange: () => {},
-      onTokenDoubleClick: (token) => {
+      onTokenDoubleClick: (token: any) => {
         openSlugRenameModal(token);
       },
       spellcheck: state.spellcheckEnabled,
@@ -2251,62 +1552,40 @@ function ensureTaskEditEditor() {
   return modalEditorController;
 }
 
-function openTaskEditModal(task) {
+function openTaskEditModal(task: any): void {
   if (!dom.taskEditModal || !task) {
     return;
   }
   creatingTask = false;
   const lines = editorController.getValue().split("\n");
-  const { start, end } = getTaskBlockRange(lines, task.lineIndex);
-  editingTaskRange = { start, end };
-  const taskLine = lines[task.lineIndex] || "";
-  editingTaskIndent = taskLine.match(/^\s*/)?.[0] || "";
+  const draft = buildTaskEditDraft(lines, task);
+  if (!draft) {
+    return;
+  }
+  editingTaskRange = draft.range;
+  editingTaskIndent = draft.indent;
   if (dom.taskEditError) {
     dom.taskEditError.classList.add("hidden");
     dom.taskEditError.textContent = "";
   }
   if (dom.taskEditTitleInput) {
-    const parsedTitle = parseJiraTitle(task.name || "");
-    editingTaskJiraKey = task.jiraKey || parsedTitle.key;
-    dom.taskEditTitleInput.value = task.name || parsedTitle.title || "";
+    editingTaskJiraKey = draft.jiraKey;
+    dom.taskEditTitleInput.value = draft.title;
   }
   updateTaskEditJiraPill(editingTaskJiraKey);
-  const bodyLines = lines
-    .slice(task.lineIndex + 1, end)
-    .map((line) =>
-      line.startsWith(editingTaskIndent) ? line.slice(editingTaskIndent.length) : line.trimStart()
-    );
-  const bodyText = bodyLines.join("\n");
   const modalEditor = ensureTaskEditEditor();
   if (modalEditor) {
-    dom.taskEditCode.value = bodyText;
-    modalEditor.setValue(bodyText);
+    if (dom.taskEditCode) {
+      dom.taskEditCode.value = draft.bodyText;
+    }
+    modalEditor.setValue(draft.bodyText);
   }
   refreshTaskEditTokenLists();
-  updateTaskEditPreviewFromText(bodyText);
+  updateTaskEditPreviewFromText(draft.bodyText);
   dom.taskEditModal.classList.remove("hidden");
   if (modalEditor) {
     modalEditor.focus();
   }
-}
-
-function getTaskCreateRange(lines) {
-  if (!Array.isArray(lines) || !lines.length) {
-    return { start: 0, end: 0 };
-  }
-  const lastNonEmptyIndex = lines
-    .map((line, index) => ({ line, index }))
-    .filter((entry) => entry.line.trim() !== "")
-    .map((entry) => entry.index)
-    .pop();
-  if (!Number.isFinite(lastNonEmptyIndex)) {
-    return { start: 0, end: lines.length };
-  }
-  const insertIndex = Math.max(0, lastNonEmptyIndex + 1);
-  if (insertIndex < lines.length) {
-    return { start: insertIndex, end: insertIndex + 1 };
-  }
-  return { start: insertIndex, end: insertIndex };
 }
 
 function openTaskCreateModal() {
@@ -2315,25 +1594,27 @@ function openTaskCreateModal() {
   }
   creatingTask = true;
   const lines = editorController.getValue().split("\n");
-  const range = getTaskCreateRange(lines);
-  editingTaskRange = range;
-  editingTaskIndent = "";
-  editingTaskJiraKey = null;
+  const draft = buildTaskCreateDraft(lines);
+  editingTaskRange = draft.range;
+  editingTaskIndent = draft.indent;
+  editingTaskJiraKey = draft.jiraKey;
   if (dom.taskEditError) {
     dom.taskEditError.classList.add("hidden");
     dom.taskEditError.textContent = "";
   }
   if (dom.taskEditTitleInput) {
-    dom.taskEditTitleInput.value = "";
+    dom.taskEditTitleInput.value = draft.title;
   }
   updateTaskEditJiraPill(null);
   const modalEditor = ensureTaskEditEditor();
   if (modalEditor) {
-    dom.taskEditCode.value = "";
-    modalEditor.setValue("");
+    if (dom.taskEditCode) {
+      dom.taskEditCode.value = draft.bodyText;
+    }
+    modalEditor.setValue(draft.bodyText);
   }
   refreshTaskEditTokenLists();
-  updateTaskEditPreviewFromText("");
+  updateTaskEditPreviewFromText(draft.bodyText);
   dom.taskEditModal.classList.remove("hidden");
   dom.taskEditTitleInput?.focus();
 }
@@ -2350,30 +1631,12 @@ function closeTaskEditModal() {
   updateTaskEditJiraPill(null);
 }
 
-function normalizeBoardNameInput(value) {
-  const raw = typeof value === "string" ? value : "";
-  const trimmed = raw.trim().replace(/:+\s*$/, "").trim();
-  return trimmed || "Task Script";
-}
-
-function updateBoardNameInEditor(nextBoardName) {
+function updateBoardNameInEditor(nextBoardName: any): void {
   if (!editorController) {
     return;
   }
-  const normalizedBoardName = normalizeBoardNameInput(nextBoardName);
-  const headerLine = `${normalizedBoardName}:`;
-  const lines = editorController.getValue().replace(/\r/g, "").split("\n");
-  const firstTrimmed = (lines[0] || "").trim();
-  const hasExplicitHeader =
-    Boolean(firstTrimmed)
-    && !firstTrimmed.startsWith("%")
-    && firstTrimmed.endsWith(":");
-  if (hasExplicitHeader) {
-    lines[0] = headerLine;
-  } else {
-    lines.unshift(headerLine);
-  }
-  forceEditorRefresh(lines.join("\n"), { collapseSelection: true });
+  const nextText = applyBoardNameToText(editorController.getValue(), nextBoardName);
+  forceEditorRefresh(nextText, { collapseSelection: true });
 }
 
 function openBoardRenameModal() {
@@ -2413,143 +1676,19 @@ function submitBoardRename() {
   closeBoardRenameModal();
 }
 
-function openSlugRenameModal(token) {
-  if (!dom.slugRenameModal || !token) {
-    return;
-  }
-  const kind = token.type;
-  const prefix = token.prefix;
-  const slug = typeof token.slug === "string" ? token.slug.trim() : "";
-  if (
-    !slug
-    || !["tag", "person", "state"].includes(kind)
-    || !["#", "@", "!"].includes(prefix)
-  ) {
-    return;
-  }
-  pendingSlugRename = {
-    kind,
-    prefix,
-    slug,
-    metadata: buildSlugRenameMetadata(kind, slug),
-  };
-  if (dom.slugRenameMessage) {
-    dom.slugRenameMessage.textContent = `Rename ${slugKindLabel(kind).toLowerCase()} slug "${prefix}${slug}" in whole file.`;
-  }
-  if (dom.slugRenameCurrent) {
-    dom.slugRenameCurrent.value = `${prefix}${slug}`;
-  }
-  if (dom.slugRenameNew) {
-    dom.slugRenameNew.value = slug;
-  }
-  ensureSlugRenameColorControls();
-  setSlugRenameFieldVisibility(kind);
-  configureSlugRenameContext(kind);
-  if (dom.slugRenameDisplayName) {
-    dom.slugRenameDisplayName.value = pendingSlugRename.metadata.name || "";
-  }
-  setSlugRenameColorValue(pendingSlugRename.metadata.color || "");
-  if (dom.slugRenameEmail) {
-    dom.slugRenameEmail.value = pendingSlugRename.metadata.email || "";
-  }
-  if (dom.slugRenameJiraState) {
-    dom.slugRenameJiraState.value = pendingSlugRename.metadata.jiraState || "";
-  }
-  dom.slugRenameModal.classList.remove("hidden");
-  dom.slugRenameNew?.focus();
-  dom.slugRenameNew?.select();
+function openSlugRenameModal(token: any): void {
+  slugRenameModalController.open(token);
 }
 
 function closeSlugRenameModal() {
-  if (!dom.slugRenameModal) {
-    return;
-  }
-  dom.slugRenameModal.classList.add("hidden");
-  if (dom.slugRenameDisplayName) {
-    dom.slugRenameDisplayName.value = "";
-  }
-  setSlugRenameColorValue("");
-  if (dom.slugRenameEmail) {
-    dom.slugRenameEmail.value = "";
-  }
-  if (dom.slugRenameJiraState) {
-    dom.slugRenameJiraState.value = "";
-  }
-  pendingSlugRename = null;
+  slugRenameModalController.close();
 }
 
 function submitSlugRename() {
-  if (!pendingSlugRename) {
-    closeSlugRenameModal();
-    return;
-  }
-  const nextSlug = normalizeSlugInput(dom.slugRenameNew?.value || "", pendingSlugRename.prefix);
-  if (!nextSlug) {
-    showToast("New slug is required.", "error");
-    return;
-  }
-  if (!SLUG_VALUE_RE.test(nextSlug)) {
-    showToast("Slug can contain only letters, numbers, '-' and '_'.", "error");
-    return;
-  }
-  const nextMetadata = normalizeSlugMetadata(pendingSlugRename.kind, {
-    name: dom.slugRenameDisplayName?.value || "",
-    color: dom.slugRenameColor?.value || "",
-    email: dom.slugRenameEmail?.value || "",
-    jiraState: dom.slugRenameJiraState?.value || "",
-  });
-  const slugChanged = nextSlug !== pendingSlugRename.slug;
-  const metadataChanged = !slugMetadataEqual(
-    pendingSlugRename.kind,
-    pendingSlugRename.metadata,
-    nextMetadata
-  );
-  if (!slugChanged && !metadataChanged) {
-    closeSlugRenameModal();
-    return;
-  }
-  const original = editorController.getValue();
-  const oldToken = `${pendingSlugRename.prefix}${pendingSlugRename.slug}`;
-  const result = renameSlugInWholeFile(original, {
-    kind: pendingSlugRename.kind,
-    prefix: pendingSlugRename.prefix,
-    oldSlug: pendingSlugRename.slug,
-    newSlug: nextSlug,
-    metadata: nextMetadata,
-  });
-  if (!result.changed) {
-    showToast(`No '${oldToken}' slug occurrences found.`, "error");
-    return;
-  }
-  forceEditorRefresh(result.text, { collapseSelection: true });
-  if (
-    modalEditorController
-    && dom.taskEditModal
-    && !dom.taskEditModal.classList.contains("hidden")
-  ) {
-    const modalValue = modalEditorController.getValue();
-    if (slugChanged) {
-      const modalRename = replaceSlugTokenOccurrences(
-        modalValue,
-        result.oldToken,
-        result.newToken
-      );
-      if (modalRename.text !== modalValue) {
-        modalEditorController.setValue(modalRename.text);
-      }
-    }
-  }
-  if (slugChanged) {
-    showToast(
-      `${slugKindLabel(pendingSlugRename.kind)} slug '${result.oldToken}' renamed to '${result.newToken}'.`
-    );
-  } else {
-    showToast(`${slugKindLabel(pendingSlugRename.kind)} metadata updated.`);
-  }
-  closeSlugRenameModal();
+  slugRenameModalController.submit();
 }
 
-function countSubtasks(task) {
+function countSubtasks(task: any): number {
   if (!task || !Array.isArray(task.children)) {
     return 0;
   }
@@ -2568,7 +1707,7 @@ function countSubtasks(task) {
   return count;
 }
 
-function openTaskDeleteModal(task) {
+function openTaskDeleteModal(task: any): void {
   if (!dom.taskDeleteModal || !task) {
     return;
   }
@@ -2588,7 +1727,7 @@ function openTaskDeleteModal(task) {
   dom.taskDeleteModal.classList.remove("hidden");
 }
 
-function closeTaskDeleteModal() {
+function closeTaskDeleteModal(): void {
   if (!dom.taskDeleteModal) {
     return;
   }
@@ -2597,7 +1736,7 @@ function closeTaskDeleteModal() {
   clearTaskDeletePreview();
 }
 
-function animateTaskRemoval(task, onComplete) {
+function animateTaskRemoval(task: any, onComplete: any): void {
   if (!task) {
     onComplete();
     return;
@@ -2615,78 +1754,35 @@ function animateTaskRemoval(task, onComplete) {
     onComplete();
     return;
   }
-  nodes.forEach((node) => node.classList.add("deleting"));
+  nodes.forEach((node: any) => node.classList.add("deleting"));
   setTimeout(onComplete, 220);
 }
 
-function deleteTask(task) {
+function deleteTask(task: any): void {
   if (!task) {
     return;
   }
   animateTaskRemoval(task, () => {
-    const lines = editorController.getValue().split("\n");
-    const block = findTaskBlock(lines, task.lineIndex);
-    if (!block) {
-      return;
+    const nextLine = taskCommandController.deleteTaskAtLine(task.lineIndex);
+    if (nextLine !== null) {
+      handleEditorSelection(nextLine);
     }
-    lines.splice(block.start, block.end - block.start);
-    applyEditorValue(lines.join("\n"));
-    syncEditorState();
-    handleEditorSelection(Math.max(0, block.start - 1));
   });
 }
 
-function deleteTaskKeepSubtasks(task) {
+function deleteTaskKeepSubtasks(task: any): void {
   if (!task) {
     return;
   }
   animateTaskRemoval(task, () => {
-    const lines = editorController.getValue().split("\n");
-    const block = findTaskBlock(lines, task.lineIndex);
-    if (!block) {
-      return;
+    const nextLine = taskCommandController.deleteTaskKeepSubtasksAtLine(task.lineIndex);
+    if (nextLine !== null) {
+      handleEditorSelection(nextLine);
     }
-    const blockLines = lines.slice(block.start, block.end);
-    if (blockLines.length <= 1) {
-      lines.splice(block.start, block.end - block.start);
-      applyEditorValue(lines.join("\n"));
-      syncEditorState();
-      handleEditorSelection(Math.max(0, block.start - 1));
-      return;
-    }
-    const childBlocks = [];
-    let index = block.start + 1;
-    while (index < block.end) {
-      const line = lines[index];
-      const taskMatch = line.match(/^(\s*)%/);
-      if (taskMatch) {
-        const lineDepth = Math.floor(taskMatch[1].length / 4);
-        if (lineDepth === block.depth + 1) {
-          const childBlock = findTaskBlock(lines, index);
-          if (childBlock) {
-            const childLines = lines
-              .slice(childBlock.start, childBlock.end)
-              .map((childLine) => adjustIndent(childLine, -4));
-            childBlocks.push(...childLines);
-            index = childBlock.end;
-            continue;
-          }
-        }
-      }
-      index += 1;
-    }
-    if (!childBlocks.length) {
-      lines.splice(block.start, block.end - block.start);
-    } else {
-      lines.splice(block.start, block.end - block.start, ...childBlocks);
-    }
-    applyEditorValue(lines.join("\n"));
-    syncEditorState();
-    handleEditorSelection(Math.max(0, block.start - 1));
   });
 }
 
-function clearTaskDeletePreview() {
+function clearTaskDeletePreview(): void {
   document.querySelectorAll(".task-node.delete-preview").forEach((node) => {
     node.classList.remove("delete-preview");
   });
@@ -2695,7 +1791,7 @@ function clearTaskDeletePreview() {
   });
 }
 
-function highlightTaskDeletePreview(task, includeSubtasks) {
+function highlightTaskDeletePreview(task: any, includeSubtasks: any): void {
   clearTaskDeletePreview();
   if (!task) {
     return;
@@ -2714,7 +1810,7 @@ function highlightTaskDeletePreview(task, includeSubtasks) {
       }
     }
   }
-  toHighlight.forEach((item) => {
+  toHighlight.forEach((item: any) => {
     const node = document.querySelector(`.task-node[data-task-id="${item.id}"]`);
     if (node) {
       node.classList.add("delete-preview");
@@ -2743,232 +1839,60 @@ function saveTaskEditModal() {
     }
     return;
   }
-  const parsedTitle = parseJiraTitle(rawTitle);
-  const jiraKey = parsedTitle.key || editingTaskJiraKey;
-  const title = parsedTitle.title || "";
-  if (!title) {
+  const saveResult = taskCommandController.saveTaskEdit({
+    taskRange: editingTaskRange,
+    rawTitle,
+    bodyText: modalEditor.getValue(),
+    indent: editingTaskIndent,
+    fallbackJiraKey: editingTaskJiraKey,
+    creatingTask,
+  });
+  if (!saveResult.ok) {
     if (dom.taskEditError) {
-      dom.taskEditError.textContent = "Title is required.";
+      dom.taskEditError.textContent =
+        ("error" in saveResult && saveResult.error) || "Unable to save task.";
       dom.taskEditError.classList.remove("hidden");
     }
     return;
   }
-  const bodyLines = modalEditor
-    .getValue()
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((line) => (line.trim() === "" ? "" : `${editingTaskIndent}${line}`));
-  const jiraPrefix = jiraKey ? ` [JIRA:${jiraKey}]` : "";
-  const nextLines = [`${editingTaskIndent}%${jiraPrefix} ${title}`, ...bodyLines];
-  const lines = editorController.getValue().split("\n");
-  const oldTitle = creatingTask ? "" : parseTaskTitleFromLine(lines[editingTaskRange.start] || "");
-  lines.splice(editingTaskRange.start, editingTaskRange.end - editingTaskRange.start, ...nextLines);
-  renameTaskReferencesInLines(lines, oldTitle, title);
-  applyEditorValue(lines.join("\n"));
-  syncEditorState();
-  handleEditorSelection(editingTaskRange.start);
+  handleEditorSelection(saveResult.lineIndex);
   if (creatingTask) {
-    showToast(`Task '${title}' created.`);
+    showToast(`Task '${saveResult.title}' created.`);
   }
   closeTaskEditModal();
 }
 
-function moveTaskAsSubtask(sourceTask, targetTask) {
-  if (!sourceTask || !targetTask || sourceTask.id === targetTask.id) {
-    return;
-  }
-  let targetIsDescendantOfSource = false;
-  let current = targetTask.parent;
-  while (current) {
-    if (current.id === sourceTask.id) {
-      targetIsDescendantOfSource = true;
-      break;
-    }
-    current = current.parent;
-  }
-  const lines = editorController.getValue().split("\n");
-  const sourceBlock = findTaskBlock(lines, sourceTask.lineIndex);
-  const targetBlock = findTaskBlock(lines, targetTask.lineIndex);
-  if (!sourceBlock || !targetBlock) {
-    return;
-  }
-  if (targetIsDescendantOfSource) {
-    if (targetBlock.start <= sourceBlock.start || targetBlock.end > sourceBlock.end) {
-      return;
-    }
-    const sourceLines = lines.slice(sourceBlock.start, sourceBlock.end);
-    const relStart = targetBlock.start - sourceBlock.start;
-    const relEnd = targetBlock.end - sourceBlock.start;
-    const targetLines = sourceLines.slice(relStart, relEnd);
-    const sourceWithoutTargetLines = [
-      ...sourceLines.slice(0, relStart),
-      ...sourceLines.slice(relEnd),
-    ];
-    if (!targetLines.length || !sourceWithoutTargetLines.length) {
-      return;
-    }
-    // Switch relation: promote the target child to the source depth, then
-    // demote the source block (without that child) under the promoted target.
-    const promoteDelta = (sourceBlock.depth - targetBlock.depth) * 4;
-    const promotedTargetLines = targetLines.map((line) => adjustIndent(line, promoteDelta));
-    const demotedSourceLines = sourceWithoutTargetLines.map((line) => adjustIndent(line, 4));
-    lines.splice(
-      sourceBlock.start,
-      sourceBlock.end - sourceBlock.start,
-      ...promotedTargetLines,
-      ...demotedSourceLines
-    );
-    applyEditorValue(lines.join("\n"));
-    syncEditorState();
-    return;
-  }
-  // Move the entire source block and re-indent it under the target task.
-  const indentDelta = (targetBlock.depth + 1 - sourceBlock.depth) * 4;
-  const blockLines = lines.slice(sourceBlock.start, sourceBlock.end);
-  lines.splice(sourceBlock.start, sourceBlock.end - sourceBlock.start);
-  let insertIndex = targetBlock.end;
-  if (sourceBlock.start < insertIndex) {
-    insertIndex -= blockLines.length;
-  }
-  const adjustedLines = blockLines.map((line) => adjustIndent(line, indentDelta));
-  lines.splice(insertIndex, 0, ...adjustedLines);
-  applyEditorValue(lines.join("\n"));
-  syncEditorState();
+function moveTaskAsSubtask(sourceTask: any, targetTask: any): void {
+  taskCommandController.moveTaskAsSubtask(sourceTask, targetTask);
 }
 
-function reorderKanbanTask(sourceTask, targetTask, position, options = {}) {
-  if (
-    !sourceTask ||
-    !targetTask ||
-    sourceTask.id === targetTask.id ||
-    (position !== "before" && position !== "after")
-  ) {
-    return false;
-  }
-  const allowRootReparent = Boolean(options.allowRootReparent);
-  const sourceParentId = sourceTask.parent?.id || null;
-  const targetParentId = targetTask.parent?.id || null;
-  const allowDifferentParent =
-    allowRootReparent &&
-    sourceParentId !== null &&
-    targetParentId === null;
-  if (sourceParentId !== targetParentId && !allowDifferentParent) {
-    return false;
-  }
-  const lines = editorController.getValue().split("\n");
-  const sourceBlock = findTaskBlock(lines, sourceTask.lineIndex);
-  const targetBlock = findTaskBlock(lines, targetTask.lineIndex);
-  if (!sourceBlock || !targetBlock) {
-    return false;
-  }
-  const targetDepth = targetBlock.depth;
-  if (sourceBlock.depth !== targetDepth && !allowDifferentParent) {
-    return false;
-  }
-  if (targetBlock.start >= sourceBlock.start && targetBlock.start < sourceBlock.end) {
-    return false;
-  }
-  const insertAt = position === "before" ? targetBlock.start : targetBlock.end;
-  const blockLines = lines.slice(sourceBlock.start, sourceBlock.end);
-  if (!blockLines.length) {
-    return false;
-  }
-  const indentDelta = (targetDepth - sourceBlock.depth) * 4;
-  const adjustedBlockLines = indentDelta
-    ? blockLines.map((line) => adjustIndent(line, indentDelta))
-    : blockLines;
-  lines.splice(sourceBlock.start, sourceBlock.end - sourceBlock.start);
-  let nextInsertAt = insertAt;
-  if (sourceBlock.start < nextInsertAt) {
-    nextInsertAt -= adjustedBlockLines.length;
-  }
-  const originalStart = sourceBlock.start;
-  if (nextInsertAt === originalStart && indentDelta === 0) {
-    return false;
-  }
-  lines.splice(nextInsertAt, 0, ...adjustedBlockLines);
-  applyEditorValue(lines.join("\n"));
-  syncEditorState();
-  return true;
+function reorderKanbanTask(sourceTask: any, targetTask: any, position: any, options: any = {}) {
+  return taskCommandController.reorderTask(sourceTask, targetTask, position, options);
 }
 
-function parseTaskTitleFromLine(line) {
-  const raw = typeof line === "string" ? line : "";
-  const match = raw.match(/^\s*%\s*(.*)$/);
-  if (!match) {
-    return "";
-  }
-  const parsed = parseJiraTitle(match[1]);
-  return parsed.title || "";
-}
-
-function renameTaskReferencesInLines(lines, oldTitle, newTitle) {
-  if (!Array.isArray(lines)) {
-    return false;
-  }
-  const from = typeof oldTitle === "string" ? oldTitle.trim() : "";
-  const to = typeof newTitle === "string" ? newTitle.trim() : "";
-  if (!from || !to || from === to) {
-    return false;
-  }
-  const refPattern = new RegExp(`\\{\\s*${escapeRegExp(from)}\\s*\\}`, "g");
-  let changed = false;
-  lines.forEach((line, index) => {
-    const updated = (line || "").replace(refPattern, `{${to}}`);
-    if (updated !== line) {
-      lines[index] = updated;
-      changed = true;
-    }
-  });
-  return changed;
-}
-
-function findTaskByName(name) {
+function findTaskByName(name: any) {
   const query = typeof name === "string" ? name.trim() : "";
   if (!query) {
     return null;
   }
-  const exact = state.allTasks.find((task) => task.name === query);
+  const exact = state.allTasks.find((task: any) => task.name === query);
   if (exact) {
     return exact;
   }
   const lowerQuery = query.toLowerCase();
   return (
     state.allTasks.find(
-      (task) => typeof task.name === "string" && task.name.toLowerCase() === lowerQuery
+      (task: any) => typeof task.name === "string" && task.name.toLowerCase() === lowerQuery
     ) || null
   );
 }
 
-function syncEditorState() {
+function syncEditorState(): void {
   sync();
   editorController.updateSelectedLine();
 }
 
-function findTaskBlock(lines, lineIndex) {
-  const taskLine = lines[lineIndex] || "";
-  const match = taskLine.match(/^(\s*)%/);
-  if (!match) {
-    return null;
-  }
-  const indent = match[1] || "";
-  const depth = Math.floor(indent.length / 4);
-  let end = lineIndex + 1;
-  while (end < lines.length) {
-    const line = lines[end];
-    const taskMatch = line.match(/^(\s*)%/);
-    if (taskMatch) {
-      const lineDepth = Math.floor(taskMatch[1].length / 4);
-      if (lineDepth <= depth) {
-        break;
-      }
-    }
-    end += 1;
-  }
-  return { start: lineIndex, end, depth, indent };
-}
-
-function createTaskVisualId() {
+function createTaskVisualId(): string {
   const randomId =
     globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
       ? globalThis.crypto.randomUUID()
@@ -2976,13 +1900,13 @@ function createTaskVisualId() {
   return `task/${randomId}`;
 }
 
-function normalizeTaskPathPart(name) {
+function normalizeTaskPathPart(name: any): string {
   const text = typeof name === "string" ? name.trim().replace(/\s+/g, " ").toLowerCase() : "";
   return text || "_";
 }
 
-function buildTaskNamePath(task) {
-  const segments = [];
+function buildTaskNamePath(task: any): string {
+  const segments: string[] = [];
   let current = task;
   while (current) {
     segments.push(normalizeTaskPathPart(current.name));
@@ -2991,11 +1915,11 @@ function buildTaskNamePath(task) {
   return segments.reverse().join("/");
 }
 
-function buildTaskPathSuffixes(path) {
+function buildTaskPathSuffixes(path: any): string[] {
   const segments = String(path || "")
     .split("/")
     .filter(Boolean);
-  const suffixes = [];
+  const suffixes: string[] = [];
   for (let index = 0; index < segments.length; index += 1) {
     const suffix = segments.slice(index).join("/");
     if (suffix) {
@@ -3005,17 +1929,17 @@ function buildTaskPathSuffixes(path) {
   return suffixes;
 }
 
-function findHeuristicTaskMatch(previousPath, currentEntries) {
+function findHeuristicTaskMatch(previousPath: any, currentEntries: any[]): number {
   if (!previousPath || !Array.isArray(currentEntries) || !currentEntries.length) {
     return -1;
   }
   const suffixes = buildTaskPathSuffixes(previousPath);
   for (const suffix of suffixes) {
-    let index = currentEntries.findIndex((entry) => entry.path.includes(suffix));
+    let index = currentEntries.findIndex((entry: any) => entry.path.includes(suffix));
     if (index >= 0) {
       return index;
     }
-    index = currentEntries.findIndex((entry) => suffix.includes(entry.path));
+    index = currentEntries.findIndex((entry: any) => suffix.includes(entry.path));
     if (index >= 0) {
       return index;
     }
@@ -3023,7 +1947,7 @@ function findHeuristicTaskMatch(previousPath, currentEntries) {
   return -1;
 }
 
-function getTaskPathMapKey() {
+function getTaskPathMapKey(): string {
   const spaceRef = (
     typeof collab.spacePath === "string" && collab.spacePath.trim()
       ? collab.spacePath.trim()
@@ -3032,13 +1956,13 @@ function getTaskPathMapKey() {
   return spaceRef ? `space:${spaceRef}` : "local";
 }
 
-function applyStableTaskIds({ allTasks }) {
+function applyStableTaskIds({ allTasks }: { allTasks: any[] }): void {
   const mapKey = getTaskPathMapKey();
   const previousMap = state.taskPathMaps.get(mapKey) || new Map();
 
-  const previousEntries = [];
-  previousMap.forEach((ids, path) => {
-    (Array.isArray(ids) ? ids : []).forEach((id) => {
+  const previousEntries: any[] = [];
+  previousMap.forEach((ids: any, path: any) => {
+    (Array.isArray(ids) ? ids : []).forEach((id: any) => {
       if (typeof id === "string" && id.trim()) {
         previousEntries.push({ path, id });
       }
@@ -3046,14 +1970,14 @@ function applyStableTaskIds({ allTasks }) {
   });
 
   const previousByPath = new Map();
-  previousEntries.forEach((entry) => {
+  previousEntries.forEach((entry: any) => {
     const list = previousByPath.get(entry.path) || [];
     list.push(entry.id);
     previousByPath.set(entry.path, list);
   });
 
-  const unpairedCurrent = [];
-  allTasks.forEach((task) => {
+  const unpairedCurrent: any[] = [];
+  allTasks.forEach((task: any) => {
     const path = buildTaskNamePath(task);
     const candidates = previousByPath.get(path);
     if (candidates && candidates.length) {
@@ -3063,9 +1987,9 @@ function applyStableTaskIds({ allTasks }) {
     unpairedCurrent.push({ task, path });
   });
 
-  const unpairedPrevious = [];
-  previousByPath.forEach((ids, path) => {
-    ids.forEach((id) => {
+  const unpairedPrevious: any[] = [];
+  previousByPath.forEach((ids: any, path: any) => {
+    ids.forEach((id: any) => {
       unpairedPrevious.push({ path, id });
     });
   });
@@ -3090,12 +2014,12 @@ function applyStableTaskIds({ allTasks }) {
     unpairedPrevious.length = 0;
   }
 
-  unpairedCurrent.forEach(({ task }) => {
+  unpairedCurrent.forEach(({ task }: any) => {
     task.id = createTaskVisualId();
   });
 
   const nextMap = new Map();
-  allTasks.forEach((task) => {
+  allTasks.forEach((task: any) => {
     const path = buildTaskNamePath(task);
     const list = nextMap.get(path) || [];
     list.push(task.id);
@@ -3104,47 +2028,16 @@ function applyStableTaskIds({ allTasks }) {
   state.taskPathMaps.set(mapKey, nextMap);
 }
 
-function adjustIndent(line, deltaSpaces) {
-  if (!deltaSpaces || !line.trim()) {
-    return line;
-  }
-  if (deltaSpaces > 0) {
-    return `${" ".repeat(deltaSpaces)}${line}`;
-  }
-  const leading = line.match(/^\s*/)?.[0] || "";
-  const removeCount = Math.min(leading.length, Math.abs(deltaSpaces));
-  return line.slice(removeCount);
+function toggleCheckboxAtLine(lineIndex: any, checked: any = null): void {
+  taskCommandController.toggleCheckboxAtLine(lineIndex, checked);
 }
 
-function toggleCheckboxAtLine(lineIndex, checked = null) {
-  const lines = editorController.getValue().split("\n");
-  const line = lines[lineIndex];
-  if (!line) {
-    return;
-  }
-  const match = line.match(/^(\s*\[)([ xX])(\])/);
-  if (!match) {
-    return;
-  }
-  const nextValue =
-    checked === null
-      ? match[2].toLowerCase() === "x"
-        ? " "
-        : "x"
-      : checked
-        ? "x"
-        : " ";
-  lines[lineIndex] = line.replace(/^(\s*\[)([ xX])(\])/, `$1${nextValue}$3`);
-  applyEditorValue(lines.join("\n"));
-  syncEditorState();
-}
-
-function toSafeFilename(value) {
+function toSafeFilename(value: any): string {
   const cleaned = value.toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned || "tasks";
 }
 
-function tokenMatchesQuery(token, metaMap, query) {
+function tokenMatchesQuery(token: any, metaMap: any, query: any): boolean {
   if (token.toLowerCase().includes(query)) {
     return true;
   }
@@ -3160,29 +2053,33 @@ function tokenMatchesQuery(token, metaMap, query) {
   return (name && name.includes(query)) || (key && key.includes(query));
 }
 
-function tokensMatchQuery(tokens, metaMap, query) {
-  return tokens.some((token) => tokenMatchesQuery(token, metaMap, query));
+function tokensMatchQuery(tokens: any, metaMap: any, query: any): boolean {
+  return tokens.some((token: any) => tokenMatchesQuery(token, metaMap, query));
 }
 
-function matchesSearchTask(task) {
+function matchesSearchTask(task: any): boolean {
   if (!state.searchQuery) {
     return false;
   }
   const query = state.searchQuery.toLowerCase();
+  const searchNameEnabled = Boolean(dom.searchName?.checked);
+  const searchDescriptionEnabled = Boolean(dom.searchDescription?.checked);
+  const searchTagEnabled = Boolean(dom.searchTag?.checked);
+  const searchPersonEnabled = Boolean(dom.searchPerson?.checked);
   if (
-    dom.searchName.checked &&
+    searchNameEnabled &&
     (task.name.toLowerCase().includes(query) ||
       (task.jiraKey || "").toLowerCase().includes(query))
   ) {
     return true;
   }
-  if (dom.searchDescription.checked && task.description.join(" ").toLowerCase().includes(query)) {
+  if (searchDescriptionEnabled && task.description.join(" ").toLowerCase().includes(query)) {
     return true;
   }
-  if (dom.searchTag.checked && tokensMatchQuery(task.tags, state.tagMeta, query)) {
+  if (searchTagEnabled && tokensMatchQuery(task.tags, state.tagMeta, query)) {
     return true;
   }
-  if (dom.searchPerson.checked && tokensMatchQuery(task.people, state.peopleMeta, query)) {
+  if (searchPersonEnabled && tokensMatchQuery(task.people, state.peopleMeta, query)) {
     return true;
   }
   return false;
@@ -3218,7 +2115,7 @@ async function loadCollabModules() {
   return collab.modules;
 }
 
-function collabUserAwarenessState(identity) {
+function collabUserAwarenessState(identity: any) {
   const rawColor = identity?.color;
   let color = "rgb(45, 80, 237)";
   let colorLight = "rgba(45, 80, 237, 0.2)";
@@ -3250,7 +2147,7 @@ function collabUserAwarenessState(identity) {
   };
 }
 
-function publishCollabIdentityAwareness() {
+function publishCollabIdentityAwareness(): void {
   if (!collab.provider?.awareness) {
     return;
   }
@@ -3271,7 +2168,7 @@ function authHeaders({ includeBasic = false } = {}) {
   };
 }
 
-async function loginRequest(username, password) {
+async function loginRequest(username: any, password: any) {
   let response;
   try {
     response = await fetch(`${REMOTE_BASE}/api/login`, {
@@ -3293,7 +2190,7 @@ async function loginRequest(username, password) {
   return response.json();
 }
 
-async function verifyCurrentPassword(password) {
+async function verifyCurrentPassword(password: any) {
   const username = (collab.username || "").trim();
   if (!username || !password) {
     throw new Error("Current password is required.");
@@ -3336,7 +2233,7 @@ async function fetchSpaces() {
   const data = await response.json();
   const spaces = Array.isArray(data.spaces)
     ? data.spaces
-    .map((space) => {
+    .map((space: any) => {
       if (typeof space === "string") {
         const id = space.trim();
         return {
@@ -3358,12 +2255,12 @@ async function fetchSpaces() {
       }
       return { id: "", users: [], folder: "", personal: false, path: "" };
     })
-    .filter((space) => space.id)
+    .filter((space: any) => space.id)
     : [];
   const folders = Array.isArray(data.folders)
     ? data.folders
-      .filter((folder) => typeof folder === "string" && folder.trim())
-      .map((folder) => folder.trim())
+      .filter((folder: any) => typeof folder === "string" && folder.trim())
+      .map((folder: any) => folder.trim())
     : [];
   return {
     spaces,
@@ -3374,7 +2271,7 @@ async function fetchSpaces() {
   };
 }
 
-async function createSpaceFolderRequest(name) {
+async function createSpaceFolderRequest(name: any) {
   let response;
   try {
     response = await fetch(`${REMOTE_BASE}/api/space-folders`, {
@@ -3394,7 +2291,7 @@ async function createSpaceFolderRequest(name) {
   return response.json();
 }
 
-async function deleteSpaceFolderRequest(folderId) {
+async function deleteSpaceFolderRequest(folderId: any) {
   const trimmed = String(folderId || "").trim();
   if (!trimmed) {
     throw new Error("Invalid folder name.");
@@ -3426,7 +2323,7 @@ async function deleteSpaceFolderRequest(folderId) {
   return response.json();
 }
 
-async function moveSpaceToFolderRequest(spaceId, folder) {
+async function moveSpaceToFolderRequest(spaceId: any, folder: any) {
   let response;
   try {
     response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/folder`, {
@@ -3469,7 +2366,7 @@ async function fetchJiraConfig() {
   };
 }
 
-async function saveJiraConfig(payload) {
+async function saveJiraConfig(payload: any) {
   let response;
   try {
     response = await fetch(`${REMOTE_BASE}/api/jira-config`, {
@@ -3515,7 +2412,7 @@ async function fetchMe() {
   return response.json();
 }
 
-async function saveMyProfile(payload) {
+async function saveMyProfile(payload: any) {
   let response;
   try {
     response = await fetch(`${REMOTE_BASE}/api/me`, {
@@ -3563,7 +2460,7 @@ async function fetchUsers() {
   return response.json();
 }
 
-async function createUserRequest(payload) {
+async function createUserRequest(payload: any) {
   let response;
   try {
     response = await fetch(`${REMOTE_BASE}/api/users`, {
@@ -3583,7 +2480,7 @@ async function createUserRequest(payload) {
   return response.json();
 }
 
-async function updateUserRequest(username, payload) {
+async function updateUserRequest(username: any, payload: any) {
   let response;
   try {
     response = await fetch(`${REMOTE_BASE}/api/users/${encodeURIComponent(username)}`, {
@@ -3603,7 +2500,7 @@ async function updateUserRequest(username, payload) {
   return response.json();
 }
 
-async function deleteUserRequest(username) {
+async function deleteUserRequest(username: any) {
   let response;
   try {
     response = await fetch(`${REMOTE_BASE}/api/users/${encodeURIComponent(username)}`, {
@@ -3619,7 +2516,7 @@ async function deleteUserRequest(username) {
   return response.json();
 }
 
-function sortFolderIds(folders) {
+function sortFolderIds(folders: any) {
   const names = Array.from(
     new Set(
       (Array.isArray(folders) ? folders : [])
@@ -3634,7 +2531,7 @@ function sortFolderIds(folders) {
   return hasPersonal ? ["personal", ...filtered] : filtered;
 }
 
-function folderLabel(folderId) {
+function folderLabel(folderId: any) {
   if (folderId === "personal") {
     return "Personal";
   }
@@ -3644,14 +2541,14 @@ function folderLabel(folderId) {
   return folderId;
 }
 
-function normalizeSpaceFolder(folder) {
+function normalizeSpaceFolder(folder: any) {
   if (typeof folder !== "string") {
     return "";
   }
   return folder.trim().replace(/^\/+|\/+$/g, "");
 }
 
-function buildSpacePath(spaceId, folder = "") {
+function buildSpacePath(spaceId: any, folder: any = "") {
   const id = typeof spaceId === "string" ? spaceId.trim() : "";
   if (!id) {
     return "";
@@ -3660,7 +2557,7 @@ function buildSpacePath(spaceId, folder = "") {
   return normalizedFolder ? `${normalizedFolder}/${id}` : id;
 }
 
-function resolveSpacePath(space) {
+function resolveSpacePath(space: any) {
   if (!space || typeof space !== "object") {
     return "";
   }
@@ -3671,25 +2568,27 @@ function resolveSpacePath(space) {
   return buildSpacePath(space.id, space.folder);
 }
 
-function getAssignableSpaces() {
-  return [...new Set(collab.spaceAccessOptions || [])].sort((a, b) => a.localeCompare(b));
+function getAssignableSpaces(): string[] {
+  const source = Array.isArray(collab.spaceAccessOptions) ? collab.spaceAccessOptions : [];
+  const names: string[] = source.filter((item: any): item is string => typeof item === "string");
+  return [...new Set<string>(names)].sort((a: string, b: string) => a.localeCompare(b));
 }
 
-function isPersonalFolderPath(path) {
+function isPersonalFolderPath(path: any) {
   const normalized = typeof path === "string" ? path.trim() : "";
   return normalized === "personal" || normalized.startsWith("personal/");
 }
 
-function buildAssignableAccessOptions(spaces = [], folders = []) {
-  const options = new Set();
-  (Array.isArray(folders) ? folders : []).forEach((folder) => {
+function buildAssignableAccessOptions(spaces: any[] = [], folders: any[] = []) {
+  const options = new Set<string>();
+  (Array.isArray(folders) ? folders : []).forEach((folder: any) => {
     const normalized = typeof folder === "string" ? folder.trim() : "";
     if (!normalized || isPersonalFolderPath(normalized)) {
       return;
     }
     options.add(`${normalized}/*`);
   });
-  (Array.isArray(spaces) ? spaces : []).forEach((space) => {
+  (Array.isArray(spaces) ? spaces : []).forEach((space: any) => {
     if (!space || typeof space !== "object") {
       return;
     }
@@ -3707,25 +2606,25 @@ function buildAssignableAccessOptions(spaces = [], folders = []) {
     }
     options.add(id);
   });
-  return [...options].sort((a, b) => a.localeCompare(b));
+  return [...options].sort((a: string, b: string) => a.localeCompare(b));
 }
 
-function isPersonalFolderId(folderId) {
+function isPersonalFolderId(folderId: any) {
   const normalized = typeof folderId === "string" ? folderId.trim() : "";
   return normalized === "personal" || normalized.startsWith("personal/");
 }
 
-function renderSpaceList(spaces, folders = []) {
+function renderSpaceList(spaces: any, folders: any[] = []) {
   if (!dom.spaceList) {
     return;
   }
   const canManageSpaces = collab.permissions.can_manage_spaces;
   dom.spaceList.innerHTML = "";
   const allSpaces = Array.isArray(spaces)
-    ? [...spaces].sort((a, b) => resolveSpacePath(a).localeCompare(resolveSpacePath(b)))
+    ? [...spaces].sort((a: any, b: any) => resolveSpacePath(a).localeCompare(resolveSpacePath(b)))
     : [];
   const grouped = new Map();
-  allSpaces.forEach((space) => {
+  allSpaces.forEach((space: any) => {
     const folderId = typeof space.folder === "string" ? space.folder.trim() : "";
     const key = folderId || "";
     if (!grouped.has(key)) {
@@ -3738,7 +2637,7 @@ function renderSpaceList(spaces, folders = []) {
     ...Array.from(grouped.keys()).filter(Boolean),
   ];
   const orderedFolders = sortFolderIds(folderSources);
-  const folderSet = new Set();
+  const folderSet = new Set<string>();
   orderedFolders.forEach((folderId) => {
     const parts = folderId.split("/").filter(Boolean);
     let current = "";
@@ -3762,8 +2661,8 @@ function renderSpaceList(spaces, folders = []) {
     }
     childrenByParent.get(parent).push(folder);
   });
-  childrenByParent.forEach((items) => {
-    items.sort((a, b) => {
+  childrenByParent.forEach((items: any[]) => {
+    items.sort((a: any, b: any) => {
       if (a.id === "personal") {
         return -1;
       }
@@ -3777,8 +2676,8 @@ function renderSpaceList(spaces, folders = []) {
   const activeSpaceId = typeof collab.spaceId === "string" ? collab.spaceId.trim() : "";
   const activeSpacePath = typeof collab.spacePath === "string" ? collab.spacePath.trim() : "";
   const activeSpaceEntry = activeSpacePath
-    ? allSpaces.find((space) => resolveSpacePath(space) === activeSpacePath)
-    : (activeSpaceId ? allSpaces.find((space) => space.id === activeSpaceId) : null);
+    ? allSpaces.find((space: any) => resolveSpacePath(space) === activeSpacePath)
+    : (activeSpaceId ? allSpaces.find((space: any) => space.id === activeSpaceId) : null);
   const activeFolderCandidate =
     activeSpaceEntry && typeof activeSpaceEntry.folder === "string"
       ? activeSpaceEntry.folder.trim()
@@ -3801,7 +2700,7 @@ function renderSpaceList(spaces, folders = []) {
     collab.openSpaceFolderId = null;
   }
 
-  const isExpandedFolder = (folderId) => {
+  const isExpandedFolder = (folderId: any) => {
     if (!collab.openSpaceFolderId) {
       return false;
     }
@@ -3811,7 +2710,7 @@ function renderSpaceList(spaces, folders = []) {
     );
   };
 
-  const renderSpaceRow = (space, container) => {
+  const renderSpaceRow = (space: any, container: any) => {
     const row = document.createElement("div");
     row.className = "space-item";
     const spacePath = resolveSpacePath(space);
@@ -4005,7 +2904,7 @@ function renderSpaceList(spaces, folders = []) {
     users.className = "space-users";
     const connectedUsers = Array.isArray(space.users) ? space.users : [];
     if (connectedUsers.length) {
-      connectedUsers.forEach((user) => {
+      connectedUsers.forEach((user: any) => {
         const pill = document.createElement("span");
         pill.className = "space-user-pill";
         pill.textContent = user;
@@ -4023,7 +2922,7 @@ function renderSpaceList(spaces, folders = []) {
     container.appendChild(row);
   };
 
-  const renderFolder = (folderId, parentId, container) => {
+  const renderFolder = (folderId: any, parentId: any, container: any) => {
     const folderSpaces = grouped.get(folderId) || [];
     const childFolders = childrenByParent.get(folderId) || [];
     if (!canManageSpaces && folderSpaces.length === 0 && childFolders.length === 0) {
@@ -4041,7 +2940,7 @@ function renderSpaceList(spaces, folders = []) {
     }
     folderBlock.classList.toggle("collapsed", !isOpen);
 
-    const moveSpaceToFolder = async (spaceId, sourcePath = "") => {
+    const moveSpaceToFolder = async (spaceId: any, sourcePath: any = "") => {
       if (!spaceId) {
         return;
       }
@@ -4057,18 +2956,18 @@ function renderSpaceList(spaces, folders = []) {
       }
     };
 
-    const attachDropTarget = (targetEl) => {
+    const attachDropTarget = (targetEl: any) => {
       if (!targetEl || !canManageSpaces || isPersonalFolderId(folderId)) {
         return;
       }
-      targetEl.addEventListener("dragover", (event) => {
+      targetEl.addEventListener("dragover", (event: any) => {
         event.preventDefault();
         folderBlock.classList.add("drag-over");
       });
       targetEl.addEventListener("dragleave", () => {
         folderBlock.classList.remove("drag-over");
       });
-      targetEl.addEventListener("drop", async (event) => {
+      targetEl.addEventListener("drop", async (event: any) => {
         event.preventDefault();
         folderBlock.classList.remove("drag-over");
         const draggedSpaceId = event.dataTransfer?.getData("text/x-space-id") || "";
@@ -4118,7 +3017,7 @@ function renderSpaceList(spaces, folders = []) {
       removeFolder.title = "Delete folder";
       removeFolder.setAttribute("aria-label", "Delete folder");
       removeFolder.innerHTML = '<i class="fa-solid fa-folder-minus" aria-hidden="true"></i>';
-      removeFolder.addEventListener("click", (event) => {
+      removeFolder.addEventListener("click", (event: any) => {
         event.stopPropagation();
         openFolderDeleteModal(folderId);
       });
@@ -4135,11 +3034,11 @@ function renderSpaceList(spaces, folders = []) {
       return;
     }
 
-    childFolders.forEach((child) => {
+    childFolders.forEach((child: any) => {
       renderFolder(child.id, folderId, folderBody);
     });
 
-    folderSpaces.forEach((space) => {
+    folderSpaces.forEach((space: any) => {
       renderSpaceRow(space, folderBody);
     });
 
@@ -4188,11 +3087,11 @@ function renderSpaceList(spaces, folders = []) {
   }
 
   const rootFolders = childrenByParent.get("") || [];
-  rootFolders.forEach((folder) => {
+  rootFolders.forEach((folder: any) => {
     renderFolder(folder.id, "", dom.spaceList);
   });
   const rootSpaces = grouped.get("") || [];
-  rootSpaces.forEach((space) => {
+  rootSpaces.forEach((space: any) => {
     renderSpaceRow(space, dom.spaceList);
   });
 
@@ -4226,9 +3125,9 @@ async function loadSpaceList({ showLoading = true } = {}) {
     const folders = sortFolderIds(result.folders || []);
     if (collab.spaceId) {
       const currentByPath = collab.spacePath
-        ? spaces.find((space) => resolveSpacePath(space) === collab.spacePath)
+        ? spaces.find((space: any) => resolveSpacePath(space) === collab.spacePath)
         : null;
-      const currentById = spaces.find((space) => space.id === collab.spaceId);
+      const currentById = spaces.find((space: any) => space.id === collab.spaceId);
       const current = currentByPath || currentById || null;
       const nextPath = current ? resolveSpacePath(current) : (collab.spacePath || collab.spaceId);
       if (nextPath !== collab.spacePath) {
@@ -4236,7 +3135,7 @@ async function loadSpaceList({ showLoading = true } = {}) {
         updateBoardConnectionLabel();
       }
     }
-    collab.spaceIds = spaces.map((space) => space.id).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    collab.spaceIds = spaces.map((space: any) => space.id).filter(Boolean).sort((a: any, b: any) => a.localeCompare(b));
     collab.spaceFolders = folders;
     collab.spaceAccessOptions = buildAssignableAccessOptions(spaces, folders);
     if (createUserSpacesPicker) {
@@ -4244,7 +3143,7 @@ async function loadSpaceList({ showLoading = true } = {}) {
     }
     const snapshot = JSON.stringify(
       {
-        spaces: spaces.map((space) => ({
+        spaces: spaces.map((space: any) => ({
           id: space.id,
           users: [...space.users].sort(),
           folder: space.folder || "",
@@ -4274,45 +3173,23 @@ async function loadSpaceList({ showLoading = true } = {}) {
   }
 }
 
-function setSpaceError(message) {
-  const text = typeof message === "string" ? message.trim() : "";
-  if (dom.spaceError) {
-    dom.spaceError.textContent = "";
-    dom.spaceError.classList.add("hidden");
-  }
-  if (text) {
-    showToast(text, "error");
-  }
+function setSpaceError(message: any) {
+  setInlineToastError(dom.spaceError, message);
 }
 
 function clearSpaceError() {
-  if (!dom.spaceError) {
-    return;
-  }
-  dom.spaceError.textContent = "";
-  dom.spaceError.classList.add("hidden");
+  resetInlineError(dom.spaceError);
 }
 
-function setJiraConfigError(message) {
-  const text = typeof message === "string" ? message.trim() : "";
-  if (dom.jiraConfigError) {
-    dom.jiraConfigError.textContent = "";
-    dom.jiraConfigError.classList.add("hidden");
-  }
-  if (text) {
-    showToast(text, "error");
-  }
+function setJiraConfigError(message: any) {
+  setInlineToastError(dom.jiraConfigError, message);
 }
 
 function clearJiraConfigError() {
-  if (!dom.jiraConfigError) {
-    return;
-  }
-  dom.jiraConfigError.textContent = "";
-  dom.jiraConfigError.classList.add("hidden");
+  resetInlineError(dom.jiraConfigError);
 }
 
-function fillJiraConfigForm(config) {
+function fillJiraConfigForm(config: any) {
   if (dom.jiraConfigBaseUrl) {
     dom.jiraConfigBaseUrl.value = config.baseUrl || "";
   }
@@ -4382,83 +3259,39 @@ async function submitJiraConfig() {
   }
 }
 
-function setUsersError(message) {
-  const text = typeof message === "string" ? message.trim() : "";
-  if (dom.usersError) {
-    dom.usersError.textContent = "";
-    dom.usersError.classList.add("hidden");
-  }
-  if (text) {
-    showToast(text, "error");
-  }
+function setUsersError(message: any) {
+  setInlineToastError(dom.usersError, message);
 }
 
 function clearUsersError() {
-  if (!dom.usersError) {
-    return;
-  }
-  dom.usersError.textContent = "";
-  dom.usersError.classList.add("hidden");
+  resetInlineError(dom.usersError);
 }
 
-function setProfileError(message) {
-  const text = typeof message === "string" ? message.trim() : "";
-  if (dom.profileError) {
-    dom.profileError.textContent = "";
-    dom.profileError.classList.add("hidden");
-  }
-  if (text) {
-    showToast(text, "error");
-  }
+function setProfileError(message: any) {
+  setInlineToastError(dom.profileError, message);
 }
 
 function clearProfileError() {
-  if (!dom.profileError) {
-    return;
-  }
-  dom.profileError.textContent = "";
-  dom.profileError.classList.add("hidden");
+  resetInlineError(dom.profileError);
 }
 
-function setUserCreateError(message) {
-  const text = typeof message === "string" ? message.trim() : "";
-  if (dom.userCreateError) {
-    dom.userCreateError.textContent = "";
-    dom.userCreateError.classList.add("hidden");
-  }
-  if (text) {
-    showToast(text, "error");
-  }
+function setUserCreateError(message: any) {
+  setInlineToastError(dom.userCreateError, message);
 }
 
 function clearUserCreateError() {
-  if (!dom.userCreateError) {
-    return;
-  }
-  dom.userCreateError.textContent = "";
-  dom.userCreateError.classList.add("hidden");
+  resetInlineError(dom.userCreateError);
 }
 
-function setUserPasswordError(message) {
-  const text = typeof message === "string" ? message.trim() : "";
-  if (dom.userPasswordError) {
-    dom.userPasswordError.textContent = "";
-    dom.userPasswordError.classList.add("hidden");
-  }
-  if (text) {
-    showToast(text, "error");
-  }
+function setUserPasswordError(message: any) {
+  setInlineToastError(dom.userPasswordError, message);
 }
 
 function clearUserPasswordError() {
-  if (!dom.userPasswordError) {
-    return;
-  }
-  dom.userPasswordError.textContent = "";
-  dom.userPasswordError.classList.add("hidden");
+  resetInlineError(dom.userPasswordError);
 }
 
-function roleUsesSpaces(role) {
+function roleUsesSpaces(role: any) {
   return String(role || "user").toLowerCase() === "user";
 }
 
@@ -4477,7 +3310,7 @@ function updateCreateUserSpacesVisibility() {
   picker.setDisabled(!showSpaces || !collab.permissions.can_assign_space_access);
 }
 
-function openUserDeleteModal(userEntry) {
+function openUserDeleteModal(userEntry: any) {
   if (!dom.userDeleteModal || !dom.userDeleteMessage || !userEntry) {
     return;
   }
@@ -4530,7 +3363,7 @@ function closeUserCreateModal() {
   dom.userCreateModal.classList.add("hidden");
 }
 
-function openUserPasswordModal(userEntry) {
+function openUserPasswordModal(userEntry: any) {
   if (!dom.userPasswordModal || !userEntry) {
     return;
   }
@@ -4603,13 +3436,13 @@ async function confirmDeleteUser() {
   }
 }
 
-function normalizeSelectedSpaces(values) {
+function normalizeSelectedSpaces(values: any): string[] {
   if (!Array.isArray(values)) {
     return [];
   }
-  const seen = new Set();
-  const normalized = [];
-  values.forEach((item) => {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  values.forEach((item: any) => {
     if (typeof item !== "string") {
       return;
     }
@@ -4625,9 +3458,14 @@ function normalizeSelectedSpaces(values) {
 
 function createSpacePicker({
   selected = [],
-  getOptions = () => [],
+  getOptions = (): string[] => [],
   placeholder = "Search access paths",
   onChange = null,
+}: {
+  selected?: string[];
+  getOptions?: () => string[];
+  placeholder?: string;
+  onChange?: ((nextValues: string[]) => void) | null;
 } = {}) {
   const root = document.createElement("div");
   root.className = "space-picker";
@@ -4650,12 +3488,12 @@ function createSpacePicker({
     }
   };
 
-  const options = () =>
+  const options = (): string[] =>
     [...new Set(getOptions().filter((name) => typeof name === "string" && name.trim()))].sort(
       (a, b) => a.localeCompare(b)
     );
 
-  const suggestionList = () => {
+  const suggestionList = (): string[] => {
     const query = input.value.trim().toLowerCase();
     return options().filter(
       (name) =>
@@ -4666,7 +3504,7 @@ function createSpacePicker({
 
   const render = () => {
     tags.innerHTML = "";
-    values.forEach((name) => {
+      values.forEach((name: string) => {
       const chip = document.createElement("span");
       chip.className = "space-picker-chip";
       const label = document.createElement("span");
@@ -4691,7 +3529,7 @@ function createSpacePicker({
     dropdown.innerHTML = "";
     if (!isDisabled && isOpen) {
       if (suggestions.length) {
-        suggestions.forEach((name) => {
+        suggestions.forEach((name: string) => {
           const option = document.createElement("button");
           option.type = "button";
           option.className = "space-picker-option";
@@ -4780,12 +3618,12 @@ function createSpacePicker({
     getValues() {
       return [...values];
     },
-    setValues(nextValues) {
+    setValues(nextValues: any) {
       values = normalizeSelectedSpaces(nextValues);
       render();
       emitChange();
     },
-    setDisabled(nextDisabled) {
+    setDisabled(nextDisabled: any) {
       isDisabled = Boolean(nextDisabled);
       if (isDisabled) {
         isOpen = false;
@@ -4814,20 +3652,20 @@ function ensureCreateUserSpacesPicker() {
   return createUserSpacesPicker;
 }
 
-function roleOptionsMarkup(selectedRole, allowAdminRoles = true) {
+function roleOptionsMarkup(selectedRole: any, allowAdminRoles: boolean = true) {
   const roles = allowAdminRoles ? ["admin", "manager", "user"] : ["user"];
   return roles
     .map((role) => `<option value="${role}"${role === selectedRole ? " selected" : ""}>${role}</option>`)
     .join("");
 }
 
-function renderUsersList(users) {
+function renderUsersList(users: any) {
   if (!dom.usersList) {
     return;
   }
   dom.usersList.innerHTML = "";
   const visibleUsers = Array.isArray(users)
-    ? users.filter((entry) => !(entry && entry.self))
+    ? users.filter((entry: any) => !(entry && entry.self))
     : [];
   if (!visibleUsers.length) {
     const empty = document.createElement("div");
@@ -4881,12 +3719,12 @@ function renderUsersList(users) {
     const editable = Boolean(entry.editable);
     const self = Boolean(entry.self);
     const allowRoleAndSpaces = editable && !self;
-    const normalizePaths = (paths) =>
-      normalizeSelectedSpaces(paths).sort((a, b) => a.localeCompare(b));
-    const areEqualPaths = (left, right) =>
+    const normalizePaths = (paths: any): string[] =>
+      normalizeSelectedSpaces(paths).sort((a: string, b: string) => a.localeCompare(b));
+    const areEqualPaths = (left: string[], right: string[]) =>
       left.length === right.length && left.every((item, index) => item === right[index]);
 
-    let saveBtn = null;
+    let saveBtn: HTMLButtonElement | null = null;
     const isUserDirty = () => {
       const displayDirty = (displayInput.value || "").trim() !== initialDisplayName;
       if (self) {
@@ -4956,7 +3794,7 @@ function renderUsersList(users) {
       const roleChanged = !self && currentRole !== initialRole;
       const permissionsChanged = !self && !areEqualPaths(currentSpaces, baselineSpaces);
       try {
-        const payload = {
+        const payload: any = {
           display_name: currentDisplayName,
         };
         if (!self) {
@@ -5014,9 +3852,9 @@ async function loadUsersModalData({ refreshSpaces = false } = {}) {
       const fetchedSpaces = spacesResult.spaces || [];
       const fetchedFolders = sortFolderIds(spacesResult.folders || []);
       collab.spaceIds = fetchedSpaces
-        .map((space) => space.id)
+        .map((space: any) => space.id)
         .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b));
+        .sort((a: any, b: any) => a.localeCompare(b));
       collab.spaceFolders = fetchedFolders;
       collab.spaceAccessOptions = buildAssignableAccessOptions(
         fetchedSpaces,
@@ -5159,7 +3997,7 @@ function closeProfileModal({ reopenSpaces = true } = {}) {
 async function submitProfileUpdate() {
   clearProfileError();
   const previousDisplayName = collab.displayName || "";
-  const payload = {
+  const payload: any = {
     display_name: dom.profileDisplayName?.value?.trim() || "",
   };
   const currentPassword = dom.profileCurrentPassword?.value || "";
@@ -5230,7 +4068,7 @@ async function submitCreateUser() {
     setUserCreateError("Passwords do not match.");
     return;
   }
-  const payload = {
+  const payload: any = {
     username,
     display_name: dom.userNewDisplayName?.value?.trim() || username,
     password,
@@ -5423,7 +4261,7 @@ async function confirmDeleteFolder() {
   }
 }
 
-function openDeleteModal(spaceRef) {
+function openDeleteModal(spaceRef: any) {
   if (!dom.deleteModal || !dom.deleteModalMessage) {
     return;
   }
@@ -5453,7 +4291,7 @@ function closeDeleteModal() {
   pendingDeleteSpace = null;
 }
 
-function openFolderDeleteModal(folderId) {
+function openFolderDeleteModal(folderId: any) {
   if (!dom.folderDeleteModal || !dom.folderDeleteMessage) {
     return;
   }
@@ -5470,7 +4308,7 @@ function closeFolderDeleteModal() {
   pendingDeleteFolder = null;
 }
 
-function formatSpaceError(error, fallback) {
+function formatSpaceError(error: any, fallback: any) {
   if (error instanceof Error && error.message) {
     if (error.message === "Failed to fetch") {
       return "Unable to reach the backend.";
@@ -5480,7 +4318,7 @@ function formatSpaceError(error, fallback) {
   return fallback;
 }
 
-async function loadSpaceText(spaceId) {
+async function loadSpaceText(spaceId: any) {
   const trimmed = spaceId.trim();
   if (!trimmed) {
     return;
@@ -5559,7 +4397,7 @@ async function restoreSessionFromCookie() {
     collab.authToken = "";
     updateConnectButtonLabel();
     const allowedSpaces = Array.isArray(me.spaces)
-      ? me.spaces.filter((spaceId) => typeof spaceId === "string")
+      ? me.spaces.filter((spaceId: any) => typeof spaceId === "string")
       : [];
     const lastSpace =
       typeof me.last_space === "string" ? me.last_space.trim() : "";
@@ -5601,7 +4439,7 @@ async function logout() {
   showToast("Logged out.");
 }
 
-function spaceResponseError(response, fallback) {
+function spaceResponseError(response: any, fallback: any) {
   if (!response) {
     return fallback;
   }
@@ -5623,7 +4461,7 @@ function spaceResponseError(response, fallback) {
   return fallback;
 }
 
-function userResponseError(response, fallback) {
+function userResponseError(response: any, fallback: any) {
   if (!response) {
     return fallback;
   }
@@ -5645,7 +4483,7 @@ function userResponseError(response, fallback) {
   return fallback;
 }
 
-async function createSpace(name) {
+async function createSpace(name: any) {
   const trimmed = name.trim();
   if (!trimmed) {
     return;
@@ -5659,7 +4497,7 @@ async function createSpace(name) {
   }
 }
 
-async function deleteSpace(name) {
+async function deleteSpace(name: any) {
   const trimmed = name.trim();
   if (!trimmed) {
     return;
@@ -5678,7 +4516,7 @@ async function deleteSpace(name) {
   await loadSpaceList({ showLoading: false });
 }
 
-async function renameSpace(oldName, newName) {
+async function renameSpace(oldName: any, newName: any) {
   const source = oldName.trim();
   const target = newName.trim();
   if (!source || !target || source === target) {
@@ -5701,7 +4539,7 @@ async function renameSpace(oldName, newName) {
   }
 }
 
-function startPresenceHeartbeat(spaceId) {
+function startPresenceHeartbeat(spaceId: any) {
   void spaceId;
   if (collab.presenceTimer) {
     clearInterval(collab.presenceTimer);
@@ -5710,7 +4548,7 @@ function startPresenceHeartbeat(spaceId) {
   // Space-list presence is derived from Yjs awareness on the backend now.
 }
 
-function stopPresenceHeartbeat(spaceId) {
+function stopPresenceHeartbeat(spaceId: any) {
   void spaceId;
   if (collab.presenceTimer) {
     clearInterval(collab.presenceTimer);
@@ -5804,8 +4642,8 @@ function updateConnectButtonLabel() {
     buttonText = "Login";
   }
   if (dom.connectButton.classList.contains("topbar-connect-button")) {
-    const labels = Array.from(dom.connectButton.querySelectorAll("span"));
-    let label = labels[0] || null;
+    const labels = Array.from(dom.connectButton.querySelectorAll("span")) as HTMLElement[];
+    let label: HTMLElement | null = labels[0] || null;
     if (!label) {
       label = document.createElement("span");
       dom.connectButton.appendChild(label);
@@ -5818,187 +4656,28 @@ function updateConnectButtonLabel() {
 }
 
 function disconnectSpace() {
-  stopPresenceHeartbeat(collab.spaceId);
-  stopIdleWatch();
-  editorController?.setCollabExtensions?.([]);
-  if (collab.binding?.destroy) {
-    collab.binding.destroy();
-  }
-  if (collab.provider) {
-    collab.provider.destroy();
-  }
-  if (collab.ydoc) {
-    collab.ydoc.destroy();
-  }
-  if (collab.saveTimer) {
-    clearTimeout(collab.saveTimer);
-  }
-  collab.spaceId = null;
-  collab.spacePath = "";
-  collab.provider = null;
-  collab.ydoc = null;
-  collab.ytext = null;
-  collab.binding = null;
-  collab.bindingMode = null;
-  collab.saveTimer = null;
-  collab.presenceTimer = null;
-  collab.synced = false;
-  collab.lastActivityAt = 0;
-  collab.connectionStatus = "disconnected";
-  trackOfflineDraftChange(editorController?.getValue?.() || dom.editor?.value || "");
-  updateConnectButtonLabel();
-  updateBoardConnectionLabel();
+  syncEngine.disconnectSpace();
 }
 
-async function hydrateFromRemote(spaceId, ytext) {
-  try {
-    const response = await fetch(`${REMOTE_BASE}/api/spaces/${spaceId}`, {
-      headers: authHeaders(),
-    });
-    if (!response.ok) {
-      return;
-    }
-    const content = await response.text();
-    const current = ytext.toString();
-    if (!content) {
-      if (current) {
-        ytext.delete(0, ytext.length);
-      }
-      if (collab.bindingMode !== "cm6") {
-        forceEditorRefresh("");
-      }
-      return;
-    }
-    if (!current && content) {
-      ytext.insert(0, content);
-      if (collab.bindingMode !== "cm6") {
-        forceEditorRefresh(content);
-      }
-      return;
-    }
-    if (current && current !== content) {
-      // Backend persists Yjs room state to the space text file; no client-side
-      // REST PUT echo is needed here.
-    }
-  } catch {
-    // Ignore hydration errors.
-  }
+async function hydrateFromRemote(spaceId: any, ytext: any) {
+  return syncEngine.hydrateFromRemote(spaceId, ytext);
 }
 
 function scheduleCollabSync() {
-  if (collab.syncScheduled) {
-    return;
-  }
-  collab.syncScheduled = true;
-  requestAnimationFrame(() => {
-    collab.syncScheduled = false;
-    syncEditorState();
-  });
+  syncEngine.scheduleCollabSync();
 }
 
-async function connectToSpace(spaceId, spacePath = "") {
-  if (!spaceId || !dom.editor) {
-    return;
-  }
-  const normalizedPath =
-    typeof spacePath === "string" && spacePath.trim() ? spacePath.trim() : spaceId;
-  applyAuthFromInputs({ markDirty: false });
-  closeSpacesModal();
-  const { Y, WebsocketProvider, yCollab } = await loadCollabModules();
-  if (!yCollab) {
-    return;
-  }
-  disconnectSpace();
-  stopOfflineDraftTimer();
-  collab.offlineDraftDirty = false;
-
-  const ydoc = new Y.Doc();
-  collab.synced = false;
-  setConnectionStatus("connecting");
-  startIdleWatch();
-  const wsParams = {};
-  if (collab.username && collab.authToken) {
-    wsParams.user = collab.username;
-    wsParams.pass = collab.authToken;
-  }
-  const provider = new WebsocketProvider(WS_BASE, spaceId, ydoc, {
-    params: wsParams,
-  });
-  const identity =
-    collab.identity ||
-    getCollabIdentity(collab.displayName || collab.username || "user");
-  const ytext = ydoc.getText("content");
-
-  // y-codemirror.next applies Y.Text deltas onto the existing CodeMirror document.
-  // Clear the pre-connect local editor content first so remote hydration/sync doesn't
-  // prepend/merge with whatever was previously open (sample/offline draft/local space).
-  editorController?.setValue("");
-
-  const collabExtension = yCollab(ytext, provider.awareness);
-  editorController?.setCollabExtensions?.([collabExtension]);
-  const binding = {
-    destroy() {
-      editorController?.setCollabExtensions?.([]);
-    },
-  };
-  const bindingMode = "cm6";
-
-  collab.spaceId = spaceId;
-  collab.spacePath = normalizedPath;
-  collab.provider = provider;
-  collab.ydoc = ydoc;
-  collab.ytext = ytext;
-  collab.binding = binding;
-  collab.bindingMode = bindingMode;
-  publishCollabIdentityAwareness();
-  updateConnectButtonLabel();
-  updateBoardConnectionLabel();
-  startPresenceHeartbeat(spaceId);
-
-  provider.on("status", ({ status }) => {
-    if (!navigator.onLine) {
-      setConnectionStatus("offline");
-      return;
-    }
-    if (status === "connected") {
-      setConnectionStatus(collab.synced ? "connected" : "syncing");
-    } else if (status === "connecting") {
-      setConnectionStatus("connecting");
-    } else {
-      setConnectionStatus("disconnected");
-    }
-  });
-
-  provider.on("sync", (synced) => {
-    collab.synced = synced;
-    if (synced) {
-      markActivity();
-      if (!["offline", "auth-failed", "read-only"].includes(collab.connectionStatus)) {
-        setConnectionStatus("connected");
-      }
-    } else if (collab.connectionStatus === "connecting") {
-      setConnectionStatus("syncing");
-    }
-    if (synced) {
-      hydrateFromRemote(spaceId, ytext);
-    }
-  });
-
-  ytext.observe((event, transaction) => {
-    void event;
-    void transaction;
-    markActivity();
-    scheduleCollabSync();
-  });
+async function connectToSpace(spaceId: any, spacePath: any = "") {
+  return syncEngine.connectToSpace(spaceId, spacePath);
 }
 
-function matchesFilters(task) {
+function matchesFilters(task: any) {
   if (!filtersActive()) {
     return true;
   }
   return (
-    task.tags.some((tag) => state.selectedTags.has(tag)) ||
-    task.people.some((person) => state.selectedPeople.has(person))
+    task.tags.some((tag: any) => state.selectedTags.has(tag)) ||
+    task.people.some((person: any) => state.selectedPeople.has(person))
   );
 }
 
@@ -6019,17 +4698,19 @@ if (dom.redoButton) {
 }
 
 if (dom.loadButton && dom.fileInput) {
+  const fileInput = dom.fileInput;
   dom.loadButton.addEventListener("click", () => {
-    dom.fileInput.click();
+    fileInput.click();
   });
-  dom.fileInput.addEventListener("change", async (event) => {
-    const file = event.target.files?.[0];
+  fileInput.addEventListener("change", async (event) => {
+    const target = event.target as HTMLInputElement | null;
+    const file = target?.files?.[0];
     if (!file) {
       return;
     }
     const text = await file.text();
     editorController.setValue(text);
-    dom.fileInput.value = "";
+    fileInput.value = "";
     syncEditorState();
   });
 }
@@ -6062,10 +4743,10 @@ if (dom.formatButton) {
   });
 }
 
-function setTheme(theme) {
+function setTheme(theme: any) {
   const resolved = theme === "dark" ? "dark" : "light";
-  document.documentElement.dataset.theme = resolved;
-  localStorage.setItem("theme", resolved);
+  document.documentElement.dataset["theme"] = resolved;
+  safeLocalStorageSet("theme", resolved);
   if (editorController?.setTheme) {
     editorController.setTheme(resolved);
   }
@@ -6080,7 +4761,9 @@ function setTheme(theme) {
 }
 
 function getSpellcheckToggleButtons() {
-  return [dom.spellcheckToggleMain, dom.spellcheckToggleModal].filter(Boolean);
+  return [dom.spellcheckToggleMain, dom.spellcheckToggleModal].filter(
+    (button): button is HTMLButtonElement => Boolean(button)
+  );
 }
 
 function updateSpellcheckToggleButton() {
@@ -6100,7 +4783,7 @@ function updateSpellcheckToggleButton() {
   });
 }
 
-function setScopedSpellcheckEnabled(enabled, { persist = true } = {}) {
+function setScopedSpellcheckEnabled(enabled: any, { persist = true }: { persist?: boolean } = {}) {
   const next = Boolean(enabled);
   state.spellcheckEnabled = next;
   if (state.scopedSpellcheck !== true) {
@@ -6114,20 +4797,16 @@ function setScopedSpellcheckEnabled(enabled, { persist = true } = {}) {
   }
   updateSpellcheckToggleButton();
   if (persist) {
-    try {
-      localStorage.setItem(SPELLCHECK_STORAGE_KEY, next ? "1" : "0");
-    } catch {
-      // Ignore storage failures.
-    }
+    safeLocalStorageSet(SPELLCHECK_STORAGE_KEY, next ? "1" : "0");
   }
 }
 
 if (dom.themeButton) {
-  const storedTheme = localStorage.getItem("theme");
+  const storedTheme = safeLocalStorageGet("theme");
   const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
   setTheme(storedTheme || (prefersDark ? "dark" : "light"));
   dom.themeButton.addEventListener("click", () => {
-    const current = document.documentElement.dataset.theme;
+    const current = document.documentElement.dataset["theme"];
     setTheme(current === "dark" ? "light" : "dark");
   });
 }
@@ -6326,7 +5005,7 @@ if (dom.graphAddTask) {
 }
 
 if (dom.boardTitle) {
-  dom.boardTitle.addEventListener("dblclick", (event) => {
+  dom.boardTitle.addEventListener("dblclick", (event: any) => {
     event.preventDefault();
     openBoardRenameModal();
   });
@@ -6351,7 +5030,7 @@ if (dom.boardRenameSave) {
 }
 
 if (dom.boardRenameInput) {
-  dom.boardRenameInput.addEventListener("keydown", (event) => {
+  dom.boardRenameInput.addEventListener("keydown", (event: any) => {
     if (event.key === "Enter") {
       event.preventDefault();
       submitBoardRename();
@@ -6378,7 +5057,7 @@ if (dom.slugRenameSave) {
 }
 
 if (dom.slugRenameNew) {
-  dom.slugRenameNew.addEventListener("keydown", (event) => {
+  dom.slugRenameNew.addEventListener("keydown", (event: any) => {
     if (event.key === "Enter") {
       event.preventDefault();
       submitSlugRename();
@@ -6387,11 +5066,12 @@ if (dom.slugRenameNew) {
 }
 
 if (dom.taskEditTitleInput) {
+  const taskEditTitleInput = dom.taskEditTitleInput;
   dom.taskEditTitleInput.addEventListener("input", () => {
     if (!modalEditorController) {
       return;
     }
-    const parsedTitle = parseJiraTitle(dom.taskEditTitleInput.value || "");
+    const parsedTitle = parseJiraTitle(taskEditTitleInput.value || "");
     if (parsedTitle.key) {
       editingTaskJiraKey = parsedTitle.key;
     }
@@ -6401,7 +5081,7 @@ if (dom.taskEditTitleInput) {
 }
 
 if (dom.taskEditJiraPill) {
-  dom.taskEditJiraPill.addEventListener("click", (event) => {
+  dom.taskEditJiraPill.addEventListener("click", (event: any) => {
     event.stopPropagation();
     if (editingTaskJiraKey) {
       copyToClipboard(editingTaskJiraKey);
@@ -6462,8 +5142,9 @@ if (dom.taskDeleteCancel) {
 }
 
 if (dom.loginModal) {
-  dom.loginModal.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
+  dom.loginModal.addEventListener("keydown", (event: any) => {
+    const keyboardEvent = /** @type {KeyboardEvent} */ (event);
+    if (keyboardEvent.key === "Enter") {
       event.preventDefault();
       attemptLogin();
     }
@@ -6483,7 +5164,7 @@ window.addEventListener("taskdragend", () => {
 });
 
 if (dom.taskTrash) {
-  dom.taskTrash.addEventListener("dragover", (event) => {
+  dom.taskTrash.addEventListener("dragover", (event: any) => {
     event.preventDefault();
     dom.taskTrash.classList.add("drag-over");
     document.body.classList.add("task-trash-over");
@@ -6492,14 +5173,15 @@ if (dom.taskTrash) {
     dom.taskTrash.classList.remove("drag-over");
     document.body.classList.remove("task-trash-over");
   });
-  dom.taskTrash.addEventListener("drop", (event) => {
+  dom.taskTrash.addEventListener("drop", (event: any) => {
+    const dragEvent = /** @type {DragEvent} */ (event);
     event.preventDefault();
     event.stopPropagation();
     dom.taskTrash.classList.remove("drag-over");
     document.body.classList.remove("task-trash-over");
     setTaskDragActive(false);
     let taskId = "";
-    const payload = event.dataTransfer?.getData("application/json");
+    const payload = dragEvent.dataTransfer?.getData("application/json");
     if (payload) {
       try {
         const data = JSON.parse(payload);
@@ -6511,9 +5193,9 @@ if (dom.taskTrash) {
       }
     }
     if (!taskId) {
-      taskId = event.dataTransfer?.getData("text/plain") || "";
+      taskId = dragEvent.dataTransfer?.getData("text/plain") || "";
     }
-    const task = state.allTasks.find((item) => item.id === taskId);
+    const task = state.allTasks.find((item: any) => item.id === taskId);
     if (task) {
       openTaskDeleteModal(task);
     }
@@ -6554,7 +5236,7 @@ window.addEventListener("online", () => {
 
 window.addEventListener("beforeunload", () => {
   if (collab.spaceId) {
-    reportPresence(collab.spaceId, true);
+    window.reportPresence?.(collab.spaceId, true);
   }
   flushOfflineDraft({ force: true });
 });
@@ -6599,7 +5281,7 @@ if (dom.spaceCreate && dom.spaceNew) {
   dom.spaceCreate.addEventListener("click", () => {
     submitCreateSpace();
   });
-  dom.spaceNew.addEventListener("keydown", (event) => {
+  dom.spaceNew.addEventListener("keydown", (event: any) => {
     if (event.key === "Enter") {
       event.preventDefault();
       submitCreateSpace();
@@ -6616,7 +5298,7 @@ if (dom.spaceFolderCreate && dom.spaceFolderNew) {
   dom.spaceFolderCreate.addEventListener("click", () => {
     submitCreateFolder();
   });
-  dom.spaceFolderNew.addEventListener("keydown", (event) => {
+  dom.spaceFolderNew.addEventListener("keydown", (event: any) => {
     if (event.key === "Enter") {
       event.preventDefault();
       submitCreateFolder();
@@ -6679,42 +5361,49 @@ if (dom.loginPassword) {
   });
 }
 
-dom.searchInput.addEventListener("input", () => {
-  state.searchQuery = dom.searchInput.value;
-  canvasController.renderGraph();
-  buildKanban();
-  updateClearFiltersVisibility();
-  renderStoryPointsSummary();
-});
+if (dom.searchInput) {
+  const searchInput = dom.searchInput;
+  searchInput.addEventListener("input", () => {
+    state.searchQuery = searchInput.value;
+    canvasController.renderGraph();
+    buildKanban();
+    updateClearFiltersVisibility();
+    renderStoryPointsSummary();
+  });
 
-dom.searchInput.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") {
-    return;
-  }
-  if (!dom.searchInput.value && !state.searchQuery) {
-    return;
-  }
-  event.preventDefault();
-  event.stopPropagation();
-  dom.searchInput.value = "";
-  state.searchQuery = "";
-  canvasController.renderGraph();
-  buildKanban();
-  updateClearFiltersVisibility();
-  renderStoryPointsSummary();
-});
+  searchInput.addEventListener("keydown", (event: any) => {
+    if (event.key !== "Escape") {
+      return;
+    }
+    if (!searchInput.value && !state.searchQuery) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    searchInput.value = "";
+    state.searchQuery = "";
+    canvasController.renderGraph();
+    buildKanban();
+    updateClearFiltersVisibility();
+    renderStoryPointsSummary();
+  });
+}
 
-[dom.kanbanGroup].filter(Boolean).forEach((group) => {
-  group.addEventListener("click", (event) => {
-    const target = event.target.closest("button[data-kanban-group]");
+[dom.kanbanGroup].filter(Boolean).forEach((group: any) => {
+  group.addEventListener("click", (event: any) => {
+    const target = event.target instanceof Element
+      ? event.target.closest("button[data-kanban-group]")
+      : null;
     if (!target) {
       return;
     }
-    setKanbanGroupBy(target.dataset.kanbanGroup);
+    setKanbanGroupBy((/** @type {HTMLButtonElement} */ (target)).dataset.kanbanGroup);
   });
 });
 
-[dom.searchName, dom.searchDescription, dom.searchTag, dom.searchPerson].forEach((checkbox) => {
+[dom.searchName, dom.searchDescription, dom.searchTag, dom.searchPerson]
+  .filter((checkbox): checkbox is HTMLInputElement => Boolean(checkbox))
+  .forEach((checkbox) => {
   checkbox.addEventListener("change", () => {
     canvasController.renderGraph();
     buildKanban();
@@ -6723,21 +5412,25 @@ dom.searchInput.addEventListener("keydown", (event) => {
   });
 });
 
-dom.clearFilters.addEventListener("click", () => {
-  state.selectedTags.clear();
-  state.selectedPeople.clear();
-  state.searchQuery = "";
-  dom.searchInput.value = "";
-  canvasController.renderGraph();
-  buildTagPersonLists();
-  buildKanban();
-  updateClearFiltersVisibility();
-  renderStoryPointsSummary();
-});
+if (dom.clearFilters) {
+  dom.clearFilters.addEventListener("click", () => {
+    state.selectedTags.clear();
+    state.selectedPeople.clear();
+    state.searchQuery = "";
+    if (dom.searchInput) {
+      dom.searchInput.value = "";
+    }
+    canvasController.renderGraph();
+    buildTagPersonLists();
+    buildKanban();
+    updateClearFiltersVisibility();
+    renderStoryPointsSummary();
+  });
+}
 
 let resizing = false;
 let resizingKanban = false;
-let pendingGraphRender = null;
+let pendingGraphRender: number | null = null;
 let legendHiddenByRightSnap = false;
 let legendHasVisibleContent = true;
 
@@ -6750,7 +5443,7 @@ function applyLegendHiddenState() {
   document.documentElement.toggleAttribute("data-legend-hidden", shouldHide);
 }
 
-function setLegendHasVisibleContent(hasVisibleContent) {
+function setLegendHasVisibleContent(hasVisibleContent: any) {
   legendHasVisibleContent = Boolean(hasVisibleContent);
   applyLegendHiddenState();
 }
@@ -6766,51 +5459,11 @@ function scheduleGraphRender() {
   });
 }
 
-function setLegendHiddenForRightSnap(leftPercent, maxPercent) {
+function setLegendHiddenForRightSnap(leftPercent: any, maxPercent: any) {
   legendHiddenByRightSnap = Number.isFinite(leftPercent)
     && Number.isFinite(maxPercent)
     && leftPercent >= (maxPercent - 0.01);
   applyLegendHiddenState();
-}
-
-function setGraphHiddenForLeftSnap(leftPercent) {
-  const graphHidden = Number.isFinite(leftPercent) && leftPercent <= 0.01;
-  if (graphHidden) {
-    document.documentElement.setAttribute("data-graph-hidden", "true");
-  } else {
-    document.documentElement.removeAttribute("data-graph-hidden");
-  }
-}
-
-function setGraphTopHiddenForKanbanHeight(kanbanHeightPx, maxHeightPx) {
-  const graphTopHidden =
-    Number.isFinite(kanbanHeightPx)
-    && Number.isFinite(maxHeightPx)
-    && maxHeightPx >= 0
-    && (maxHeightPx - kanbanHeightPx) <= 0.5;
-  if (graphTopHidden) {
-    document.documentElement.setAttribute("data-graph-top-hidden", "true");
-  } else {
-    document.documentElement.removeAttribute("data-graph-top-hidden");
-  }
-}
-
-function updateGraphTopHiddenFromLayout() {
-  const panelRect = (dom.graphPanel || dom.graphCanvas)?.getBoundingClientRect?.();
-  if (!panelRect) {
-    return;
-  }
-  const dividerHeight = dom.kanbanDivider?.offsetHeight || 0;
-  const legendHeight = dom.legend?.getBoundingClientRect?.().height || 0;
-  const maxHeight = Math.max(0, panelRect.height - legendHeight - dividerHeight);
-  const rawKanbanHeight = getComputedStyle(document.documentElement)
-    .getPropertyValue("--kanban-height")
-    .trim();
-  const kanbanHeight = Number.parseFloat(rawKanbanHeight);
-  setGraphTopHiddenForKanbanHeight(
-    Number.isFinite(kanbanHeight) ? kanbanHeight : 180,
-    maxHeight
-  );
 }
 
 function updateLegendHiddenFromLayout() {
@@ -6825,7 +5478,7 @@ function updateLegendHiddenFromLayout() {
     .trim();
   const leftPercent = Number.parseFloat(rawLeftWidth);
   setGraphHiddenForLeftSnap(Number.isFinite(leftPercent) ? leftPercent : 45);
-  updateGraphTopHiddenFromLayout();
+  updateGraphTopHiddenFromLayout({ dom });
   setLegendHiddenForRightSnap(
     Number.isFinite(leftPercent) ? leftPercent : 45,
     maxPercent

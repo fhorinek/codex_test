@@ -1,4 +1,27 @@
+// @ts-check
+
 import { colorFromString } from "./task.js";
+import {
+  decorateDescriptionPills,
+  decorateDescriptionReferences,
+  renderTaskDescriptionNode,
+  wireDescriptionCheckboxes,
+} from "./taskDescription.js";
+
+type CreateCanvasOptions = {
+  state: any;
+  dom: any;
+  renderMarkdown?: ((text: string, options?: any) => string) | null;
+  onSelectTask: (task: any) => void;
+  onEditTask?: ((task: any) => void) | null;
+  findTaskByName: (name: string) => any;
+  onUpdateTaskToken?: ((task: any, token: string, action: string) => void) | null;
+  onUpdateTaskState?: ((task: any, stateTag: string | null) => void) | null;
+  onMakeSubtask?: ((task: any, parentTask: any) => void) | null;
+  onReorderTask?: ((task: any, targetTask: any, position: string, options?: any) => any) | null;
+  onToggleCheckbox?: ((lineIndex: number, checked: boolean) => void) | null;
+  onFiltersChange?: (() => void) | null;
+};
 
 export function createCanvas({
   state,
@@ -13,35 +36,35 @@ export function createCanvas({
   onReorderTask,
   onToggleCheckbox,
   onFiltersChange,
-}) {
+}: CreateCanvasOptions) {
   const { graphNodes, graphLines, graphCanvas, graphMinimap, minimapSvg } = dom;
   const GRAPH_ZOOM_MIN = 0.25;
   const GRAPH_ZOOM_MAX = 2.5;
   const GRAPH_ZOOM_STEP = 0.1;
   const ZOOM_REDRAW_DELAY_MS = 140;
-  let lineAnimationFrame = null;
+  let lineAnimationFrame: number | null = null;
   let lineAnimationUntil = 0;
-  let lastVisibleTasks = [];
+  let lastVisibleTasks: any[] = [];
   let lastNodesById = new Map();
   let lastClickAt = 0;
   let lastClickTaskId = "";
-  let zoomRedrawTimeout = null;
-  let openReferenceDropdown = null;
+  let zoomRedrawTimeout: ReturnType<typeof setTimeout> | null = null;
+  let openReferenceDropdown: HTMLElement | null = null;
   let activeDraggedTaskId = "";
-  let activeGraphReorder = null;
+  let activeGraphReorder: any = null;
   const GRAPH_REORDER_EDGE_PX = 18;
   const GRAPH_DROP_LINE_HEIGHT_PX = 3;
   const GRAPH_DROP_OUTER_SPACING_PX = 12;
   const GRAPH_DROP_PREVIEW_SHIFT_MAX_PX = 18;
 
-  const formatStoryPointsNumber = (value) => {
+  const formatStoryPointsNumber = (value: any): string => {
     if (!Number.isFinite(value)) {
       return "0";
     }
     return Number.isInteger(value) ? String(value) : String(value);
   };
 
-  const createStoryPointsPill = (label) => {
+  const createStoryPointsPill = (label: string): HTMLSpanElement => {
     const pill = document.createElement("span");
     pill.className = "pill story-points-pill";
     pill.textContent = label;
@@ -49,7 +72,7 @@ export function createCanvas({
     return pill;
   };
 
-  const copyToClipboard = async (text) => {
+  const copyToClipboard = async (text: string): Promise<void> => {
     if (!text) {
       return;
     }
@@ -74,8 +97,8 @@ export function createCanvas({
     document.body.removeChild(textarea);
   };
 
-  const getTaskById = (taskId) =>
-    state.allTasks.find((item) => item.id === taskId) || null;
+  const getTaskById = (taskId: string) =>
+    state.allTasks.find((item: any) => item.id === taskId) || null;
 
   const closeReferenceDropdown = () => {
     if (!openReferenceDropdown) {
@@ -94,13 +117,13 @@ export function createCanvas({
     }
   });
 
-  const getIncomingReferenceTasks = (task) => {
+  const getIncomingReferenceTasks = (task: any): any[] => {
     if (!task || !Array.isArray(task.incomingReferences)) {
       return [];
     }
-    const unique = [];
+    const unique: any[] = [];
     const seen = new Set();
-    task.incomingReferences.forEach((sourceTask) => {
+    task.incomingReferences.forEach((sourceTask: any) => {
       const id = sourceTask?.id;
       if (!id || seen.has(id) || id === task.id) {
         return;
@@ -112,7 +135,7 @@ export function createCanvas({
     return unique;
   };
 
-  const createReferenceIndicator = (task) => {
+  const createReferenceIndicator = (task: any): HTMLElement | null => {
     const referenceTasks = getIncomingReferenceTasks(task);
     const safeCount = referenceTasks.length;
     if (!safeCount) {
@@ -169,7 +192,7 @@ export function createCanvas({
     return menu;
   };
 
-  let tokenDragGhost = null;
+  let tokenDragGhost: HTMLElement | null = null;
 
   const clearTokenDragGhost = () => {
     if (!tokenDragGhost) {
@@ -179,7 +202,11 @@ export function createCanvas({
     tokenDragGhost = null;
   };
 
-  const setTokenDragImage = (event, sourceEl, options = {}) => {
+  const setTokenDragImage = (
+    event: DragEvent,
+    sourceEl: HTMLElement | null,
+    options: { scaleWithZoom?: boolean } = {}
+  ): void => {
     const dataTransfer = event.dataTransfer;
     if (!dataTransfer || !sourceEl) {
       return;
@@ -191,7 +218,7 @@ export function createCanvas({
     clearTokenDragGhost();
     const scaleWithZoom = options.scaleWithZoom !== false;
     const scale = scaleWithZoom ? Math.max(0.01, state.transform?.scale || 1) : 1;
-    const ghost = sourceEl.cloneNode(true);
+    const ghost = sourceEl.cloneNode(true) as HTMLElement;
     ghost.classList.add("drag-ghost");
     ghost.style.position = "absolute";
     ghost.style.top = "-9999px";
@@ -200,10 +227,10 @@ export function createCanvas({
     ghost.style.width = `${rect.width / scale}px`;
     ghost.style.height = `${rect.height / scale}px`;
     if ("zoom" in ghost.style) {
-      ghost.style.zoom = scale;
+      (ghost.style as any).zoom = String(scale);
     } else {
-      ghost.style.transformOrigin = "top left";
-      ghost.style.transform = `scale(${scale})`;
+      (ghost.style as CSSStyleDeclaration).transformOrigin = "top left";
+      (ghost.style as CSSStyleDeclaration).transform = `scale(${scale})`;
     }
     ghost.style.pointerEvents = "none";
     document.body.appendChild(ghost);
@@ -213,7 +240,7 @@ export function createCanvas({
     dataTransfer.setDragImage(ghost, offsetX, offsetY);
   };
 
-  const isTaskDrag = (event) => {
+  const isTaskDrag = (event: DragEvent): boolean => {
     const dataTransfer = event.dataTransfer;
     if (!dataTransfer) {
       return false;
@@ -233,7 +260,7 @@ export function createCanvas({
     return types.includes("text/plain");
   };
 
-  const getDraggedTaskId = (event) => {
+  const getDraggedTaskId = (event: DragEvent): string | null => {
     if (activeDraggedTaskId) {
       return activeDraggedTaskId;
     }
@@ -257,13 +284,13 @@ export function createCanvas({
   };
 
   const clearGraphParentTargets = () => {
-    graphNodes?.querySelectorAll?.(".task-node.drag-parent-target").forEach((node) => {
+    graphNodes?.querySelectorAll?.(".task-node.drag-parent-target").forEach((node: any) => {
       node.classList.remove("drag-parent-target");
     });
   };
 
   const clearGraphReorderIndicators = () => {
-    graphNodes?.querySelectorAll?.(".task-node").forEach((node) => {
+    graphNodes?.querySelectorAll?.(".task-node").forEach((node: any) => {
       node.classList.remove("drop-before", "drop-after", "drop-gap-prev", "drop-gap-next");
       node.style.removeProperty("--task-drop-before-offset");
       node.style.removeProperty("--task-drop-after-offset");
@@ -277,7 +304,7 @@ export function createCanvas({
     clearGraphReorderIndicators();
   };
 
-  const applyGraphReorderIndicator = (target) => {
+  const applyGraphReorderIndicator = (target: any): void => {
     if (
       activeGraphReorder &&
       target &&
@@ -319,7 +346,7 @@ export function createCanvas({
     };
   };
 
-  const getGraphReorderMode = (draggedTask, targetTask) => {
+  const getGraphReorderMode = (draggedTask: any, targetTask: any): "sibling" | "to-root" | null => {
     if (!draggedTask || !targetTask || draggedTask.id === targetTask.id) {
       return null;
     }
@@ -334,16 +361,16 @@ export function createCanvas({
     return null;
   };
 
-  const isCurrentParentTarget = (draggedTask, targetTask) => (
+  const isCurrentParentTarget = (draggedTask: any, targetTask: any): boolean => (
     Boolean(draggedTask && targetTask && (draggedTask.parent?.id || null) === targetTask.id)
   );
 
-  const getGraphReorderCandidates = (draggedTask, clientX) => {
+  const getGraphReorderCandidates = (draggedTask: any, clientX: number): any[] => {
     if (!draggedTask || !Number.isFinite(clientX)) {
       return [];
     }
-    const candidates = [];
-    graphNodes.querySelectorAll(".task-node[data-task-id]").forEach((node) => {
+    const candidates: any[] = [];
+    graphNodes.querySelectorAll(".task-node[data-task-id]").forEach((node: any) => {
       const targetTaskId = node.dataset.taskId;
       if (!targetTaskId || targetTaskId === draggedTask.id) {
         return;
@@ -376,15 +403,15 @@ export function createCanvas({
     return candidates;
   };
 
-  const buildBeforeTargetFromCandidate = (candidates, index) => {
+  const buildBeforeTargetFromCandidate = (candidates: any[], index: number): any => {
     const candidate = candidates[index];
     if (!candidate) {
       return null;
     }
-    let beforeOffsetPx = null;
-    let previewPrevNode = null;
-    let previewNextNode = null;
-    let previewShiftPx = null;
+    let beforeOffsetPx: number | null = null;
+    let previewPrevNode: any = null;
+    let previewNextNode: any = null;
+    let previewShiftPx: number | null = null;
     if (index > 0) {
       const previous = candidates[index - 1];
       const gap = Math.max(0, candidate.rect.top - previous.rect.bottom);
@@ -422,15 +449,15 @@ export function createCanvas({
     };
   };
 
-  const buildAfterTargetFromCandidate = (candidates, index) => {
+  const buildAfterTargetFromCandidate = (candidates: any[], index: number): any => {
     const candidate = candidates[index];
     if (!candidate) {
       return null;
     }
-    let afterOffsetPx = null;
-    let previewPrevNode = null;
-    let previewNextNode = null;
-    let previewShiftPx = null;
+    let afterOffsetPx: number | null = null;
+    let previewPrevNode: any = null;
+    let previewNextNode: any = null;
+    let previewShiftPx: number | null = null;
     if (index >= 0 && index < candidates.length - 1) {
       const next = candidates[index + 1];
       const gap = Math.max(0, next.rect.top - candidate.rect.bottom);
@@ -462,11 +489,15 @@ export function createCanvas({
     };
   };
 
-  const getGraphReorderTarget = (event) => {
+  const getGraphReorderTarget = (event: DragEvent): any => {
     if (!onReorderTask || !event || !Number.isFinite(event.clientX) || !Number.isFinite(event.clientY)) {
       return null;
     }
-    const draggedTask = getTaskById(activeDraggedTaskId || getDraggedTaskId(event));
+    const draggedTaskId = activeDraggedTaskId || getDraggedTaskId(event) || "";
+    if (!draggedTaskId) {
+      return null;
+    }
+    const draggedTask = getTaskById(draggedTaskId);
     if (!draggedTask) {
       return null;
     }
@@ -501,7 +532,7 @@ export function createCanvas({
     return best ? best.target : buildBeforeTargetFromCandidate(candidates, 0);
   };
 
-  const bindTaskNode = (node) => {
+  const bindTaskNode = (node: any): void => {
     if (node.dataset.bound) {
       return;
     }
@@ -524,7 +555,7 @@ export function createCanvas({
         }
       }
     });
-    node.addEventListener("dblclick", (event) => {
+    node.addEventListener("dblclick", (event: MouseEvent) => {
       event.stopPropagation();
       if (!onEditTask) {
         return;
@@ -534,13 +565,17 @@ export function createCanvas({
         onEditTask(task);
       }
     });
-    node.addEventListener("dragstart", (event) => {
+    node.addEventListener("dragstart", (event: DragEvent) => {
       const task = getTaskById(node.dataset.taskId);
       if (!task) {
         return;
       }
-      event.dataTransfer.setData("text/plain", task.id);
-      event.dataTransfer.setData(
+      const dataTransfer = event.dataTransfer;
+      if (!dataTransfer) {
+        return;
+      }
+      dataTransfer.setData("text/plain", task.id);
+      dataTransfer.setData(
         "application/json",
         JSON.stringify({
           type: "task",
@@ -552,7 +587,7 @@ export function createCanvas({
       activeDraggedTaskId = task.id;
       window.dispatchEvent(new CustomEvent("taskdragstart"));
       const rect = node.getBoundingClientRect();
-      const ghost = node.cloneNode(true);
+      const ghost = node.cloneNode(true) as any;
       const scale = state.transform?.scale || 1;
       ghost.classList.add("drag-ghost");
       ghost.style.position = "absolute";
@@ -562,7 +597,7 @@ export function createCanvas({
       ghost.style.width = `${rect.width / scale}px`;
       ghost.style.height = `${rect.height / scale}px`;
       if ("zoom" in ghost.style) {
-        ghost.style.zoom = scale;
+        ghost.style.zoom = String(scale);
       } else {
         ghost.style.transformOrigin = "top left";
         ghost.style.transform = `scale(${scale})`;
@@ -571,7 +606,7 @@ export function createCanvas({
       document.body.appendChild(ghost);
       const offsetX = event.clientX - rect.left;
       const offsetY = event.clientY - rect.top;
-      event.dataTransfer.setDragImage(ghost, offsetX, offsetY);
+      dataTransfer.setDragImage(ghost, offsetX, offsetY);
       node._dragGhost = ghost;
     });
     node.addEventListener("dragend", () => {
@@ -584,7 +619,7 @@ export function createCanvas({
       clearGraphDropIndicators();
       window.dispatchEvent(new CustomEvent("taskdragend"));
     });
-    node.addEventListener("dragover", (event) => {
+    node.addEventListener("dragover", (event: DragEvent) => {
       event.preventDefault();
       if (event.dataTransfer) {
         event.dataTransfer.dropEffect = "move";
@@ -657,7 +692,7 @@ export function createCanvas({
       }
       node.classList.add("drag-parent-target");
     });
-    node.addEventListener("dragleave", (event) => {
+    node.addEventListener("dragleave", (event: DragEvent) => {
       // Drag events can fire `dragleave` when moving between child elements
       // inside the same task node. Only clear when the pointer actually leaves
       // the node bounds.
@@ -678,7 +713,7 @@ export function createCanvas({
       }
       node.classList.remove("drag-parent-target");
     });
-    node.addEventListener("drop", (event) => {
+    node.addEventListener("drop", (event: DragEvent) => {
       event.preventDefault();
       event.stopPropagation();
       const parentTargetVisible = node.classList.contains("drag-parent-target");
@@ -706,7 +741,11 @@ export function createCanvas({
       } else {
         clearGraphReorderIndicators();
       }
-      const payload = event.dataTransfer.getData("application/json");
+      const dataTransfer = event.dataTransfer;
+      if (!dataTransfer) {
+        return;
+      }
+      const payload = dataTransfer.getData("application/json");
       if (payload) {
         const data = JSON.parse(payload);
         if (data.type === "tag" || data.type === "person") {
@@ -724,7 +763,7 @@ export function createCanvas({
           return;
         }
       }
-      const taskId = event.dataTransfer.getData("text/plain");
+      const taskId = dataTransfer.getData("text/plain");
       if (taskId && onMakeSubtask) {
         const sourceTask = getTaskById(taskId);
         if (sourceTask && !isCurrentParentTarget(sourceTask, task)) {
@@ -734,9 +773,9 @@ export function createCanvas({
     });
   };
 
-  const updateGraphLines = () => {
-    const paths = [];
-    lastVisibleTasks.forEach((task) => {
+  const updateGraphLines = (): void => {
+    const paths: string[] = [];
+    lastVisibleTasks.forEach((task: any) => {
       const node = lastNodesById.get(task.id);
       if (!node) {
         return;
@@ -744,8 +783,8 @@ export function createCanvas({
       const startX = node.offsetLeft + node.offsetWidth;
       const startY = node.offsetTop + node.offsetHeight / 2;
       task.children
-        .filter((child) => lastNodesById.has(child.id))
-        .forEach((child) => {
+        .filter((child: any) => lastNodesById.has(child.id))
+        .forEach((child: any) => {
           const childNode = lastNodesById.get(child.id);
           const endX = childNode.offsetLeft;
           const endY = childNode.offsetTop + childNode.offsetHeight / 2;
@@ -759,13 +798,13 @@ export function createCanvas({
     graphLines.innerHTML = `<g>${paths.join("")}</g>`;
   };
 
-  const scheduleLineAnimation = (duration = 550) => {
+  const scheduleLineAnimation = (duration = 550): void => {
     if (lineAnimationFrame) {
       cancelAnimationFrame(lineAnimationFrame);
       lineAnimationFrame = null;
     }
     lineAnimationUntil = performance.now() + duration;
-    const tick = (now) => {
+    const tick = (now: number): void => {
       updateGraphLines();
       if (now < lineAnimationUntil) {
         lineAnimationFrame = requestAnimationFrame(tick);
@@ -776,7 +815,7 @@ export function createCanvas({
     lineAnimationFrame = requestAnimationFrame(tick);
   };
 
-  const renderTaskNodeContent = (node, task) => {
+  const renderTaskNodeContent = (node: any, task: any): void => {
     const wasDragging = node.classList.contains("dragging");
     node.className = "task-node";
     if (wasDragging) {
@@ -803,7 +842,7 @@ export function createCanvas({
       pill.className = "pill jira-pill";
       pill.textContent = task.jiraKey;
       pill.title = `Copy ${task.jiraKey}`;
-      pill.addEventListener("click", (event) => {
+      pill.addEventListener("click", (event: any) => {
         event.stopPropagation();
         copyToClipboard(task.jiraKey);
       });
@@ -837,7 +876,7 @@ export function createCanvas({
         statePill.style.color = stateColor;
       }
       statePill.draggable = true;
-      statePill.addEventListener("dragstart", (event) => {
+      statePill.addEventListener("dragstart", (event: any) => {
         event.stopPropagation();
         setTokenDragImage(event, statePill);
         event.dataTransfer.setData(
@@ -853,25 +892,18 @@ export function createCanvas({
       header.appendChild(statePill);
     }
 
-    const desc = document.createElement("div");
-    desc.className = "description";
-    const descriptionText = task.description
-      .map((line) => {
-        const rawLine = typeof line === "string" ? line : "";
-        const indent = rawLine.match(/^\s*/)?.[0] || "";
-        const content = rawLine
-          .slice(indent.length)
-          .replace(/(^|\s)![^\s#@]+/g, "$1")
-          .replace(/(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g, "$1")
-          .replace(/\s{2,}/g, " ")
-          .trim();
-        return content ? `${indent}${content}` : "";
-      })
-      .join("\n");
-    desc.innerHTML = renderMarkdown(descriptionText, {
-      lineIndexes: task.descriptionLineIndexes,
+    const descriptionOptions: any = {
+      task,
+      className: "description",
       baseIndent: Number.isFinite(task.indent) ? task.indent : 0,
-    });
+    };
+    if (renderMarkdown !== undefined) {
+      descriptionOptions.renderMarkdown = renderMarkdown;
+    }
+    if (Array.isArray(task.descriptionLineIndexes)) {
+      descriptionOptions.lineIndexes = task.descriptionLineIndexes;
+    }
+    const { node: desc } = renderTaskDescriptionNode(descriptionOptions);
 
     const toggle = document.createElement("div");
     toggle.className = "collapse-toggle";
@@ -879,10 +911,14 @@ export function createCanvas({
       const count = task.children.length;
       const countLabel = count === 1 ? "1 Subtask" : `${count} Subtasks`;
       toggle.textContent = countLabel;
-      toggle.dataset.taskId = task.id;
-      toggle.addEventListener("click", (event) => {
+      toggle.dataset["taskId"] = task.id;
+      toggle.addEventListener("click", (event: any) => {
         event.stopPropagation();
-        const targetTask = getTaskById(toggle.dataset.taskId);
+        const targetTaskId = toggle.dataset["taskId"] || "";
+        if (!targetTaskId) {
+          return;
+        }
+        const targetTask = getTaskById(targetTaskId);
         if (!targetTask) {
           return;
         }
@@ -900,100 +936,66 @@ export function createCanvas({
       node.appendChild(desc);
     }
     if (task.description.length) {
-      desc.querySelectorAll(".references").forEach((link) => {
-        const referenceName = typeof link.dataset.ref === "string" ? link.dataset.ref.trim() : "";
-        const initialTarget = findTaskByName(referenceName);
-        if (!initialTarget) {
-          link.classList.add("unresolved");
-          link.title = "Reference target not found";
-          return;
-        }
-        link.title = `Open task: ${initialTarget.name}`;
-        link.addEventListener("click", (event) => {
-          event.stopPropagation();
-          const ref = typeof link.dataset.ref === "string" ? link.dataset.ref.trim() : "";
-          const target = findTaskByName(ref);
+      decorateDescriptionReferences(desc, {
+        resolveTaskByName: (name: string) => findTaskByName(name),
+        getResolvedTitle: (target: any) => `Open task: ${target.name}`,
+        stopPropagationOnClick: true,
+        onReferenceClick: ({ name }: any) => {
+          const target = findTaskByName(name);
           if (target) {
             onSelectTask(target);
           }
-        });
+        },
       });
-      desc.querySelectorAll(".inline-pill").forEach((pill) => {
-        const type = pill.dataset.type;
-        const value = pill.dataset.value;
-        if (type === "tag" && state.selectedTags.has(value)) {
-          pill.classList.add("active");
-        }
-        if (type === "person" && state.selectedPeople.has(value)) {
-          pill.classList.add("active");
-        }
-        if (type === "tag") {
-          const color = state.tagMeta?.get(value)?.color;
-          if (color) {
-            pill.style.borderColor = color;
+      decorateDescriptionPills(desc, {
+        tagMeta: state.tagMeta,
+        peopleMeta: state.peopleMeta,
+        selectedTags: state.selectedTags,
+        selectedPeople: state.selectedPeople,
+        onPill: ({ pill, type, value }: any) => {
+          if (type === "jira") {
+            pill.title = `Copy ${value}`;
+            pill.addEventListener("click", (event: any) => {
+              event.stopPropagation();
+              copyToClipboard(value);
+            });
+            pill.draggable = false;
+            return;
           }
-          const label = state.tagMeta?.get(value)?.name || value.replace("#", "");
-          pill.textContent = `#${label}`;
-        }
-        if (type === "person") {
-          const color = state.peopleMeta?.get(value)?.color;
-          if (color) {
-            pill.style.borderColor = color;
-          }
-          const personLabel = state.peopleMeta?.get(value)?.name || value.replace("@", "");
-          pill.textContent = `👤 ${personLabel}`;
-        }
-        if (type === "jira") {
-          pill.textContent = value;
-          pill.title = `Copy ${value}`;
-          pill.addEventListener("click", (event) => {
+          pill.draggable = true;
+          pill.addEventListener("dragstart", (event: any) => {
             event.stopPropagation();
-            copyToClipboard(value);
+            setTokenDragImage(event, pill);
+            event.dataTransfer.setData(
+              "application/json",
+              JSON.stringify({
+                type,
+                value,
+                source: "task",
+                taskId: task.id,
+              })
+            );
           });
-          pill.draggable = false;
-          return;
-        }
-        pill.draggable = true;
-        pill.addEventListener("dragstart", (event) => {
-          event.stopPropagation();
-          setTokenDragImage(event, pill);
-          event.dataTransfer.setData(
-            "application/json",
-            JSON.stringify({
-              type,
-              value,
-              source: "task",
-              taskId: task.id,
-            })
-          );
-        });
-        pill.addEventListener("click", (event) => {
-          event.stopPropagation();
-          if (type === "tag") {
-            toggleTag(value);
-          } else if (type === "person") {
-            togglePerson(value);
-          }
-        });
+          pill.addEventListener("click", (event: any) => {
+            event.stopPropagation();
+            if (type === "tag") {
+              toggleTag(value);
+            } else if (type === "person") {
+              togglePerson(value);
+            }
+          });
+        },
       });
-      desc.querySelectorAll('input[type="checkbox"]').forEach((checkbox) => {
-        const lineIndex = Number.parseInt(
-          checkbox.dataset.line || checkbox.closest(".checkbox-line")?.dataset.line,
-          10
-        );
-        if (!Number.isFinite(lineIndex)) {
-          checkbox.disabled = true;
-          return;
-        }
-        checkbox.addEventListener("mousedown", (event) => {
-          event.stopPropagation();
-        });
-        checkbox.addEventListener("click", (event) => {
-          event.stopPropagation();
+      wireDescriptionCheckboxes(desc, {
+        lineFromClosest: true,
+        stopPropagationEvents: ["mousedown", "click"],
+        triggerEvent: "click",
+        disableWhenUnavailable: true,
+        onToggle: ({ lineIndex, checked }: any) => {
           if (onToggleCheckbox) {
-            onToggleCheckbox(lineIndex, checkbox.checked);
+            onToggleCheckbox(lineIndex, checked);
           }
-        });
+        },
       });
     }
     if (task.children.length || storyLabel) {
@@ -1015,8 +1017,9 @@ export function createCanvas({
     closeReferenceDropdown();
     graphLines.innerHTML = "";
     const existingNodes = new Map();
-    graphNodes.querySelectorAll(".task-node[data-task-id]").forEach((node) => {
-      existingNodes.set(node.dataset.taskId, node);
+    const existingNodesMap = existingNodes;
+    graphNodes.querySelectorAll(".task-node[data-task-id]").forEach((node: any) => {
+      existingNodesMap.set(node.dataset.taskId, node);
     });
     const canvasRect = graphCanvas.getBoundingClientRect();
 
@@ -1027,13 +1030,13 @@ export function createCanvas({
 
     let maxX = 0;
     let maxY = 0;
-    const visibleTasks = gatherVisible(state.tasks);
+    const visibleTasks: any[] = gatherVisible(state.tasks);
     const nodesById = new Map();
     const heightsById = new Map();
     const widthsById = new Map();
 
     // First pass: build nodes to measure real sizes before layout.
-    visibleTasks.forEach((task) => {
+    visibleTasks.forEach((task: any) => {
       let node = existingNodes.get(task.id);
       if (!node) {
         node = document.createElement("div");
@@ -1057,22 +1060,22 @@ export function createCanvas({
       widthsById.set(task.id, measuredWidth || node.offsetWidth || nodeWidth);
     });
 
-    existingNodes.forEach((node, taskId) => {
+    existingNodes.forEach((node: any, taskId: any) => {
       if (!nodesById.has(taskId)) {
         node.remove();
       }
     });
 
-    const nodeHeightFor = (taskId) => heightsById.get(taskId) || 120;
-    const nodeWidthFor = (taskId) => widthsById.get(taskId) || nodeWidth;
+    const nodeHeightFor = (taskId: any): number => heightsById.get(taskId) || 120;
+    const nodeWidthFor = (taskId: any): number => widthsById.get(taskId) || nodeWidth;
     let maxNodeWidth = nodeWidth;
-    widthsById.forEach((width) => {
+    widthsById.forEach((width: number) => {
       maxNodeWidth = Math.max(maxNodeWidth, width);
     });
     const spacingX = maxNodeWidth + 80;
 
     // Second pass: compute positions using measured heights to avoid overlaps.
-    const placeTask = (task, yPos) => {
+    const placeTask = (task: any, yPos: number): number => {
       if (!nodesById.has(task.id)) {
         return yPos;
       }
@@ -1087,7 +1090,7 @@ export function createCanvas({
       }
       let currentBottom = yPos + height;
       let childStackBottom = yPos;
-      task.children.forEach((child, index) => {
+      task.children.forEach((child: any, index: number) => {
         if (!nodesById.has(child.id)) {
           return;
         }
@@ -1100,7 +1103,7 @@ export function createCanvas({
     };
 
     let currentY = 40;
-    state.tasks.forEach((task) => {
+    state.tasks.forEach((task: any) => {
       if (!nodesById.has(task.id)) {
         return;
       }
@@ -1118,7 +1121,7 @@ export function createCanvas({
     graphLines.style.height = `${viewHeight}px`;
     graphLines.setAttribute("viewBox", `0 0 ${viewWidth} ${viewHeight}`);
 
-    nodesById.forEach((node, taskId) => {
+    nodesById.forEach((node: any, taskId: any) => {
       const pos = positions.get(taskId);
       if (!pos) {
         return;
@@ -1147,8 +1150,8 @@ export function createCanvas({
     state.animateTransform = false;
   }
 
-  function gatherVisible(tasks, result = []) {
-    tasks.forEach((task) => {
+  function gatherVisible(tasks: any[], result: any[] = []): any[] {
+    tasks.forEach((task: any) => {
       result.push(task);
       if (!state.collapsed.has(task.id)) {
         gatherVisible(task.children, result);
@@ -1157,7 +1160,7 @@ export function createCanvas({
     return result;
   }
 
-  function buildPill(text, active, onClick, meta = null) {
+  function buildPill(text: string, active: boolean, onClick: any, meta: any = null) {
     const pill = document.createElement("button");
     pill.type = "button";
     pill.className = `pill ${active ? "active" : ""}`;
@@ -1175,7 +1178,7 @@ export function createCanvas({
     }
     if (text.startsWith("#") || text.startsWith("@")) {
       pill.draggable = true;
-      pill.addEventListener("dragstart", (event) => {
+      pill.addEventListener("dragstart", (event: any) => {
         setTokenDragImage(event, pill, { scaleWithZoom: false });
         event.dataTransfer.setData(
           "application/json",
@@ -1191,7 +1194,7 @@ export function createCanvas({
     return pill;
   }
 
-  function toggleTag(tag) {
+  function toggleTag(tag: string): void {
     if (state.selectedTags.has(tag)) {
       state.selectedTags.delete(tag);
     } else {
@@ -1204,7 +1207,7 @@ export function createCanvas({
     }
   }
 
-  function togglePerson(person) {
+  function togglePerson(person: string): void {
     if (state.selectedPeople.has(person)) {
       state.selectedPeople.delete(person);
     } else {
@@ -1221,31 +1224,31 @@ export function createCanvas({
     if (!state.selectedTags.size && !state.selectedPeople.size) {
       return;
     }
-    const ensureExpanded = (task, ancestors) => {
+    const ensureExpanded = (task: any, ancestors: any[]): boolean => {
       const matches =
-        task.tags.some((tag) => state.selectedTags.has(tag)) ||
-        task.people.some((person) => state.selectedPeople.has(person));
-      const childMatch = task.children.some((child) => ensureExpanded(child, [...ancestors, task]));
+        task.tags.some((tag: any) => state.selectedTags.has(tag)) ||
+        task.people.some((person: any) => state.selectedPeople.has(person));
+      const childMatch = task.children.some((child: any) => ensureExpanded(child, [...ancestors, task]));
       if (matches || childMatch) {
-        ancestors.forEach((ancestor) => state.collapsed.delete(ancestor.id));
+        ancestors.forEach((ancestor: any) => state.collapsed.delete(ancestor.id));
         state.collapsed.delete(task.id);
       }
       return matches || childMatch;
     };
-    state.tasks.forEach((task) => ensureExpanded(task, []));
+    state.tasks.forEach((task: any) => ensureExpanded(task, []));
   }
 
-  function matchesFiltersTask(task) {
+  function matchesFiltersTask(task: any): boolean {
     if (!state.selectedTags.size && !state.selectedPeople.size) {
       return true;
     }
     return (
-      task.tags.some((tag) => state.selectedTags.has(tag)) ||
-      task.people.some((person) => state.selectedPeople.has(person))
+      task.tags.some((tag: any) => state.selectedTags.has(tag)) ||
+      task.people.some((person: any) => state.selectedPeople.has(person))
     );
   }
 
-  function tokenMatchesQuery(token, metaMap, query) {
+  function tokenMatchesQuery(token: string, metaMap: any, query: string): boolean {
     if (token.toLowerCase().includes(query)) {
       return true;
     }
@@ -1261,11 +1264,11 @@ export function createCanvas({
     return (name && name.includes(query)) || (key && key.includes(query));
   }
 
-  function tokensMatchQuery(tokens, metaMap, query) {
-    return tokens.some((token) => tokenMatchesQuery(token, metaMap, query));
+  function tokensMatchQuery(tokens: any[], metaMap: any, query: string): boolean {
+    return tokens.some((token: any) => tokenMatchesQuery(token, metaMap, query));
   }
 
-  function matchesSearch(task) {
+  function matchesSearch(task: any): boolean {
     if (!state.searchQuery) {
       return false;
     }
@@ -1288,7 +1291,7 @@ export function createCanvas({
     return false;
   }
 
-  function focusOnTask(task) {
+  function focusOnTask(task: any): void {
     const pos = state.positions.get(task.id);
     if (!pos) {
       return;
@@ -1329,14 +1332,14 @@ export function createCanvas({
   let isDraggingToken = false;
   let lastPoint = { x: 0, y: 0 };
 
-  graphCanvas.addEventListener("dragstart", (event) => {
+  graphCanvas.addEventListener("dragstart", (event: any) => {
     if (event.target.closest(".pill")) {
       isDraggingToken = true;
       isPanning = false;
     }
   });
 
-  graphCanvas.addEventListener("dragend", (event) => {
+  graphCanvas.addEventListener("dragend", (event: any) => {
     if (event.target.closest(".pill")) {
       isDraggingToken = false;
       clearTokenDragGhost();
@@ -1362,7 +1365,7 @@ export function createCanvas({
     clearTokenDragGhost();
   });
 
-  graphCanvas.addEventListener("mousedown", (event) => {
+  graphCanvas.addEventListener("mousedown", (event: any) => {
     if (isDraggingToken) {
       return;
     }
@@ -1373,7 +1376,7 @@ export function createCanvas({
     lastPoint = { x: event.clientX, y: event.clientY };
   });
 
-  graphCanvas.addEventListener("mousemove", (event) => {
+  graphCanvas.addEventListener("mousemove", (event: any) => {
     if (!isPanning || isDraggingToken) {
       return;
     }
@@ -1391,7 +1394,7 @@ export function createCanvas({
     isPanning = false;
   });
 
-  graphCanvas.addEventListener("wheel", (event) => {
+  graphCanvas.addEventListener("wheel", (event: any) => {
     event.preventDefault();
     const delta = event.deltaY > 0 ? -GRAPH_ZOOM_STEP : GRAPH_ZOOM_STEP;
     const newScale = Math.min(
@@ -1409,7 +1412,7 @@ export function createCanvas({
     scheduleZoomRedraw();
   });
 
-  graphCanvas.addEventListener("dragover", (event) => {
+  graphCanvas.addEventListener("dragover", (event: any) => {
     event.preventDefault();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = "move";
@@ -1424,7 +1427,7 @@ export function createCanvas({
     applyGraphReorderIndicator(getGraphReorderTarget(event));
   });
 
-  graphCanvas.addEventListener("drop", (event) => {
+  graphCanvas.addEventListener("drop", (event: any) => {
     if (event.defaultPrevented) {
       return;
     }
@@ -1456,7 +1459,7 @@ export function createCanvas({
       if (!onUpdateTaskToken) {
         return;
       }
-      const task = state.allTasks.find((item) => item.id === data.taskId);
+      const task = state.allTasks.find((item: any) => item.id === data.taskId);
       if (task) {
         onUpdateTaskToken(task, data.value, "remove");
       }
@@ -1465,7 +1468,7 @@ export function createCanvas({
       if (!onUpdateTaskState) {
         return;
       }
-      const task = state.allTasks.find((item) => item.id === data.taskId);
+      const task = state.allTasks.find((item: any) => item.id === data.taskId);
       if (task) {
         onUpdateTaskState(task, null);
       }
@@ -1474,7 +1477,7 @@ export function createCanvas({
       if (!onUpdateTaskState) {
         return;
       }
-      const task = state.allTasks.find((item) => item.id === data.taskId);
+      const task = state.allTasks.find((item: any) => item.id === data.taskId);
       if (task) {
         onUpdateTaskState(task, null);
       }
@@ -1498,7 +1501,7 @@ export function createCanvas({
     viewWidth,
     viewHeight,
     canvasRect,
-  }) {
+  }: any): void {
     if (!minimapSvg || !graphMinimap) {
       return;
     }
@@ -1508,9 +1511,9 @@ export function createCanvas({
     }
     graphMinimap.hidden = false;
     minimapSvg.setAttribute("viewBox", `0 0 ${viewWidth} ${viewHeight}`);
-    const lines = [];
-    const nodes = [];
-    visibleTasks.forEach((task) => {
+    const lines: string[] = [];
+    const nodes: string[] = [];
+    visibleTasks.forEach((task: any) => {
       const pos = positions.get(task.id);
       if (!pos) {
         return;
@@ -1522,8 +1525,8 @@ export function createCanvas({
         `<rect class="minimap-node${dimmed ? " dimmed" : ""}" x="${pos.x}" y="${pos.y}" width="${width}" height="${height}" rx="8" ry="8" />`
       );
       task.children
-        .filter((child) => positions.has(child.id))
-        .forEach((child) => {
+        .filter((child: any) => positions.has(child.id))
+        .forEach((child: any) => {
           const childPos = positions.get(child.id);
           const childHeight = nodeHeightFor(child.id);
           const startX = pos.x + width;
@@ -1564,7 +1567,7 @@ export function createCanvas({
     viewport.setAttribute("height", `${viewportHeight}`);
   }
 
-  function getViewportRect(canvasRect, boundsWidth, boundsHeight) {
+  function getViewportRect(canvasRect: DOMRect, boundsWidth: number, boundsHeight: number) {
     const scale = state.transform.scale || 1;
     const rawWidth = canvasRect.width / scale;
     const rawHeight = canvasRect.height / scale;

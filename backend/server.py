@@ -38,6 +38,9 @@ from jira.config import (
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = ROOT_DIR / "frontend"
+FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
+FRONTEND_NODE_MODULES_DIR = FRONTEND_DIR / "node_modules"
+FRONTEND_STATIC_DIR = FRONTEND_DIST_DIR if FRONTEND_DIST_DIR.exists() else FRONTEND_DIR
 SPACES_DIR = Path(__file__).resolve().parent / "spaces"
 SPACES_DIR.mkdir(parents=True, exist_ok=True)
 YSTORE_DIR = Path(__file__).resolve().parent / "ystore"
@@ -2085,7 +2088,9 @@ app.mount(
     "/ws",
     _SuppressBenignShutdownASGI(ASGIServer(websocket_server, on_connect=on_connect)),
 )
-app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="static")
+if FRONTEND_NODE_MODULES_DIR.exists():
+    app.mount("/node_modules", StaticFiles(directory=FRONTEND_NODE_MODULES_DIR), name="node_modules")
+app.mount("/", StaticFiles(directory=FRONTEND_STATIC_DIR, html=True), name="static")
 
 
 async def main() -> None:

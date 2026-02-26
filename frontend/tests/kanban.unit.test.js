@@ -9,7 +9,7 @@ let kanbanModulePromise = null;
 function loadKanbanModule() {
   if (!kanbanModulePromise) {
     kanbanModulePromise = (async () => {
-      const filePath = path.resolve(__dirname, "../scripts/kanban.js");
+      const filePath = path.resolve(__dirname, "../scripts/kanban.ts");
       await fs.readFile(filePath, "utf8");
       return import(pathToFileURL(filePath).href);
     })();

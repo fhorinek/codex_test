@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "checkJs": false,
+    "outDir": "./dist/scripts",
+    "rootDir": "./scripts",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": [
+    "scripts/app.ts",
+    "scripts/types.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "tests",
+    "coverage",
+    "test-artifacts",
+    "dist"
+  ]
+}

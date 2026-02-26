@@ -15,6 +15,7 @@ require_cmd() {
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_DIR="$ROOT_DIR/backend"
+FRONTEND_DIR="$ROOT_DIR/frontend"
 VENV_DIR="$BACKEND_DIR/.venv"
 
 if [[ ! -d "$VENV_DIR" ]]; then
@@ -24,6 +25,13 @@ fi
 
 source "$VENV_DIR/bin/activate"
 require_cmd pip "pip is missing from the backend virtualenv. Run ./setup.sh first."
+require_cmd npm "npm is required to build the frontend. Run npm install in ./frontend first."
+
+echo "Building frontend..."
+(
+  cd "$FRONTEND_DIR"
+  npm run build:dist
+)
 
 echo "Server starting..."
 python "$BACKEND_DIR/server.py"

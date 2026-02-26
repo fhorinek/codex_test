@@ -9,7 +9,7 @@ let canvasModulePromise = null;
 function loadCanvasModule() {
   if (!canvasModulePromise) {
     canvasModulePromise = (async () => {
-      const filePath = path.resolve(__dirname, "../scripts/canvas.js");
+      const filePath = path.resolve(__dirname, "../scripts/canvas.ts");
       await fs.readFile(filePath, "utf8");
       return import(pathToFileURL(filePath).href);
     })();

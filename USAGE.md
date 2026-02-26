@@ -10,6 +10,37 @@ Task Script Board uses a text-first workflow:
 
 Everything is synchronized live.
 
+## Run and Build
+
+Recommended start command:
+
+- `./run.sh`
+
+What `run.sh` does now:
+
+- activates `backend/.venv`
+- builds the frontend (`frontend/dist`) via `npm run build:dist`
+- starts `backend/server.py`
+
+Notes:
+
+- `npm` is required (frontend build runs on every start).
+- Backend serves the built frontend from `frontend/dist` when present.
+- Directly opening/serving raw `frontend/index.html` is not the primary runtime path anymore.
+
+## Developer Commands
+
+Run from `frontend/`:
+
+- `npm run build:dist` - build browser app to `frontend/dist`
+- `npm run build:dist:watch` - watch TS compile for dist scripts
+- `npm run typecheck` - main TypeScript check
+- `npm run typecheck:core` - faster core subset typecheck
+- `npm run typecheck:strict:helpers` - stricter staged helper/module lane
+- `npm run test:unit` - unit/contract tests (loads TS sources via `tsx`)
+- `npm run test:e2e` - app/backend end-to-end tests
+- `npm run test:e2e:chrome-connect` - Playwright Chrome connect flow tests
+
 ## Toolbar
 
 Top toolbar buttons:
@@ -134,22 +165,27 @@ When renaming a task title in task edit modal, `{old title}` references are upda
 - Token palettes (state/people/tags) with drag-in and drag-out behavior.
 - GUI/Jira edits add tokens to the token line only (create token line if missing).
 - Auto-format canonicalizes `!state` and `~estimate` into the token line (creates token line if needed).
+- Auto-format enforces 4-space task indentation levels.
 - Save applies changes to script and graph/kanban.
 
 ## Graph and Kanban
 
 - Pan/zoom graph.
 - Drag node to task to create subtask.
+- Drag parent onto child in graph can switch the relation (target child becomes parent).
 - Drag task to trash to delete (with confirmation options).
 - Floating **Add Task** button opens create-task modal.
 - Kanban supports grouping by none/person/tag.
 - Drag kanban cards between columns to change state.
+- Graph supports task reorder by drag (including root-level unparenting when dropping a child on root task edges).
+- Kanban reordering is disabled (state changes only).
 
 ## Resizing and Snap Behavior
 
 - Vertical code|graph divider supports edge snapping.
 - When snapped to right edge, legend auto-hides to prevent overflow.
 - Horizontal graph|kanban divider resizes kanban and can collapse it.
+- When the graph pane is fully hidden or the graph-top area is collapsed, kanban cards show full task descriptions (graph-style markdown rendering).
 
 ## Feedback
 

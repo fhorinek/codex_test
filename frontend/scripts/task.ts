@@ -1,11 +1,77 @@
-export function escapeHtml(value) {
+// @ts-check
+import type { JiraTitleParseResult, ParsedTaskDocument, RenderMarkdownOptions } from "./types";
+import {
+  JIRA_MARKER_GLOBAL_RE,
+  JIRA_MARKER_RE,
+  findStoryPoints,
+  iterPersonTokenMatches,
+  iterReferenceMatches,
+  iterStateTokenMatches,
+  iterTagTokenMatches,
+  normalizeConfiguredColorValue,
+} from "./taskTokens.js";
+
+type InlineMarkdownOptions = { disableLinks?: boolean };
+type MarkdownListType = "ol" | "ul";
+type MarkdownListStackItem = { type: MarkdownListType; liOpen: boolean };
+type MarkdownListItemRenderArgs = {
+  type: MarkdownListType;
+  level: number | string;
+  content: string;
+  startNumber: number;
+};
+type ParsedConfigEntry = {
+  key: string;
+  name: string;
+  color: string;
+  email?: string;
+  jiraState?: string;
+};
+type ParsedConfigShape = {
+  boardName: string;
+  states: ParsedConfigEntry[];
+  people: ParsedConfigEntry[];
+  tags: ParsedConfigEntry[];
+};
+type ParsedTaskRecord = {
+  id: string;
+  name: string;
+  jiraKey: string | null;
+  depth: number;
+  indent: number;
+  parent: ParsedTaskRecord | null;
+  tags: string[];
+  people: string[];
+  state: string | null;
+  storyPoints: number | null;
+  storyPointsSubtasksTotal: number;
+  storyPointsTotal: number;
+  description: string[];
+  descriptionLineIndexes: number[];
+  references: string[];
+  incomingReferenceCount: number;
+  incomingReferences: ParsedTaskRecord[];
+  children: ParsedTaskRecord[];
+  lineIndex: number;
+  _childSeq?: number;
+};
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+export function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
 
-export function colorFromString(value) {
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+export function colorFromString(value: string): string {
   let hash = 0;
   for (let i = 0; i < value.length; i += 1) {
     hash = (hash * 31 + value.charCodeAt(i)) | 0;
@@ -14,21 +80,17 @@ export function colorFromString(value) {
   return hslToHex(hue, 60, 52);
 }
 
-function normalizeConfiguredColorValue(value) {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (!raw) {
-    return "";
-  }
-  if (/^#[0-9a-fA-F]{3}$/.test(raw) || /^#[0-9a-fA-F]{6}$/.test(raw)) {
-    return raw;
-  }
-  if (/^[0-9a-fA-F]{3}$/.test(raw) || /^[0-9a-fA-F]{6}$/.test(raw)) {
-    return `#${raw}`;
-  }
-  return raw;
-}
-
-function hslToHex(hue, saturation, lightness) {
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+/**
+ * @param {number} hue
+ * @param {number} saturation
+ * @param {number} lightness
+ * @returns {string}
+ */
+function hslToHex(hue: number, saturation: number, lightness: number): string {
   const s = saturation / 100;
   const l = lightness / 100;
   const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -57,21 +119,22 @@ function hslToHex(hue, saturation, lightness) {
     b = x;
   }
   const m = l - c / 2;
-  const toHex = (channel) => Math.round((channel + m) * 255).toString(16).padStart(2, "0");
+  const toHex = (channel: number): string => Math.round((channel + m) * 255).toString(16).padStart(2, "0");
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
-const JIRA_MARKER_RE = /\[JIRA:([A-Z][A-Z0-9]+(?:-\d+)?)\]/;
-const JIRA_MARKER_GLOBAL_RE = /\s*\[JIRA:[A-Z][A-Z0-9]+(?:-\d+)?\]\s*/g;
-
-export function parseJiraTitle(title) {
+/**
+ * @param {string} title
+ * @returns {JiraTitleParseResult}
+ */
+export function parseJiraTitle(title: string): JiraTitleParseResult {
   const raw = typeof title === "string" ? title : "";
   const trimmed = raw.replace(/^%\s*/, "");
   const match = trimmed.match(JIRA_MARKER_RE);
   if (!match) {
     return { key: null, title: trimmed.trim() };
   }
-  const value = match[1];
+  const value = match[1] ?? "";
   const cleaned = trimmed
     .replace(JIRA_MARKER_GLOBAL_RE, " ")
     .replace(/\s{2,}/g, " ")
@@ -79,24 +142,33 @@ export function parseJiraTitle(title) {
   return { key: /-\d+$/.test(value) ? value : null, title: cleaned };
 }
 
-export function applyInlineown(text) {
+/**
+ * @param {string} text
+ * @returns {string}
+ */
+export function applyInlineown(text: string): string {
   return applyInlineMarkdownWithOptions(text);
 }
 
-export function applyInlineMarkdownWithOptions(text, options = {}) {
+/**
+ * @param {string} text
+ * @param {InlineMarkdownOptions} [options]
+ * @returns {string}
+ */
+export function applyInlineMarkdownWithOptions(text: string, options: InlineMarkdownOptions = {}) {
   let value = text;
   const { disableLinks = false } = options;
-  const placeholders = [];
-  const addPlaceholder = (content) => {
+  const placeholders: string[] = [];
+  const addPlaceholder = (content: string): string => {
     const index = placeholders.push(content) - 1;
     return `@@INLINE_${index}@@`;
   };
-  const buildLink = (label, href) => (
+  const buildLink = (label: string, href: string): string => (
     disableLinks
       ? `<span class="inline-link">${label}</span>`
       : `<a href="${href}" target="_blank" rel="noopener">${label}</a>`
   );
-  const buildUrlLink = (href) => (
+  const buildUrlLink = (href: string): string => (
     disableLinks
       ? `<span class="inline-link">${href}</span>`
       : `<a href="${href}" target="_blank" rel="noopener">${href}</a>`
@@ -113,13 +185,13 @@ export function applyInlineMarkdownWithOptions(text, options = {}) {
     /\[JIRA:([A-Z][A-Z0-9]+(?:-\d+)?)\]/g,
     "<span class=\"pill inline-pill jira-pill\" data-type=\"jira\" data-value=\"$1\">$1</span>"
   );
-  value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match, alt, src) =>
+  value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match: string, alt: string, src: string) =>
     addPlaceholder(`<img alt="${alt}" src="${src}" />`)
   );
-  value = value.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) =>
+  value = value.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match: string, label: string, href: string) =>
     addPlaceholder(buildLink(label, href))
   );
-  value = value.replace(/(https?:\/\/[^\s<]+)/g, (_match, href) =>
+  value = value.replace(/(https?:\/\/[^\s<]+)/g, (_match: string, href: string) =>
     addPlaceholder(buildUrlLink(href))
   );
   value = value.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
@@ -127,7 +199,7 @@ export function applyInlineMarkdownWithOptions(text, options = {}) {
   value = value.replace(/==([^=]+)==/g, "<mark>$1</mark>");
   value = value.replace(/\*([^*]+)\*/g, "<em>$1</em>");
   value = value.replace(/\{([^}]+)\}/g, "<span class=\"references\" data-ref=\"$1\">$1</span>");
-  value = value.replace(/@@INLINE_(\d+)@@/g, (_match, rawIndex) => {
+  value = value.replace(/@@INLINE_(\d+)@@/g, (_match: string, rawIndex: string) => {
     const index = Number.parseInt(rawIndex, 10);
     if (!Number.isFinite(index) || !placeholders[index]) {
       return "";
@@ -137,18 +209,24 @@ export function applyInlineMarkdownWithOptions(text, options = {}) {
   return value;
 }
 
-export function renderMarkdown(text, options = {}) {
+/**
+ * @param {string} text
+ * @param {RenderMarkdownOptions} [options]
+ * @returns {string}
+ */
+export function renderMarkdown(text: string, options: RenderMarkdownOptions = {}) {
   const lines = escapeHtml(text).split("\n");
   const lineIndexes = Array.isArray(options.lineIndexes) ? options.lineIndexes : [];
   const disableLinks = Boolean(options.disableLinks);
-  const baseIndent = Number.isFinite(options.baseIndent)
-    ? Math.max(0, Number.parseInt(options.baseIndent, 10))
+  const rawBaseIndent = options.baseIndent;
+  const baseIndent = typeof rawBaseIndent === "number" && Number.isFinite(rawBaseIndent)
+    ? Math.max(0, Math.trunc(rawBaseIndent))
     : 0;
   let html = "";
   let inTable = false;
-  const listStack = [];
+  const listStack: MarkdownListStackItem[] = [];
 
-  const openList = (nextType, startNumber = 1) => {
+  const openList = (nextType: MarkdownListType, startNumber = 1): void => {
     if (nextType === "ol" && Number.isFinite(startNumber) && startNumber > 1) {
       html += `<ol start="${startNumber}">`;
     } else {
@@ -157,7 +235,7 @@ export function renderMarkdown(text, options = {}) {
     listStack.push({ type: nextType, liOpen: false });
   };
 
-  const closeListItemAt = (index) => {
+  const closeListItemAt = (index: number): void => {
     const item = listStack[index];
     if (!item || !item.liOpen) {
       return;
@@ -166,25 +244,30 @@ export function renderMarkdown(text, options = {}) {
     item.liOpen = false;
   };
 
-  const closeDeepestList = () => {
+  const closeDeepestList = (): void => {
     const lastIndex = listStack.length - 1;
     if (lastIndex < 0) {
       return;
     }
-    const { type } = listStack[lastIndex];
+    const lastItem = listStack[lastIndex];
+    if (!lastItem) {
+      return;
+    }
+    const { type } = lastItem;
     closeListItemAt(lastIndex);
     html += `</${type}>`;
     listStack.pop();
   };
 
-  const closeAllLists = () => {
+  const closeAllLists = (): void => {
     while (listStack.length) {
       closeDeepestList();
     }
   };
 
-  const renderListItem = ({ type, level, content, startNumber }) => {
-    const safeLevel = Math.max(0, Number.parseInt(level, 10) || 0);
+  const renderListItem = ({ type, level, content, startNumber }: MarkdownListItemRenderArgs): void => {
+    const numericLevel = typeof level === "number" ? level : Number.parseInt(level, 10);
+    const safeLevel = Math.max(0, numericLevel || 0);
     const clampedLevel = Math.min(safeLevel, listStack.length);
     const targetDepth = clampedLevel + 1;
 
@@ -208,23 +291,26 @@ export function renderMarkdown(text, options = {}) {
       openList(type, startNumber);
     }
     html += `<li>${applyInlineMarkdownWithOptions(content, { disableLinks })}`;
-    listStack[listStack.length - 1].liOpen = true;
+    const deepest = listStack[listStack.length - 1];
+    if (deepest) {
+      deepest.liOpen = true;
+    }
   };
 
-  const closeTable = () => {
+  const closeTable = (): void => {
     if (inTable) {
       html += "</tbody></table>";
       inTable = false;
     }
   };
 
-  const toCells = (line) =>
+  const toCells = (line: string): string[] =>
     line
       .split("|")
-      .map((cell) => cell.trim())
-      .filter((cell) => cell.length);
+      .map((cell: string) => cell.trim())
+      .filter((cell: string) => cell.length > 0);
 
-  lines.forEach((line, index) => {
+  lines.forEach((line: string, index: number) => {
     const trimmed = line.trim();
     const nextLine = lines[index + 1]?.trim() || "";
     const isTableSeparator = /^\|?\s*[-:]+/.test(nextLine) && nextLine.includes("|");
@@ -268,7 +354,7 @@ export function renderMarkdown(text, options = {}) {
       closeTable();
       if (checkboxMatch) {
         closeAllLists();
-        const checked = checkboxMatch[1].toLowerCase() === "x";
+        const checked = (checkboxMatch[1] ?? "").toLowerCase() === "x";
         const checkboxContent = checkboxMatch[2] || "";
         const lineIndex = Number.isFinite(lineIndexes[index])
           ? ` data-line="${lineIndexes[index]}"`
@@ -280,14 +366,18 @@ export function renderMarkdown(text, options = {}) {
       } else {
         const isOrdered = Boolean(orderedListMatch);
         const nextListType = isOrdered ? "ol" : "ul";
+        const orderedIndent = orderedListMatch?.[1] ?? "";
+        const unorderedIndent = unorderedListMatch?.[1] ?? "";
         const indentLength = isOrdered
-          ? orderedListMatch[1].length
-          : unorderedListMatch[1].length;
+          ? orderedIndent.length
+          : unorderedIndent.length;
         const relativeIndent = Math.max(0, indentLength - baseIndent);
         const level = Math.floor(relativeIndent / 4);
-        const content = (isOrdered ? orderedListMatch[3] : unorderedListMatch[2]) || "";
+        const orderedContent = orderedListMatch?.[3] ?? "";
+        const unorderedContent = unorderedListMatch?.[2] ?? "";
+        const content = (isOrdered ? orderedContent : unorderedContent) || "";
         const startNumber = isOrdered
-          ? Number.parseInt(orderedListMatch[2], 10)
+          ? Number.parseInt(orderedListMatch?.[2] ?? "1", 10)
           : 1;
         renderListItem({
           type: nextListType,
@@ -314,8 +404,8 @@ export function renderMarkdown(text, options = {}) {
   return html;
 }
 
-function parseConfig(lines) {
-  const config = {
+function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: number } {
+  const config: ParsedConfigShape = {
     boardName: "Task Script",
     states: [
       { key: "todo", name: "TODO", color: "" },
@@ -332,20 +422,25 @@ function parseConfig(lines) {
     config.boardName = headerLine.slice(0, -1).trim() || config.boardName;
     index += 1;
   }
-  let currentSection = null;
-  let currentEntry = null;
+  let currentSection: "states" | "people" | "tags" | null = null;
+  let currentEntry: ParsedConfigEntry | null = null;
   for (; index < lines.length; index += 1) {
-    const raw = lines[index];
+    const raw = lines[index] || "";
     if (raw.trim() === "") {
       continue;
     }
     if (/^\s*%/.test(raw)) {
       break;
     }
-    const indent = raw.match(/^\s*/)[0].length;
+    const indent = raw.match(/^\s*/)?.[0].length || 0;
     const trimmed = raw.trim();
     if (indent === 4 && trimmed.endsWith(":")) {
-      currentSection = trimmed.slice(0, -1).toLowerCase();
+      const nextSection = trimmed.slice(0, -1).toLowerCase();
+      currentSection = (
+        nextSection === "states" || nextSection === "people" || nextSection === "tags"
+      )
+        ? nextSection
+        : null;
       if (currentSection === "states" && !statesOverridden) {
         config.states = [];
         statesOverridden = true;
@@ -355,8 +450,8 @@ function parseConfig(lines) {
     }
     if (indent === 8 && currentSection) {
       const match = trimmed.match(/^([^\s:]+)\s*:\s*(.*)?$/);
-      const key = match ? match[1] : trimmed;
-      const entry = { key, name: key, color: "" };
+      const key = (match?.[1] || trimmed).trim();
+      const entry: ParsedConfigEntry = { key, name: key, color: "" };
       if (currentSection === "people") {
         entry.email = "";
       }
@@ -379,9 +474,9 @@ function parseConfig(lines) {
     if (indent === 12 && currentEntry) {
       const propMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
       if (propMatch) {
-        const prop = propMatch[1].toLowerCase();
+        const prop = (propMatch[1] || "").toLowerCase();
         const propKey = prop.replace(/[_-]/g, "");
-        const value = propMatch[2].trim();
+        const value = (propMatch[2] || "").trim();
         if (propKey === "name") {
           currentEntry.name = value || currentEntry.name;
         } else if (propKey === "color") {
@@ -400,61 +495,51 @@ function parseConfig(lines) {
   return { config, startIndex: index };
 }
 
-export function parseTasks(text) {
+export function parseTasks(text: string): ParsedTaskDocument {
   const lines = text.split("\n");
   const { config, startIndex } = parseConfig(lines);
-  const tasks = [];
-  const stack = [];
+  const tasks: ParsedTaskRecord[] = [];
+  const stack: ParsedTaskRecord[] = [];
   let rootCounter = 0;
-  let currentTask = null;
-  const tags = new Set();
-  const people = new Set();
-  const states = new Set();
-  const invalidStateTags = new Map();
-  const tagMeta = new Map();
-  const peopleMeta = new Map();
-  const stateMeta = new Map();
-  const isTokenLine = (line) => {
-    const trimmed = line.trim();
-    if (!trimmed) {
-      return false;
-    }
-    return trimmed.split(/\s+/).every((token) => (
-      /^~\d+(?:\.\d+)?$/.test(token) || /^[#@!][^\s#@~]+$/.test(token)
-    ));
-  };
-
-  config.tags.forEach((tag) => {
+  let currentTask: ParsedTaskRecord | null = null;
+  const tags = new Set<string>();
+  const people = new Set<string>();
+  const states = new Set<string>();
+  const invalidStateTags = new Map<number, string[]>();
+  const tagMeta = new Map<string, any>();
+  const peopleMeta = new Map<string, any>();
+  const stateMeta = new Map<string, any>();
+  config.tags.forEach((tag: ParsedConfigEntry) => {
     const value = `#${tag.key}`;
     tags.add(value);
     tagMeta.set(value, { ...tag, color: tag.color || colorFromString(tag.key) });
   });
-  config.people.forEach((person) => {
+  config.people.forEach((person: ParsedConfigEntry) => {
     const value = `@${person.key}`;
     people.add(value);
     peopleMeta.set(value, { ...person, color: person.color || colorFromString(person.key) });
   });
-  config.states.forEach((state) => {
+  config.states.forEach((state: ParsedConfigEntry) => {
     const value = `!${state.key}`;
     states.add(value);
     stateMeta.set(value, { ...state, color: state.color || colorFromString(state.key) });
   });
 
-  lines.forEach((line, index) => {
+  lines.forEach((line: string, index: number) => {
     if (index < startIndex) {
       return;
     }
     const raw = line;
     const taskMatch = raw.match(/^(\s*)%\s+(.*)$/);
     if (taskMatch) {
-      const indent = taskMatch[1].length;
+      const indent = (taskMatch[1] ?? "").length;
       const depth = Math.floor(indent / 4);
-      const rawName = taskMatch[2].trim();
+      const rawName = (taskMatch[2] ?? "").trim();
       const parsedTitle = parseJiraTitle(rawName);
       const name = parsedTitle.title || "";
       const baseName = name || rawName || "task";
       const encodedName = encodeURIComponent(baseName);
-      const task = {
+      const task: ParsedTaskRecord = {
         id: "",
         name,
         jiraKey: parsedTitle.key,
@@ -504,7 +589,7 @@ export function parseTasks(text) {
     }
     currentTask.description.push(descriptionLine);
     currentTask.descriptionLineIndexes.push(index);
-    const tagMatches = descriptionLine.matchAll(/(^|\s)(#[^\s#@]+)/g);
+    const tagMatches = iterTagTokenMatches(descriptionLine);
     for (const match of tagMatches) {
       const tag = match[2];
       if (tag && tag.length > 1) {
@@ -516,7 +601,7 @@ export function parseTasks(text) {
         }
       }
     }
-    const personMatches = descriptionLine.matchAll(/(^|\s)(@[^\s#@]+)/g);
+    const personMatches = iterPersonTokenMatches(descriptionLine);
     for (const match of personMatches) {
       const person = match[2];
       if (person && person.length > 1) {
@@ -528,14 +613,14 @@ export function parseTasks(text) {
         }
       }
     }
-    const matches = descriptionLine.matchAll(/\{([^}]+)\}/g);
+    const matches = iterReferenceMatches(descriptionLine);
     for (const match of matches) {
-      const reference = match[1].trim();
+      const reference = (match[1] || "").trim();
       if (reference) {
         currentTask.references.push(reference);
       }
     }
-    const stateMatches = descriptionLine.matchAll(/(^|\s)(![^\s#@~]+)/g);
+    const stateMatches = iterStateTokenMatches(descriptionLine);
     for (const match of stateMatches) {
       const stateTag = match[2];
       if (!stateTag || stateTag.length <= 1) {
@@ -555,19 +640,16 @@ export function parseTasks(text) {
       }
     }
     if (currentTask.storyPoints === null) {
-      const storyMatch = descriptionLine.match(/(^|\s)~(\d+(?:\.\d+)?)(?=\s|$)/);
-      if (storyMatch) {
-        const parsedPoints = Number.parseFloat(storyMatch[2]);
-        if (Number.isFinite(parsedPoints)) {
-          currentTask.storyPoints = parsedPoints;
-        }
+      const parsedPoints = findStoryPoints(descriptionLine);
+      if (parsedPoints !== null) {
+        currentTask.storyPoints = parsedPoints;
       }
     }
   });
 
-  const allTasks = [];
-  const collect = (items) => {
-    items.forEach((task) => {
+  const allTasks: ParsedTaskRecord[] = [];
+  const collect = (items: ParsedTaskRecord[]): void => {
+    items.forEach((task: ParsedTaskRecord) => {
       allTasks.push(task);
       if (task.children.length) {
         collect(task.children);
@@ -576,17 +658,19 @@ export function parseTasks(text) {
   };
   collect(tasks);
 
-  const computeStoryPointsTotal = (task) => {
-    const ownPoints = Number.isFinite(task.storyPoints) ? task.storyPoints : 0;
+  const computeStoryPointsTotal = (task: ParsedTaskRecord): number => {
+    const ownPoints = typeof task.storyPoints === "number" && Number.isFinite(task.storyPoints)
+      ? task.storyPoints
+      : 0;
     let subtaskPoints = 0;
-    task.children.forEach((child) => {
+    task.children.forEach((child: ParsedTaskRecord) => {
       subtaskPoints += computeStoryPointsTotal(child);
     });
     task.storyPointsSubtasksTotal = subtaskPoints;
     task.storyPointsTotal = ownPoints + subtaskPoints;
     return task.storyPointsTotal;
   };
-  tasks.forEach((task) => {
+  tasks.forEach((task: ParsedTaskRecord) => {
     computeStoryPointsTotal(task);
   });
   const totalStoryPoints = tasks.reduce(
@@ -594,14 +678,14 @@ export function parseTasks(text) {
     0
   );
 
-  const incomingReferenceTasksByName = new Map();
-  allTasks.forEach((task) => {
-    const uniqueReferences = new Set(
+  const incomingReferenceTasksByName = new Map<string, ParsedTaskRecord[]>();
+  allTasks.forEach((task: ParsedTaskRecord) => {
+    const uniqueReferences = new Set<string>(
       task.references
-        .map((reference) => (typeof reference === "string" ? reference.trim() : ""))
-        .filter(Boolean)
+        .map((reference: string) => (typeof reference === "string" ? reference.trim() : ""))
+        .filter((reference: string) => Boolean(reference))
     );
-    uniqueReferences.forEach((key) => {
+    uniqueReferences.forEach((key: string) => {
       const existing = incomingReferenceTasksByName.get(key);
       if (existing) {
         existing.push(task);
@@ -610,11 +694,11 @@ export function parseTasks(text) {
       }
     });
   });
-  const incomingReferenceCountByName = new Map();
-  incomingReferenceTasksByName.forEach((references, name) => {
+  const incomingReferenceCountByName = new Map<string, number>();
+  incomingReferenceTasksByName.forEach((references: ParsedTaskRecord[], name: string) => {
     incomingReferenceCountByName.set(name, references.length);
   });
-  allTasks.forEach((task) => {
+  allTasks.forEach((task: ParsedTaskRecord) => {
     const key = typeof task.name === "string" ? task.name.trim() : "";
     task.incomingReferences = key ? [...(incomingReferenceTasksByName.get(key) || [])] : [];
     task.incomingReferenceCount = task.incomingReferences.length;

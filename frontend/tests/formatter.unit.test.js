@@ -9,7 +9,7 @@ let formatterModulePromise = null;
 function loadFormatterModule() {
   if (!formatterModulePromise) {
     formatterModulePromise = (async () => {
-      const filePath = path.resolve(__dirname, "../scripts/formatter.js");
+      const filePath = path.resolve(__dirname, "../scripts/formatter.ts");
       await fs.readFile(filePath, "utf8");
       return import(pathToFileURL(filePath).href);
     })();

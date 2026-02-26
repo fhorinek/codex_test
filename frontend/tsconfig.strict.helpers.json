@@ -1,0 +1,33 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "strictNullChecks": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "include": [
+    "scripts/types.d.ts",
+    "scripts/appDom.ts",
+    "scripts/layoutState.ts",
+    "scripts/formatter.ts",
+    "scripts/task.ts",
+    "scripts/taskCommands.ts",
+    "scripts/taskTokens.ts",
+    "scripts/kanban.ts",
+    "scripts/canvas.ts",
+    "scripts/editor.ts",
+    "scripts/taskDescription.ts",
+    "scripts/slugRenameUi.ts",
+    "scripts/slugRenameModal.ts",
+    "scripts/syncEngine.ts",
+    "scripts/app.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "tests",
+    "coverage",
+    "test-artifacts",
+    "dist"
+  ]
+}

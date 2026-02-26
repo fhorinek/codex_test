@@ -1,46 +1,86 @@
-Security findings (static code review)
+Security findings (static code review, updated for current TS codebase)
 
-1) [CRITICAL] Jira API token committed in plaintext
-- File: backend/jira/jira_config.json:4
-- Risk: immediate Jira account/API compromise if repo is shared or leaked.
-- Recommended fix: revoke/rotate token now, remove from git history, store in env/secret manager.
+1) [CRITICAL] Real Jira credentials committed in plaintext
+- File: `backend/jira/jira_config.json`
+- Verified contents include a Jira API token and worker password in plaintext.
+- Risk: immediate Jira/API compromise if repo or backups are shared/leaked.
+- Recommended fix:
+  - revoke/rotate the Jira API token now
+  - rotate `worker_password`
+  - remove secrets from git history
+  - move credentials to env vars / secret manager
+  - keep `jira_config.json` out of version control (or store only non-secret fields)
 
-2) [HIGH] Password hashing uses MD5
-- Files: backend/server.py:153, backend/server.py:158, backend/server.py:230
-- Risk: hashes are fast to crack if users config is leaked.
-- Recommended fix: migrate to argon2id/bcrypt/scrypt with proper cost, use constant-time compare.
+2) [HIGH] Password hashing still uses salted MD5
+- File: `backend/server.py` (`md5_digest`, `build_password_record`, `verify_password`)
+- Risk: MD5 is fast and weak against offline cracking if user records are exposed.
+- Recommended fix:
+  - migrate to Argon2id (preferred) / bcrypt / scrypt
+  - store algorithm + params in each password record
+  - use constant-time comparison for hash verification
+  - add migration-on-login for existing MD5 hashes
 
-3) [HIGH] Credentials sent in URL query params (WS + auth fallback)
-- Files: frontend/scripts/app.js:5076, frontend/scripts/app.js:5078, backend/server.py:1908, backend/server.py:1955, backend/server.py:906
-- Risk: passwords can leak via logs, proxies, browser/network tooling.
-- Recommended fix: remove query-param auth; use session cookie or Authorization header only.
+3) [HIGH] Credentials are accepted/sent in URL query params (WebSocket + HTTP auth fallback)
+- Backend files:
+  - `backend/server.py` (`require_auth(... user/password Query ...)`, `ws_credentials(...)`)
+  - `backend/jira/space.py` (`ws://.../ws/{space}?user=...&password=...`)
+- Frontend file:
+  - `frontend/scripts/syncEngine.ts` (`WebsocketProvider(..., { params: wsParams })` sends `user` + `pass`)
+- Risk: credentials can leak via logs, proxies, browser tooling, crash reports, and referrers in some setups.
+- Recommended fix:
+  - remove query-param auth entirely
+  - use session cookie for WebSocket auth (already partly supported in backend)
+  - keep HTTP auth to cookie or `Authorization` header only
 
-4) [HIGH] Session cookie is not Secure
-- File: backend/server.py:1319
-- Risk: cookie can be sent over plain HTTP and intercepted on insecure networks.
-- Recommended fix: set secure=True in production and enforce HTTPS.
+4) [HIGH] Session cookie is set with `secure=False`
+- File: `backend/server.py` (`/api/login` -> `response.set_cookie(...)`)
+- Risk: session cookie may be sent over plaintext HTTP and intercepted on insecure networks.
+- Recommended fix:
+  - set `Secure` in production (ideally always when served over HTTPS)
+  - make it environment-configurable for local dev only
+  - enforce HTTPS in deployment
 
-5) [MEDIUM] Hardcoded/default credentials present
-- Files: backend/server.py:53, backend/server.py:54, backend/jira/space.py:15, backend/jira/space.py:16
-- Risk: predictable credentials can be abused if defaults remain active.
-- Recommended fix: require first-run password setup, move secrets to env vars.
+5) [MEDIUM] Hardcoded bootstrap admin credentials (`admin` / `admin`)
+- File: `backend/server.py` (`DEFAULT_BOOTSTRAP_USERNAME`, `DEFAULT_BOOTSTRAP_PASSWORD`)
+- Risk: predictable first-run credentials are commonly missed and exploitable.
+- Recommended fix:
+  - require bootstrap password from env on first start, or
+  - generate a random one-time password and print once to console, and
+  - force first-login password change (already partially supported by `must_change_password`)
 
 6) [MEDIUM] Password changes do not revoke existing sessions
-- Files: backend/server.py:1367, backend/server.py:1464, backend/server.py:1491, backend/server.py:1532
-- Risk: stolen session cookies remain valid after password reset.
-- Recommended fix: revoke all sessions for that user on password change (except optional current session).
+- Files: `backend/server.py` (`/api/me` password change, `/api/users/{username}` password change paths)
+- Verified: `remove_sessions_for_user(...)` is called on user delete, but not on password change.
+- Risk: stolen/old session cookies remain valid after password reset/change.
+- Recommended fix:
+  - revoke all sessions for the affected user on password change
+  - optionally preserve only the current session for self-service password change
 
-7) [MEDIUM] No login throttling/rate limiting
-- File: backend/server.py:1298
-- Risk: brute-force credential attempts.
-- Recommended fix: rate-limit by IP + username, add lockout/backoff.
+7) [MEDIUM] No login throttling / brute-force protection
+- File: `backend/server.py` (`/api/login`)
+- Risk: brute-force or credential-stuffing attempts can be made without backoff/lockout.
+- Recommended fix:
+  - rate-limit by IP and username
+  - add exponential backoff / temporary lockout
+  - log repeated failures with alerting
 
 8) [LOW] Session tokens stored in plaintext on disk
-- Files: backend/server.py:261, backend/server.py:316
-- Risk: local file read can hijack active sessions.
-- Recommended fix: protect file permissions and/or store only hashed session tokens.
+- File: `backend/server.py` (`SESSIONS_FILE`, `_save_sessions_data`, `_load_sessions_data`)
+- Risk: local file read access can hijack active sessions.
+- Recommended fix:
+  - restrict file permissions tightly
+  - optionally store hashed session tokens (lookup by hash)
+  - consider server-side session store with OS-level protections
 
-9) [LOW] Jira token returned by API responses
-- Files: backend/server.py:1678, backend/server.py:1696
-- Risk: token exposed to browser runtime/XSS surface.
-- Recommended fix: return masked token only; keep token write-only for clients.
+9) [LOW] Jira API token is returned to the browser via API responses
+- File: `backend/server.py` (`GET /api/jira-config`, `PUT /api/jira-config`)
+- Verified: responses include `"token": config.token`
+- Risk: token is exposed to browser runtime and any XSS on the app origin.
+- Recommended fix:
+  - return masked token only (e.g. last 4 chars)
+  - treat token as write-only from UI
+  - keep full token server-side only
+
+Notes
+- This list was updated after the frontend TS migration (`frontend/scripts/*.ts` paths are now the primary source files).
+- Findings are from static review only; no penetration testing or runtime traffic capture was performed.

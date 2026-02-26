@@ -9,7 +9,7 @@ let taskModulePromise = null;
 function loadTaskModule() {
   if (!taskModulePromise) {
     taskModulePromise = (async () => {
-      const taskPath = path.resolve(__dirname, "../scripts/task.js");
+      const taskPath = path.resolve(__dirname, "../scripts/task.ts");
       await fs.readFile(taskPath, "utf8");
       return import(pathToFileURL(taskPath).href);
     })();

@@ -4,7 +4,12 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 
 async function readAppSource() {
-  const sourcePath = path.resolve(__dirname, "../scripts/app.js");
+  const sourcePath = path.resolve(__dirname, "../scripts/app.ts");
+  return fs.readFile(sourcePath, "utf8");
+}
+
+async function readSyncEngineSource() {
+  const sourcePath = path.resolve(__dirname, "../scripts/syncEngine.ts");
   return fs.readFile(sourcePath, "utf8");
 }
 
@@ -32,13 +37,13 @@ test("app source contains normalized task lookup for references", async () => {
 // Regression guard for connect-to-space duplication:
 // hydrateFromRemote must not run before websocket provider sync, otherwise
 // local hydration can race with synced Yjs content and duplicate text.
-test("connectToSpace hydrates only after provider sync", async () => {
-  const source = await readAppSource();
+test("syncEngine connectToSpace hydrates only after provider sync", async () => {
+  const source = await readSyncEngineSource();
   const connectStart = source.indexOf("async function connectToSpace(");
   assert.notEqual(connectStart, -1, "connectToSpace function should exist");
 
-  const nextFunctionStart = source.indexOf("\nfunction matchesFilters(", connectStart);
-  assert.notEqual(nextFunctionStart, -1, "expected matchesFilters after connectToSpace");
+  const nextFunctionStart = source.indexOf("\n\n  return {", connectStart);
+  assert.notEqual(nextFunctionStart, -1, "expected connectToSpace function body end");
 
   const connectBlock = source.slice(connectStart, nextFunctionStart);
   const syncHandlerIndex = connectBlock.indexOf('provider.on("sync"');
@@ -52,9 +57,9 @@ test("connectToSpace hydrates only after provider sync", async () => {
   );
 
   const syncSection = connectBlock.slice(syncHandlerIndex);
-  assert.equal(
-    syncSection.includes("if (synced) {\n      hydrateFromRemote(spaceId, ytext);"),
-    true,
+  assert.match(
+    syncSection,
+    /if\s*\(synced\)\s*\{[\s\S]*?hydrateFromRemote\(spaceId,\s*ytext\);/,
     "hydrateFromRemote should run inside the synced branch of provider.on(\"sync\")"
   );
 });

@@ -1,14 +1,26 @@
-export function splitIndent(line) {
+// @ts-check
+import {
+  findEstimateToken,
+  findStateToken,
+  hasEstimateToken,
+  hasStateToken,
+  isTokenOnlyLine,
+  removeStateAndEstimateTokens,
+} from "./taskTokens.js";
+
+type SplitLine = { indent: string; content: string };
+
+export function splitIndent(line: string): SplitLine {
   const match = line.match(/^(\s*)/);
-  const indent = match ? match[1] : "";
+  const indent = match?.[1] ?? "";
   return { indent, content: line.slice(indent.length) };
 }
 
-export function normalizeContent(content) {
+export function normalizeContent(content: string): string {
   return content.replace(/\s{2,}/g, " ").trim();
 }
 
-function sharedPrefix(a, b) {
+function sharedPrefix(a: string, b: string): string {
   const max = Math.min(a.length, b.length);
   let i = 0;
   while (i < max && a[i] === b[i]) {
@@ -17,7 +29,7 @@ function sharedPrefix(a, b) {
   return a.slice(0, i);
 }
 
-function normalizeIndentToTaskDepth(indent) {
+function normalizeIndentToTaskDepth(indent: string): string {
   if (!/^[ ]*$/.test(indent)) {
     return indent;
   }
@@ -25,7 +37,11 @@ function normalizeIndentToTaskDepth(indent) {
   return " ".repeat(depth * 4);
 }
 
-export function prependTokenToLine(line, token) {
+function getLine(lines: string[], index: number): string {
+  return lines[index] ?? "";
+}
+
+export function prependTokenToLine(line: string, token: string): string {
   const { indent, content } = splitIndent(line);
   const trimmed = content.trimStart();
   if (!trimmed) {
@@ -34,12 +50,12 @@ export function prependTokenToLine(line, token) {
   return `${indent}${token} ${trimmed}`;
 }
 
-function compactBlankLines(lines) {
+function compactBlankLines(lines: string[]): string[] {
   const firstTaskIndex = lines.findIndex((line) => /^\s*%\s+/.test(line));
-  const compact = [];
+  const compact: string[] = [];
   let blankCount = 0;
   for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
+    const line = getLine(lines, i);
     if (line.trim() === "") {
       if (firstTaskIndex < 0 || i < firstTaskIndex) {
         continue;
@@ -57,14 +73,14 @@ function compactBlankLines(lines) {
   return compact;
 }
 
-function ensureConfigTaskSeparator(lines) {
+function ensureConfigTaskSeparator(lines: string[]): string[] {
   const firstTaskIndex = lines.findIndex((line) => /^\s*%\s+/.test(line));
   if (firstTaskIndex <= 0) {
     return lines;
   }
   let hasConfigContent = false;
   for (let i = 0; i < firstTaskIndex; i += 1) {
-    if (lines[i].trim() !== "") {
+    if (getLine(lines, i).trim() !== "") {
       hasConfigContent = true;
       break;
     }
@@ -72,7 +88,7 @@ function ensureConfigTaskSeparator(lines) {
   if (!hasConfigContent) {
     return lines;
   }
-  if (lines[firstTaskIndex - 1].trim() === "") {
+  if (getLine(lines, firstTaskIndex - 1).trim() === "") {
     return lines;
   }
   const nextLines = [...lines];
@@ -80,42 +96,28 @@ function ensureConfigTaskSeparator(lines) {
   return nextLines;
 }
 
-export function formatTaskScript(text) {
+export function formatTaskScript(text: string): string {
   const normalized = text.replace(/\r\n?/g, "\n");
   let lines = normalized.split("\n").map((line) => line.replace(/[ \t]+$/g, ""));
   const compact = compactBlankLines(lines);
-  while (compact.length && compact[compact.length - 1].trim() === "") {
+  while (compact.length && getLine(compact, compact.length - 1).trim() === "") {
     compact.pop();
   }
   lines = ensureConfigTaskSeparator(compact);
 
-  const stateMatch = /(^|\s)(![^\s#@~]+)(?=\s|$)/;
-  const stateReplace = /(^|\s)![^\s#@~]+(?=\s|$)/g;
-  const estimateMatch = /(^|\s)(~\d+(?:\.\d+)?)(?=\s|$)/;
-  const estimateReplace = /(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g;
-  const isTokenOnlyLine = (line) => {
-    const { content } = splitIndent(line);
-    const trimmed = content.trim();
-    if (!trimmed) {
-      return false;
-    }
-    return trimmed.split(/\s+/).every((token) => (
-      /^~\d+(?:\.\d+)?$/.test(token) || /^[#@!][^\s#@~]+$/.test(token)
-    ));
-  };
-  const removeStateEstimateTokens = (line) => {
+  const removeStateEstimateTokens = (line: string): string => {
     const { indent, content } = splitIndent(line);
-    if (!stateMatch.test(content) && !estimateMatch.test(content)) {
+    if (!hasStateToken(content) && !hasEstimateToken(content)) {
       return line;
     }
     const cleaned = normalizeContent(
-      content.replace(stateReplace, "$1").replace(estimateReplace, "$1")
+      removeStateAndEstimateTokens(content)
     );
     return cleaned ? `${indent}${cleaned}` : "";
   };
 
   for (let i = 0; i < lines.length; i += 1) {
-    const taskMatch = lines[i].match(/^(\s*)%\s+/);
+    const taskMatch = getLine(lines, i).match(/^(\s*)%\s+/);
     if (!taskMatch) {
       continue;
     }
@@ -127,16 +129,16 @@ export function formatTaskScript(text) {
     // by more task content, remove that blank even when no tokens are moved.
     if (
       start + 2 < lines.length &&
-      isTokenOnlyLine(lines[start]) &&
-      lines[start + 1].trim() === "" &&
-      lines[start + 2].trim() !== "" &&
-      !/^\s*%/.test(lines[start + 2])
+      isTokenOnlyLine(getLine(lines, start)) &&
+      getLine(lines, start + 1).trim() === "" &&
+      getLine(lines, start + 2).trim() !== "" &&
+      !/^\s*%/.test(getLine(lines, start + 2))
     ) {
       lines.splice(start + 1, 1);
     }
     let end = start;
     while (end < lines.length) {
-      const line = lines[end];
+      const line = getLine(lines, end);
       if (line.trim() === "" || /^\s*%/.test(line)) {
         break;
       }
@@ -149,16 +151,10 @@ export function formatTaskScript(text) {
     let estimateToken = null;
     for (let j = start; j < end; j += 1) {
       if (!stateToken) {
-        const match = lines[j].match(/(^|\s)(![^\s#@~]+)(?=\s|$)/);
-        if (match) {
-          stateToken = match[2];
-        }
+        stateToken = findStateToken(getLine(lines, j));
       }
       if (!estimateToken) {
-        const match = lines[j].match(/(^|\s)(~\d+(?:\.\d+)?)(?=\s|$)/);
-        if (match) {
-          estimateToken = match[2];
-        }
+        estimateToken = findEstimateToken(getLine(lines, j));
       }
       if (stateToken && estimateToken) {
         break;
@@ -168,13 +164,13 @@ export function formatTaskScript(text) {
       continue;
     }
     for (let j = start; j < end; j += 1) {
-      lines[j] = removeStateEstimateTokens(lines[j]);
+      lines[j] = removeStateEstimateTokens(getLine(lines, j));
     }
     // Lines that become empty after stripping state/estimate were created by
     // normalization, not authored as task separators. Drop them so the token
     // line stays adjacent to the description.
     for (let j = start; j < end; ) {
-      if (lines[j].trim() !== "") {
+      if (getLine(lines, j).trim() !== "") {
         j += 1;
         continue;
       }
@@ -183,10 +179,10 @@ export function formatTaskScript(text) {
     }
     let tokenLineIndex = -1;
     for (let j = start; j < end; j += 1) {
-      if (lines[j].trim() === "") {
+      if (getLine(lines, j).trim() === "") {
         continue;
       }
-      if (isTokenOnlyLine(lines[j])) {
+      if (isTokenOnlyLine(getLine(lines, j))) {
         tokenLineIndex = j;
       }
       break;
@@ -196,7 +192,7 @@ export function formatTaskScript(text) {
       continue;
     }
     if (tokenLineIndex >= 0) {
-      const { indent: lineIndent, content } = splitIndent(lines[tokenLineIndex]);
+      const { indent: lineIndent, content } = splitIndent(getLine(lines, tokenLineIndex));
       const cleaned = normalizeContent(content);
       const finalContent = cleaned
         ? normalizeContent(`${cleaned} ${desiredTokens}`)
@@ -204,18 +200,18 @@ export function formatTaskScript(text) {
       lines[tokenLineIndex] = `${lineIndent}${finalContent}`;
       if (taskIndent !== indent) {
         // Snap malformed task/token indentation to 4-space depth increments.
-        const { content: taskContent } = splitIndent(lines[i]);
+        const { content: taskContent } = splitIndent(getLine(lines, i));
         lines[i] = `${taskIndent}${taskContent}`;
-        const { content: tokenContent } = splitIndent(lines[tokenLineIndex]);
+        const { content: tokenContent } = splitIndent(getLine(lines, tokenLineIndex));
         lines[tokenLineIndex] = `${taskIndent}${tokenContent}`;
       }
     } else {
       let sharedBodyIndent = null;
       for (let j = start; j < end; j += 1) {
-        if (lines[j].trim() === "") {
+        if (getLine(lines, j).trim() === "") {
           continue;
         }
-        const lineIndent = splitIndent(lines[j]).indent;
+        const lineIndent = splitIndent(getLine(lines, j)).indent;
         sharedBodyIndent = sharedBodyIndent === null
           ? lineIndent
           : sharedPrefix(sharedBodyIndent, lineIndent);
@@ -223,15 +219,16 @@ export function formatTaskScript(text) {
       const canonicalIndentRaw = sharedBodyIndent === null ? indent : sharedPrefix(indent, sharedBodyIndent);
       const canonicalIndent = normalizeIndentToTaskDepth(canonicalIndentRaw);
       if (indent !== canonicalIndent) {
-        const { content: taskContent } = splitIndent(lines[i]);
+        const { content: taskContent } = splitIndent(getLine(lines, i));
         lines[i] = `${canonicalIndent}${taskContent}`;
       }
       if (sharedBodyIndent !== null && sharedBodyIndent !== canonicalIndent) {
         for (let j = start; j < end; j += 1) {
-          if (lines[j].trim() === "" || !lines[j].startsWith(sharedBodyIndent)) {
+          const line = getLine(lines, j);
+          if (line.trim() === "" || !line.startsWith(sharedBodyIndent)) {
             continue;
           }
-          lines[j] = `${canonicalIndent}${lines[j].slice(sharedBodyIndent.length)}`;
+          lines[j] = `${canonicalIndent}${line.slice(sharedBodyIndent.length)}`;
         }
       }
       lines.splice(start, 0, `${canonicalIndent}${desiredTokens}`);
@@ -240,7 +237,7 @@ export function formatTaskScript(text) {
   }
 
   const finalLines = ensureConfigTaskSeparator(compactBlankLines(lines));
-  while (finalLines.length && finalLines[finalLines.length - 1].trim() === "") {
+  while (finalLines.length && getLine(finalLines, finalLines.length - 1).trim() === "") {
     finalLines.pop();
   }
   return finalLines.join("\n");
