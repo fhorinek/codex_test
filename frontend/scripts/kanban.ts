@@ -250,6 +250,7 @@ function setKanbanTouchDragHoverColumn(drag: any, column: HTMLElement | null): v
 function createKanbanTouchDragGhost(card: HTMLElement, clientX: number, clientY: number): any {
   const rect = card.getBoundingClientRect();
   const ghost = card.cloneNode(true) as HTMLElement;
+  ghost.classList.remove("dragging", "deleting", "delete-preview");
   ghost.classList.add("drag-ghost");
   ghost.style.position = "fixed";
   ghost.style.top = "0";
