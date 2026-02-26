@@ -60,6 +60,13 @@ const IDLE_CHECK_MS = 5000;
 const OFFLINE_DRAFT_STORAGE_KEY = "taskScript.offlineDraft.v1";
 const OFFLINE_DRAFT_SAVE_INTERVAL_MS = 10000;
 const SPELLCHECK_STORAGE_KEY = "taskScript.spellcheckEnabled.v1";
+const LAST_SPACE_STORAGE_KEY = "taskScript.lastSpace.v1";
+const MOBILE_PANE_STORAGE_KEY = "taskScript.mobilePane.v1";
+const TABLET_PANE_STORAGE_KEY = "taskScript.tabletPane.v1";
+const TABLET_PANE_LAYOUT_STORAGE_KEY = "taskScript.tabletPaneLayout.v1";
+const VIEWPORT_TABLET_MIN_PX = 768;
+const VIEWPORT_DESKTOP_MIN_PX = 1200;
+const VIEWPORT_COMPACT_HEIGHT_PX = 700;
 const STATUS_LABELS: Record<string, string> = {
   connected: "live",
   connecting: "reconnecting",
@@ -184,6 +191,33 @@ function safeLocalStorageSet(key: string, value: string): void {
   }
 }
 
+function getStoredLastSpaceRef(): { id: string; path: string } | null {
+  const raw = safeLocalStorageGet(LAST_SPACE_STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    const id = typeof parsed?.id === "string" ? parsed.id.trim() : "";
+    const path = typeof parsed?.path === "string" ? parsed.path.trim() : "";
+    if (!id) {
+      return null;
+    }
+    return { id, path: path || id };
+  } catch {
+    return null;
+  }
+}
+
+function setStoredLastSpaceRef(spaceId: any, spacePath: any = ""): void {
+  const id = typeof spaceId === "string" ? spaceId.trim() : "";
+  if (!id) {
+    return;
+  }
+  const path = typeof spacePath === "string" && spacePath.trim() ? spacePath.trim() : id;
+  safeLocalStorageSet(LAST_SPACE_STORAGE_KEY, JSON.stringify({ id, path }));
+}
+
 function resetInlineError(element: HTMLElement | null | undefined): void {
   if (!element) {
     return;
@@ -295,6 +329,13 @@ const state: any = {
   incomingReferenceCountByName: new Map(),
   spellcheckEnabled: getStoredSpellcheckEnabled(),
   scopedSpellcheck: true,
+  viewportMode: "desktop",
+  viewportHeightMode: "regular",
+  mobileActivePane: "code",
+  tabletRightPane: "graph",
+  tabletPaneLayout: "vertical",
+  pendingResponsiveGraphRender: false,
+  pendingResponsiveKanbanBuild: false,
 };
 
 const KANBAN_GROUPS = new Set(["none", "person", "tag"]);
@@ -309,6 +350,22 @@ function normalizeKanbanGroup(value: any): string {
 
 function getStoredKanbanGroup() {
   return normalizeKanbanGroup(safeLocalStorageGet("kanbanGroupBy"));
+}
+
+function getStoredMobilePane() {
+  return normalizeMobilePane(safeLocalStorageGet(MOBILE_PANE_STORAGE_KEY));
+}
+
+function getStoredTabletRightPane() {
+  return normalizeTabletRightPane(safeLocalStorageGet(TABLET_PANE_STORAGE_KEY));
+}
+
+function normalizeTabletPaneLayout(value: any): "vertical" | "horizontal" {
+  return String(value || "").toLowerCase() === "horizontal" ? "horizontal" : "vertical";
+}
+
+function getStoredTabletPaneLayout() {
+  return normalizeTabletPaneLayout(safeLocalStorageGet(TABLET_PANE_LAYOUT_STORAGE_KEY));
 }
 
 function updateKanbanGroupButtons() {
@@ -335,6 +392,165 @@ function setKanbanGroupBy(value: any, { persist = true }: { persist?: boolean } 
     safeLocalStorageSet("kanbanGroupBy", nextValue);
   }
   buildKanban();
+}
+
+function applyResponsivePaneDatasets(): void {
+  const root = document.documentElement;
+  root.dataset["mobilePane"] = normalizeMobilePane(state.mobileActivePane);
+  root.dataset["tabletRightPane"] = normalizeTabletRightPane(state.tabletRightPane);
+  root.dataset["tabletPaneLayout"] = normalizeTabletPaneLayout(state.tabletPaneLayout);
+}
+
+function setMobileToolbarMenuOpen(open: boolean): void {
+  const next = Boolean(open) && (state.viewportMode === "mobile" || state.viewportMode === "tablet");
+  document.documentElement.toggleAttribute("data-mobile-toolbar-open", next);
+  if (dom.mobileToolbarToggle) {
+    dom.mobileToolbarToggle.setAttribute("aria-expanded", next ? "true" : "false");
+    dom.mobileToolbarToggle.setAttribute("aria-label", next ? "Close toolbar menu" : "Open toolbar menu");
+    dom.mobileToolbarToggle.title = next ? "Close menu" : "Open menu";
+  }
+}
+
+function closeMobileToolbarMenu(): void {
+  setMobileToolbarMenuOpen(false);
+}
+
+function toggleMobileToolbarMenu(): void {
+  const isOpen = document.documentElement.hasAttribute("data-mobile-toolbar-open");
+  setMobileToolbarMenuOpen(!isOpen);
+}
+
+function isCompactToolbarMenuViewport(): boolean {
+  return state.viewportMode === "mobile" || state.viewportMode === "tablet";
+}
+
+function updateResponsiveSearchPlacement(): void {
+  const searchRoot = dom.searchInput?.closest?.(".graph-search");
+  if (!(searchRoot instanceof HTMLElement) || !dom.topbarActions) {
+    return;
+  }
+  const topbarCenter = dom.taskTrash?.parentElement;
+  if (!(topbarCenter instanceof HTMLElement)) {
+    return;
+  }
+  if (state.viewportMode === "mobile") {
+    if (!dom.topbarActions.contains(searchRoot)) {
+      dom.topbarActions.prepend(searchRoot);
+    }
+    return;
+  }
+  if (topbarCenter.contains(searchRoot)) {
+    return;
+  }
+  if (dom.taskTrash && dom.taskTrash.parentElement === topbarCenter) {
+    topbarCenter.insertBefore(searchRoot, dom.taskTrash);
+    return;
+  }
+  topbarCenter.prepend(searchRoot);
+}
+
+function updateResponsivePaneButtons(): void {
+  if (dom.mobilePaneTabs) {
+    dom.mobilePaneTabs.querySelectorAll("button[data-mobile-pane]").forEach((button: any) => {
+      const pane = String((button as HTMLButtonElement).dataset["mobilePane"] || "code");
+      const active = pane === state.mobileActivePane;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+  if (dom.tabletPaneToggle) {
+    dom.tabletPaneToggle.querySelectorAll("button[data-tablet-pane]").forEach((button: any) => {
+      const pane = String((button as HTMLButtonElement).dataset["tabletPane"] || "graph");
+      const active = pane === state.tabletRightPane;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+  if (dom.tabletLayoutToggle) {
+    dom.tabletLayoutToggle.querySelectorAll("button[data-tablet-layout]").forEach((button: any) => {
+      const layout = String((button as HTMLButtonElement).dataset["tabletLayout"] || "vertical");
+      const active = layout === state.tabletPaneLayout;
+      button.classList.toggle("active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+  }
+}
+
+function isResponsiveGraphVisible(): boolean {
+  if (state.viewportMode === "mobile") {
+    return state.mobileActivePane === "graph";
+  }
+  if (state.viewportMode === "tablet") {
+    return state.tabletRightPane === "graph";
+  }
+  return true;
+}
+
+function isResponsiveKanbanVisible(): boolean {
+  if (state.viewportMode === "mobile") {
+    return state.mobileActivePane === "kanban";
+  }
+  if (state.viewportMode === "tablet") {
+    return state.tabletRightPane === "kanban";
+  }
+  return true;
+}
+
+function flushResponsiveDeferredRenders(): void {
+  if (state.pendingResponsiveGraphRender && isResponsiveGraphVisible()) {
+    state.pendingResponsiveGraphRender = false;
+    canvasController.renderGraph();
+  }
+  if (state.pendingResponsiveKanbanBuild && isResponsiveKanbanVisible()) {
+    state.pendingResponsiveKanbanBuild = false;
+    buildKanban();
+  }
+}
+
+function setMobileActivePane(value: any, { persist = true }: { persist?: boolean } = {}): void {
+  const next = normalizeMobilePane(value);
+  if (next === state.mobileActivePane) {
+    return;
+  }
+  state.mobileActivePane = next;
+  applyResponsivePaneDatasets();
+  updateResponsivePaneButtons();
+  if (persist) {
+    safeLocalStorageSet(MOBILE_PANE_STORAGE_KEY, next);
+  }
+  if (historyMode.panelOpen) {
+    renderHistoryPanel();
+  }
+  flushResponsiveDeferredRenders();
+}
+
+function setTabletRightPane(value: any, { persist = true }: { persist?: boolean } = {}): void {
+  const next = normalizeTabletRightPane(value);
+  if (next === state.tabletRightPane) {
+    return;
+  }
+  state.tabletRightPane = next;
+  applyResponsivePaneDatasets();
+  updateResponsivePaneButtons();
+  if (persist) {
+    safeLocalStorageSet(TABLET_PANE_STORAGE_KEY, next);
+  }
+  flushResponsiveDeferredRenders();
+}
+
+function setTabletPaneLayout(value: any, { persist = true }: { persist?: boolean } = {}): void {
+  const next = normalizeTabletPaneLayout(value);
+  if (next === state.tabletPaneLayout) {
+    return;
+  }
+  state.tabletPaneLayout = next;
+  applyResponsivePaneDatasets();
+  updateResponsivePaneButtons();
+  if (persist) {
+    safeLocalStorageSet(TABLET_PANE_LAYOUT_STORAGE_KEY, next);
+  }
+  updateResponsiveLayoutOffsets();
+  flushResponsiveDeferredRenders();
 }
 
 const collab: any = {
@@ -392,6 +608,10 @@ const historyMode: any = {
   disabledButtons: new Map(),
 };
 
+state.mobileActivePane = getStoredMobilePane();
+state.tabletRightPane = getStoredTabletRightPane();
+state.tabletPaneLayout = getStoredTabletPaneLayout();
+
 let pendingDeleteSpace: any = null;
 let pendingDeleteFolder: any = null;
 let pendingDeleteUser: any = null;
@@ -400,6 +620,93 @@ let pendingBoardRename = false;
 let createUserSpacesPicker: any = null;
 let toastContainer: any = null;
 let lastToast = { message: "", kind: "", at: 0 };
+
+function normalizeMobilePane(value: any): "code" | "graph" | "kanban" {
+  switch (String(value || "").toLowerCase()) {
+    case "graph":
+      return "graph";
+    case "kanban":
+      return "kanban";
+    default:
+      return "code";
+  }
+}
+
+function normalizeTabletRightPane(value: any): "graph" | "kanban" {
+  return String(value || "").toLowerCase() === "kanban" ? "kanban" : "graph";
+}
+
+function getViewportModeForWidth(width: number): "desktop" | "tablet" | "mobile" {
+  if (!Number.isFinite(width) || width < VIEWPORT_TABLET_MIN_PX) {
+    return "mobile";
+  }
+  if (width < VIEWPORT_DESKTOP_MIN_PX) {
+    return "tablet";
+  }
+  return "desktop";
+}
+
+function getViewportHeightModeForHeight(height: number): "compact" | "regular" {
+  if (!Number.isFinite(height) || height < VIEWPORT_COMPACT_HEIGHT_PX) {
+    return "compact";
+  }
+  return "regular";
+}
+
+function applyViewportDatasets(): void {
+  const root = document.documentElement;
+  root.dataset["viewport"] = state.viewportMode || "desktop";
+  root.dataset["viewportHeight"] = state.viewportHeightMode || "regular";
+}
+
+function updateResponsiveLayoutOffsets(): void {
+  const root = document.documentElement;
+  const appRoot = document.querySelector(".app") as HTMLElement | null;
+  const topbar = document.querySelector(".app-topbar") as HTMLElement | null;
+  const paneBar = dom.responsivePaneBar;
+  const topbarHeight = Math.max(60, Math.ceil(topbar?.getBoundingClientRect().height || 60));
+  let paneBarHeight = 0;
+  if (paneBar) {
+    const paneBarVisible = getComputedStyle(paneBar).display !== "none";
+    if (paneBarVisible) {
+      paneBarHeight = Math.ceil(paneBar.getBoundingClientRect().height || 0);
+    }
+  }
+  let tabletLegendHeight = 0;
+  if (state.viewportMode === "tablet" && dom.legend && !dom.legend.hidden) {
+    const legendVisible = getComputedStyle(dom.legend).display !== "none";
+    if (legendVisible) {
+      tabletLegendHeight = Math.ceil(dom.legend.getBoundingClientRect().height || 0);
+    }
+  }
+  root.style.setProperty("--app-topbar-height", `${topbarHeight}px`);
+  root.style.setProperty("--responsive-pane-bar-height", `${paneBarHeight}px`);
+  root.style.setProperty("--tablet-legend-height", `${tabletLegendHeight}px`);
+  if (appRoot) {
+    appRoot.style.setProperty("--app-topbar-height", `${topbarHeight}px`);
+    appRoot.style.setProperty("--responsive-pane-bar-height", `${paneBarHeight}px`);
+    appRoot.style.setProperty("--tablet-legend-height", `${tabletLegendHeight}px`);
+  }
+}
+
+function updateViewportMode(): void {
+  const nextViewport = getViewportModeForWidth(window.innerWidth || document.documentElement.clientWidth || 0);
+  const nextHeightMode = getViewportHeightModeForHeight(window.innerHeight || document.documentElement.clientHeight || 0);
+  state.viewportMode = nextViewport;
+  state.viewportHeightMode = nextHeightMode;
+  state.mobileActivePane = normalizeMobilePane(state.mobileActivePane);
+  state.tabletRightPane = normalizeTabletRightPane(state.tabletRightPane);
+  state.tabletPaneLayout = normalizeTabletPaneLayout(state.tabletPaneLayout);
+  applyViewportDatasets();
+  applyResponsivePaneDatasets();
+  updateResponsiveSearchPlacement();
+  updateResponsivePaneButtons();
+  updateResponsiveLayoutOffsets();
+  if (!isCompactToolbarMenuViewport()) {
+    closeMobileToolbarMenu();
+  }
+  flushResponsiveDeferredRenders();
+}
 
 function ensureToastContainer() {
   if (toastContainer && document.body.contains(toastContainer)) {
@@ -666,6 +973,12 @@ function updateBoardConnectionLabel() {
   if (!dom.boardConnection) {
     return;
   }
+  if (historyMode.viewerActive && !collab.spaceId) {
+    dom.boardConnection.textContent = "";
+    dom.boardConnection.classList.add("hidden");
+    updateResponsiveLayoutOffsets();
+    return;
+  }
   if (collab.spaceId) {
     const status = collab.connectionStatus || "disconnected";
     const statusLabel = STATUS_LABELS[status] ?? STATUS_LABELS["disconnected"] ?? "disconnected";
@@ -685,6 +998,7 @@ function updateBoardConnectionLabel() {
     dom.boardConnection.append(text);
     dom.boardConnection.classList.remove("hidden");
   }
+  updateResponsiveLayoutOffsets();
 }
 
 function isOfflineMode() {
@@ -853,6 +1167,18 @@ const canvasController = createCanvas({
     renderStoryPointsSummary();
   },
 });
+
+if (canvasController?.renderGraph) {
+  const rawRenderGraph = canvasController.renderGraph.bind(canvasController);
+  canvasController.renderGraph = (...args: any[]) => {
+    if (!isResponsiveGraphVisible()) {
+      state.pendingResponsiveGraphRender = true;
+      return;
+    }
+    state.pendingResponsiveGraphRender = false;
+    return rawRenderGraph(...args);
+  };
+}
 
 if (typeof window !== "undefined") {
   window.__taskScriptTestHooks = {
@@ -1161,6 +1487,7 @@ function renderStoryPointsSummary() {
       pill.title = "Story points";
     }
   });
+  updateResponsiveLayoutOffsets();
 }
 
 function sync(): void {
@@ -1202,6 +1529,7 @@ function sync(): void {
     dom.boardTitle.textContent = title;
     document.title = title;
   }
+  updateResponsiveLayoutOffsets();
   if (state.selectedLine === null) {
     state.selectedLine = 0;
   }
@@ -1215,6 +1543,11 @@ function sync(): void {
 }
 
 function buildKanban(): void {
+  if (!isResponsiveKanbanVisible()) {
+    state.pendingResponsiveKanbanBuild = true;
+    return;
+  }
+  state.pendingResponsiveKanbanBuild = false;
   buildKanbanView({
     state,
     dom,
@@ -1246,6 +1579,33 @@ let pendingDeleteTask: any = null;
 let isTaskDragActive = false;
 let taskEditDragHandlersBound = false;
 
+function getTaskEditParsedBody(): any {
+  return parseTaskBody(modalEditorController?.getValue?.() || "");
+}
+
+function toggleTaskEditTokenByClick(type: "state" | "tag" | "person", token: string): void {
+  if (!modalEditorController || !token) {
+    return;
+  }
+  const current = modalEditorController.getValue();
+  const parsed = parseTaskBody(current);
+  let updated = current;
+  if (type === "state") {
+    updated = parsed.state === token ? removeStateFromBody(current) : insertStateIntoBody(current, token);
+  } else if (type === "tag") {
+    updated = (parsed.tags || []).includes(token)
+      ? removeTokenFromBody(current, token)
+      : insertTokenIntoBody(current, token);
+  } else {
+    updated = (parsed.people || []).includes(token)
+      ? removeTokenFromBody(current, token)
+      : insertTokenIntoBody(current, token);
+  }
+  if (updated !== current) {
+    modalEditorController.setValue(updated);
+  }
+}
+
 function setTaskDragActive(active: any): void {
   if (isTaskDragActive === active) {
     return;
@@ -1263,6 +1623,15 @@ function renderTaskEditTokenList(container: any, tokens: any[], metaMap: any, ty
     return;
   }
   container.innerHTML = "";
+  const parsed = getTaskEditParsedBody();
+  const activeSet = new Set(
+    type === "tag"
+      ? (Array.isArray(parsed?.tags) ? parsed.tags : [])
+      : type === "person"
+        ? (Array.isArray(parsed?.people) ? parsed.people : [])
+        : []
+  );
+  const activeState = typeof parsed?.state === "string" ? parsed.state : null;
   tokens.forEach((token: any) => {
     const pill = document.createElement("button");
     pill.type = "button";
@@ -1283,6 +1652,16 @@ function renderTaskEditTokenList(container: any, tokens: any[], metaMap: any, ty
       const label = meta?.name || token.replace("@", "");
       pill.textContent = `👤 ${label}`;
     }
+    const isActive = type === "state" ? activeState === token : activeSet.has(token);
+    pill.classList.toggle("active", isActive);
+    pill.title = isActive ? "Click to remove" : "Click to add";
+    pill.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (type === "state" || type === "tag" || type === "person") {
+        toggleTaskEditTokenByClick(type, token);
+      }
+    });
     pill.draggable = true;
     pill.addEventListener("dragstart", (event) => {
       const dragEvent = /** @type {DragEvent} */ (event);
@@ -1425,11 +1804,12 @@ function updateTaskEditPreviewFromText(text: any): void {
   title.append(displayTitle);
   header.appendChild(title);
   if (parsed.state) {
+    const stateToken = parsed.state;
     const pill = document.createElement("span");
     pill.className = "pill state-pill";
     pill.draggable = true;
-    const stateMeta = state.stateMeta?.get(parsed.state);
-    pill.textContent = stateMeta?.name || parsed.state.replace(/^!/, "");
+    const stateMeta = state.stateMeta?.get(stateToken);
+    pill.textContent = stateMeta?.name || stateToken.replace(/^!/, "");
     const stateColor = stateMeta?.color;
     if (stateColor) {
       pill.style.borderColor = stateColor;
@@ -1442,9 +1822,15 @@ function updateTaskEditPreviewFromText(text: any): void {
       }
       dataTransfer.setData(
         "application/json",
-        JSON.stringify({ type: "state", value: parsed.state, source: "preview" })
+        JSON.stringify({ type: "state", value: stateToken, source: "preview" })
       );
       dataTransfer.effectAllowed = "move";
+    });
+    pill.title = "Click to remove state";
+    pill.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleTaskEditTokenByClick("state", stateToken);
     });
     header.appendChild(pill);
   }
@@ -1503,6 +1889,14 @@ function updateTaskEditPreviewFromText(text: any): void {
         );
         event.dataTransfer.effectAllowed = "move";
       });
+      if (type === "tag" || type === "person") {
+        pill.title = "Click to remove";
+        pill.addEventListener("click", (event: any) => {
+          event.preventDefault();
+          event.stopPropagation();
+          toggleTaskEditTokenByClick(type, value);
+        });
+      }
     },
   });
   wireDescriptionCheckboxes(dom.taskEditPreview, {
@@ -1522,6 +1916,7 @@ function updateTaskEditPreviewFromText(text: any): void {
     },
   });
   ensureTaskEditDragHandlers();
+  refreshTaskEditTokenLists();
 }
 
 function ensureTaskEditEditor() {
@@ -2640,7 +3035,8 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
     : [];
   const grouped = new Map();
   allSpaces.forEach((space: any) => {
-    const folderId = typeof space.folder === "string" ? space.folder.trim() : "";
+    const rawFolderId = typeof space.folder === "string" ? space.folder.trim() : "";
+    const folderId = space?.personal ? "personal" : rawFolderId;
     const key = folderId || "";
     if (!grouped.has(key)) {
       grouped.set(key, []);
@@ -2694,8 +3090,10 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
     ? allSpaces.find((space: any) => resolveSpacePath(space) === activeSpacePath)
     : (activeSpaceId ? allSpaces.find((space: any) => space.id === activeSpaceId) : null);
   const activeFolderCandidate =
-    activeSpaceEntry && typeof activeSpaceEntry.folder === "string"
-      ? activeSpaceEntry.folder.trim()
+    activeSpaceEntry
+      ? (activeSpaceEntry.personal
+          ? "personal"
+          : (typeof activeSpaceEntry.folder === "string" ? activeSpaceEntry.folder.trim() : ""))
       : "";
   const activeFolderId = activeSpaceEntry && folderMeta.has(activeFolderCandidate)
     ? activeFolderCandidate
@@ -4416,8 +4814,24 @@ async function restoreSessionFromCookie() {
       : [];
     const lastSpace =
       typeof me.last_space === "string" ? me.last_space.trim() : "";
+    const storedLastSpace = getStoredLastSpaceRef();
+    let restoreSpaceId = "";
+    let restoreSpacePath = "";
     if (lastSpace && allowedSpaces.includes(lastSpace)) {
-      connectToSpace(lastSpace);
+      restoreSpaceId = lastSpace;
+      if (storedLastSpace && storedLastSpace.id === lastSpace) {
+        restoreSpacePath = storedLastSpace.path || lastSpace;
+      }
+    } else if (storedLastSpace && allowedSpaces.includes(storedLastSpace.id)) {
+      restoreSpaceId = storedLastSpace.id;
+      restoreSpacePath = storedLastSpace.path || storedLastSpace.id;
+    }
+    if (restoreSpaceId) {
+      try {
+        await connectToSpace(restoreSpaceId, restoreSpacePath || restoreSpaceId);
+      } catch {
+        showToast("Failed to reconnect to the last space.", "error");
+      }
     }
   } catch {
     collab.isAuthenticated = false;
@@ -4691,6 +5105,9 @@ function scheduleCollabSync() {
 
 async function connectToSpace(spaceId: any, spacePath: any = "") {
   const result = await syncEngine.connectToSpace(spaceId, spacePath);
+  if (collab.spaceId) {
+    setStoredLastSpaceRef(collab.spaceId, collab.spacePath || spacePath || collab.spaceId);
+  }
   updateHistoryButtonState();
   return result;
 }
@@ -4712,23 +5129,6 @@ function historyCheckpointDisplayLabel(checkpoint: any): string {
     ? checkpoint.label.trim()
     : "";
   return customLabel ? `${customLabel} · ${dateLabel}` : dateLabel;
-}
-
-function positionHistoryViewerBanner(): void {
-  if (!dom.historyViewerBanner) {
-    return;
-  }
-  let topPx = 18;
-  const searchAnchor =
-    dom.searchInput?.closest?.(".graph-search")
-    || document.querySelector(".app-topbar");
-  if (searchAnchor instanceof HTMLElement) {
-    const rect = searchAnchor.getBoundingClientRect();
-    if (Number.isFinite(rect.bottom)) {
-      topPx = Math.max(8, Math.round(rect.bottom + 8));
-    }
-  }
-  dom.historyViewerBanner.style.top = `${topPx}px`;
 }
 
 function historyCheckpointTimestamp(checkpoint: any): number | null {
@@ -4802,7 +5202,6 @@ function updateHistoryViewerBanner(): void {
     banner.classList.add("hidden");
     return;
   }
-  positionHistoryViewerBanner();
   const checkpoints = Array.isArray(historyMode.checkpoints) ? historyMode.checkpoints : [];
   const selected = checkpoints[Math.max(0, Math.min(historyMode.selectedIndex, checkpoints.length - 1))];
   label.textContent = selected ? historyCheckpointDisplayLabel(selected) : "Unknown time";
@@ -4836,6 +5235,7 @@ function setHistoryViewerMode(active: boolean): void {
   state.historyViewerActive = next;
   document.documentElement.toggleAttribute("data-history-viewer", next);
   dom.boardHistoryMode?.classList.toggle("hidden", !next);
+  updateBoardConnectionLabel();
   if (next) {
     const activeEl = document.activeElement;
     if (activeEl instanceof HTMLElement) {
@@ -4847,6 +5247,7 @@ function setHistoryViewerMode(active: boolean): void {
   if (dom.historyRevertButton) {
     dom.historyRevertButton.disabled = !next;
   }
+  updateResponsiveLayoutOffsets();
   updateHistoryViewerBanner();
   renderHistoryPanel();
 }
@@ -5348,6 +5749,66 @@ if (dom.historyButton) {
   });
 }
 
+if (dom.mobileToolbarToggle) {
+  dom.mobileToolbarToggle.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isCompactToolbarMenuViewport()) {
+      return;
+    }
+    toggleMobileToolbarMenu();
+  });
+}
+
+if (dom.topbarActions) {
+  dom.topbarActions.addEventListener("click", (event) => {
+    if (!isCompactToolbarMenuViewport()) {
+      return;
+    }
+    const target = event.target instanceof Element ? event.target.closest("button") : null;
+    if (!target) {
+      return;
+    }
+    queueMicrotask(() => closeMobileToolbarMenu());
+  });
+}
+
+if (dom.mobilePaneTabs) {
+  dom.mobilePaneTabs.addEventListener("click", (event: any) => {
+    const target = event.target instanceof Element
+      ? event.target.closest("button[data-mobile-pane]")
+      : null;
+    if (!target) {
+      return;
+    }
+    setMobileActivePane((target as HTMLButtonElement).dataset["mobilePane"]);
+  });
+}
+
+if (dom.tabletPaneToggle) {
+  dom.tabletPaneToggle.addEventListener("click", (event: any) => {
+    const target = event.target instanceof Element
+      ? event.target.closest("button[data-tablet-pane]")
+      : null;
+    if (!target) {
+      return;
+    }
+    setTabletRightPane((target as HTMLButtonElement).dataset["tabletPane"]);
+  });
+}
+
+if (dom.tabletLayoutToggle) {
+  dom.tabletLayoutToggle.addEventListener("click", (event: any) => {
+    const target = event.target instanceof Element
+      ? event.target.closest("button[data-tablet-layout]")
+      : null;
+    if (!target) {
+      return;
+    }
+    setTabletPaneLayout((target as HTMLButtonElement).dataset["tabletLayout"]);
+  });
+}
+
 if (dom.historySlider) {
   dom.historySlider.addEventListener("input", (event) => {
     const target = event.target as HTMLInputElement | null;
@@ -5844,9 +6305,7 @@ window.addEventListener("taskdragend", () => {
 });
 
 window.addEventListener("resize", () => {
-  if (historyMode.viewerActive) {
-    positionHistoryViewerBanner();
-  }
+  updateViewportMode();
 });
 
 if (dom.taskTrash) {
@@ -5898,6 +6357,7 @@ if (dom.taskTrash) {
 
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {
+    closeMobileToolbarMenu();
     closeSlugRenameModal();
     closeLoginModal();
     closeSpacesModal();
@@ -5914,6 +6374,23 @@ window.addEventListener("keydown", (event) => {
     closeTaskEditModal();
     closeTaskDeleteModal();
   }
+});
+
+document.addEventListener("click", (event) => {
+  if (!isCompactToolbarMenuViewport()) {
+    return;
+  }
+  const target = event.target;
+  if (!(target instanceof Node)) {
+    return;
+  }
+  if (dom.mobileToolbarToggle?.contains(target)) {
+    return;
+  }
+  if (dom.topbarActions?.contains(target)) {
+    return;
+  }
+  closeMobileToolbarMenu();
 });
 
 window.addEventListener("offline", () => {
@@ -6135,6 +6612,7 @@ function applyLegendHiddenState() {
   const shouldHide = legendHiddenByRightSnap || !legendHasVisibleContent;
   dom.legend.hidden = shouldHide;
   document.documentElement.toggleAttribute("data-legend-hidden", shouldHide);
+  updateResponsiveLayoutOffsets();
 }
 
 function setLegendHasVisibleContent(hasVisibleContent: any) {
@@ -6180,12 +6658,21 @@ function updateLegendHiddenFromLayout() {
 }
 
 dom.divider.addEventListener("mousedown", () => {
+  if (
+    state.viewportMode === "mobile"
+    || (state.viewportMode === "tablet" && state.tabletPaneLayout === "horizontal")
+  ) {
+    return;
+  }
   resizing = true;
   dom.divider.classList.add("dragging");
 });
 
 if (dom.kanbanDivider) {
   dom.kanbanDivider.addEventListener("mousedown", () => {
+    if (state.viewportMode !== "desktop") {
+      return;
+    }
     resizingKanban = true;
     dom.kanbanDivider.classList.add("dragging");
   });
@@ -6256,6 +6743,7 @@ window.addEventListener("mouseup", () => {
 
 window.addEventListener("resize", () => {
   updateLegendHiddenFromLayout();
+  updateViewportMode();
   scheduleGraphRender();
 });
 
@@ -6265,6 +6753,7 @@ updateKanbanGroupButtons();
 initializeSecretToggles();
 updateConnectButtonLabel();
 updateHistoryButtonState();
+updateViewportMode();
 updateLegendHiddenFromLayout();
 restoreSessionFromCookie();
 sync();

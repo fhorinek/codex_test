@@ -1055,6 +1055,36 @@ def list_visible_space_entries(auth: AuthUser) -> List[Dict[str, Any]]:
     return visible
 
 
+def filter_history_key_alias_space_entries(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    # Hide legacy/accidental space files named with a history storage key when the real
+    # canonical space path is already present in the listing.
+    history_key_matches: Dict[str, Set[str]] = {}
+    for entry in entries:
+        path_value = entry.get("path")
+        if not isinstance(path_value, str) or not path_value.strip():
+            continue
+        canonical_path = normalize_folder_name(path_value) or sanitize_space(path_value)
+        if not canonical_path:
+            continue
+        key = history_key_from_space_canonical_path(canonical_path)
+        history_key_matches.setdefault(key, set()).add(canonical_path)
+
+    filtered: List[Dict[str, Any]] = []
+    for entry in entries:
+        space_id = entry.get("id")
+        path_value = entry.get("path")
+        canonical_path = ""
+        if isinstance(path_value, str) and path_value.strip():
+            canonical_path = normalize_folder_name(path_value) or sanitize_space(path_value)
+        if not isinstance(space_id, str) or not space_id:
+            continue
+        matching_paths = history_key_matches.get(space_id, set())
+        if any(candidate != canonical_path for candidate in matching_paths):
+            continue
+        filtered.append(entry)
+    return filtered
+
+
 def existing_space_ids() -> Set[str]:
     return set(scan_space_files().keys())
 
@@ -1938,7 +1968,7 @@ def delete_user(username: str, user: AuthUser = Depends(require_auth)) -> Dict[s
 
 @app.get("/api/spaces")
 def list_spaces(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
-    visible_entries = list_visible_space_entries(user)
+    visible_entries = filter_history_key_alias_space_entries(list_visible_space_entries(user))
     users = load_users_store()
     data = [
         {

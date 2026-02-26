@@ -183,6 +183,26 @@ function normalizeGroupBy(value: any): KanbanGroupBy {
   return value === "person" || value === "tag" ? value : "none";
 }
 
+function isKanbanDragDisabled(state: any): boolean {
+  if (state?.historyViewerActive) {
+    return true;
+  }
+  const viewportMode = String(state?.viewportMode || "");
+  if (viewportMode === "mobile") {
+    return true;
+  }
+  if (viewportMode === "tablet") {
+    try {
+      if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)")?.matches) {
+        return true;
+      }
+    } catch {
+      // Ignore environment capability errors.
+    }
+  }
+  return false;
+}
+
 function uniqueTokens(tokens: any[]): any[] {
   return Array.from(new Set(tokens));
 }
@@ -501,7 +521,7 @@ function renderKanbanCardContent({
 }
 
 function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }: any): void {
-  card.draggable = !Boolean(state?.historyViewerActive);
+  card.draggable = !isKanbanDragDisabled(state);
   if (card.dataset.bound) {
     return;
   }
@@ -533,7 +553,7 @@ function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }: an
     }
   });
   card.addEventListener("dragstart", (event: DragEvent) => {
-    if (state?.historyViewerActive) {
+    if (isKanbanDragDisabled(state)) {
       event.preventDefault();
       return;
     }
@@ -640,7 +660,7 @@ function createKanbanColumn({
   });
   column.appendChild(list);
   column.addEventListener("dragover", (event) => {
-    if (state?.historyViewerActive) {
+    if (isKanbanDragDisabled(state)) {
       return;
     }
     event.preventDefault();
@@ -653,7 +673,7 @@ function createKanbanColumn({
     column.classList.remove("drag-over");
   });
   column.addEventListener("drop", (event) => {
-    if (state?.historyViewerActive) {
+    if (isKanbanDragDisabled(state)) {
       event.preventDefault();
       column.classList.remove("drag-over");
       return;

@@ -5,6 +5,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Task Script Board</title>
+  <script>
+    (function () {
+      function applyViewportMode() {
+        var width = window.innerWidth || document.documentElement.clientWidth || 0;
+        var height = window.innerHeight || document.documentElement.clientHeight || 0;
+        var viewport = width < 768 ? "mobile" : (width < 1200 ? "tablet" : "desktop");
+        var viewportHeight = height < 700 ? "compact" : "regular";
+        document.documentElement.setAttribute("data-viewport", viewport);
+        document.documentElement.setAttribute("data-viewport-height", viewportHeight);
+      }
+      applyViewportMode();
+      window.addEventListener("resize", applyViewportMode, { passive: true });
+      window.addEventListener("load", applyViewportMode, { passive: true });
+    }());
+  </script>
   <link rel="stylesheet" href="styles/styles.css" />
   <link rel="stylesheet" href="node_modules/@fortawesome/fontawesome-free/css/all.min.css" />
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
@@ -39,7 +54,10 @@
         </div>
       </div>
       <div class="app-topbar-right">
-        <div class="toolbar-actions topbar-actions">
+        <button id="mobile-toolbar-toggle" class="toolbar-icon mobile-toolbar-toggle" type="button" aria-label="Open toolbar menu" aria-controls="topbar-actions" aria-expanded="false">
+          <i class="fa-solid fa-bars" aria-hidden="true"></i>
+        </button>
+        <div id="topbar-actions" class="toolbar-actions topbar-actions">
           <button id="graph-add-task" class="toolbar-button topbar-add-task" type="button" aria-label="Add task">
             <i class="fa-solid fa-plus" aria-hidden="true"></i>
             <span>Add Task</span>
@@ -77,6 +95,21 @@
         </div>
       </div>
     </header>
+    <div id="responsive-pane-bar" class="responsive-pane-bar" aria-label="Responsive view controls">
+      <div id="mobile-pane-tabs" class="responsive-pane-tabs" role="tablist" aria-label="Mobile views">
+        <button id="mobile-pane-code" type="button" class="responsive-pane-tab" role="tab" data-mobile-pane="code" aria-selected="true">Code</button>
+        <button id="mobile-pane-graph" type="button" class="responsive-pane-tab" role="tab" data-mobile-pane="graph" aria-selected="false">Graph</button>
+        <button id="mobile-pane-kanban" type="button" class="responsive-pane-tab" role="tab" data-mobile-pane="kanban" aria-selected="false">Kanban</button>
+      </div>
+      <div id="tablet-pane-toggle" class="responsive-pane-tabs tablet-pane-toggle" role="tablist" aria-label="Tablet right pane">
+        <button id="tablet-pane-graph" type="button" class="responsive-pane-tab" role="tab" data-tablet-pane="graph" aria-selected="true">Graph</button>
+        <button id="tablet-pane-kanban" type="button" class="responsive-pane-tab" role="tab" data-tablet-pane="kanban" aria-selected="false">Kanban</button>
+      </div>
+      <div id="tablet-layout-toggle" class="responsive-pane-tabs tablet-layout-toggle" role="tablist" aria-label="Tablet pane layout">
+        <button id="tablet-layout-vertical" type="button" class="responsive-pane-tab" role="tab" data-tablet-layout="vertical" aria-selected="true" title="Side by side panes">Vertical</button>
+        <button id="tablet-layout-horizontal" type="button" class="responsive-pane-tab" role="tab" data-tablet-layout="horizontal" aria-selected="false" title="Stacked panes">Horizontal</button>
+      </div>
+    </div>
     <section class="editor-panel">
       <div class="editor-wrapper">
         <textarea id="task-editor" spellcheck="false" aria-hidden="true" tabindex="-1"></textarea>

@@ -4,6 +4,8 @@ type AppDomSpecific = {
   editor: HTMLTextAreaElement | null;
   fileInput: HTMLInputElement | null;
   searchInput: HTMLInputElement | null;
+  topbarActions: HTMLElement | null;
+  mobileToolbarToggle: HTMLButtonElement | null;
   searchName: HTMLInputElement | null;
   searchDescription: HTMLInputElement | null;
   searchTag: HTMLInputElement | null;
@@ -53,6 +55,10 @@ type AppDomSpecific = {
   divider: HTMLElement;
   kanbanDivider: HTMLElement;
   historyButton: HTMLButtonElement | null;
+  responsivePaneBar: HTMLElement | null;
+  mobilePaneTabs: HTMLElement | null;
+  tabletPaneToggle: HTMLElement | null;
+  tabletLayoutToggle: HTMLElement | null;
   boardHistoryMode: HTMLElement | null;
   historyViewerBanner: HTMLElement | null;
   historyViewerBannerLabel: HTMLElement | null;
@@ -84,6 +90,8 @@ function createAppDomRaw(doc: Document = document) {
     graphMinimap: doc.getElementById("graph-minimap"),
     minimapSvg: doc.getElementById("minimap-svg"),
     graphAddTask: doc.getElementById("graph-add-task"),
+    topbarActions: doc.getElementById("topbar-actions"),
+    mobileToolbarToggle: doc.getElementById("mobile-toolbar-toggle"),
     searchInput: doc.getElementById("search-input"),
     searchName: doc.getElementById("search-name"),
     searchDescription: doc.getElementById("search-description"),
@@ -97,6 +105,10 @@ function createAppDomRaw(doc: Document = document) {
     saveButton: doc.getElementById("save-button"),
     formatButton: doc.getElementById("format-button"),
     historyButton: doc.getElementById("history-button"),
+    responsivePaneBar: doc.getElementById("responsive-pane-bar"),
+    mobilePaneTabs: doc.getElementById("mobile-pane-tabs"),
+    tabletPaneToggle: doc.getElementById("tablet-pane-toggle"),
+    tabletLayoutToggle: doc.getElementById("tablet-layout-toggle"),
     boardHistoryMode: doc.getElementById("board-history-mode"),
     connectButton: doc.getElementById("connect-button"),
     themeButton: doc.getElementById("theme-button"),

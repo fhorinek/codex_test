@@ -39,6 +39,35 @@ export function createCanvas({
 }: CreateCanvasOptions) {
   const { graphNodes, graphLines, graphCanvas, graphMinimap, minimapSvg } = dom;
   const isHistoryViewerActive = (): boolean => Boolean(state?.historyViewerActive);
+  const isResponsiveGraphVisible = (): boolean => {
+    const viewportMode = String(state?.viewportMode || "desktop");
+    if (viewportMode === "mobile") {
+      return state?.mobileActivePane === "graph";
+    }
+    if (viewportMode === "tablet") {
+      return String(state?.tabletRightPane || "graph") === "graph";
+    }
+    return true;
+  };
+  const isResponsiveDragDisabled = (): boolean => {
+    if (isHistoryViewerActive()) {
+      return true;
+    }
+    const viewportMode = String(state?.viewportMode || "");
+    if (viewportMode === "mobile") {
+      return true;
+    }
+    if (viewportMode === "tablet") {
+      try {
+        if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)")?.matches) {
+          return true;
+        }
+      } catch {
+        // Ignore capability detection errors.
+      }
+    }
+    return false;
+  };
   const GRAPH_ZOOM_MIN = 0.25;
   const GRAPH_ZOOM_MAX = 2.5;
   const GRAPH_ZOOM_STEP = 0.1;
@@ -534,7 +563,7 @@ export function createCanvas({
   };
 
   const bindTaskNode = (node: any): void => {
-    node.draggable = !isHistoryViewerActive();
+    node.draggable = !isResponsiveDragDisabled();
     if (node.dataset.bound) {
       return;
     }
@@ -567,7 +596,7 @@ export function createCanvas({
       }
     });
     node.addEventListener("dragstart", (event: DragEvent) => {
-      if (isHistoryViewerActive()) {
+      if (isResponsiveDragDisabled()) {
         event.preventDefault();
         return;
       }
@@ -625,7 +654,7 @@ export function createCanvas({
       window.dispatchEvent(new CustomEvent("taskdragend"));
     });
     node.addEventListener("dragover", (event: DragEvent) => {
-      if (isHistoryViewerActive()) {
+      if (isResponsiveDragDisabled()) {
         return;
       }
       event.preventDefault();
@@ -722,7 +751,7 @@ export function createCanvas({
       node.classList.remove("drag-parent-target");
     });
     node.addEventListener("drop", (event: DragEvent) => {
-      if (isHistoryViewerActive()) {
+      if (isResponsiveDragDisabled()) {
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -888,8 +917,12 @@ export function createCanvas({
         statePill.style.borderColor = stateColor;
         statePill.style.color = stateColor;
       }
-      statePill.draggable = true;
+      statePill.draggable = !isResponsiveDragDisabled();
       statePill.addEventListener("dragstart", (event: any) => {
+        if (isResponsiveDragDisabled()) {
+          event.preventDefault();
+          return;
+        }
         event.stopPropagation();
         setTokenDragImage(event, statePill);
         event.dataTransfer.setData(
@@ -975,8 +1008,12 @@ export function createCanvas({
             pill.draggable = false;
             return;
           }
-          pill.draggable = true;
+          pill.draggable = !isResponsiveDragDisabled();
           pill.addEventListener("dragstart", (event: any) => {
+            if (isResponsiveDragDisabled()) {
+              event.preventDefault();
+              return;
+            }
             event.stopPropagation();
             setTokenDragImage(event, pill);
             event.dataTransfer.setData(
@@ -1027,6 +1064,9 @@ export function createCanvas({
   };
 
   function renderGraph() {
+    if (!isResponsiveGraphVisible()) {
+      return;
+    }
     closeReferenceDropdown();
     graphLines.innerHTML = "";
     const existingNodes = new Map();
@@ -1190,8 +1230,12 @@ export function createCanvas({
       pill.style.borderColor = meta.color;
     }
     if (text.startsWith("#") || text.startsWith("@")) {
-      pill.draggable = true;
+      pill.draggable = !isResponsiveDragDisabled();
       pill.addEventListener("dragstart", (event: any) => {
+        if (isResponsiveDragDisabled()) {
+          event.preventDefault();
+          return;
+        }
         setTokenDragImage(event, pill, { scaleWithZoom: false });
         event.dataTransfer.setData(
           "application/json",
@@ -1346,7 +1390,7 @@ export function createCanvas({
   let lastPoint = { x: 0, y: 0 };
 
   graphCanvas.addEventListener("dragstart", (event: any) => {
-    if (isHistoryViewerActive()) {
+    if (isResponsiveDragDisabled()) {
       event.preventDefault();
       return;
     }
@@ -1430,7 +1474,7 @@ export function createCanvas({
   });
 
   graphCanvas.addEventListener("dragover", (event: any) => {
-    if (isHistoryViewerActive()) {
+    if (isResponsiveDragDisabled()) {
       return;
     }
     event.preventDefault();
@@ -1448,7 +1492,7 @@ export function createCanvas({
   });
 
   graphCanvas.addEventListener("drop", (event: any) => {
-    if (isHistoryViewerActive()) {
+    if (isResponsiveDragDisabled()) {
       event.preventDefault();
       return;
     }

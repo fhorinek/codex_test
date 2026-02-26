@@ -53,6 +53,25 @@ Top toolbar buttons:
 - Theme toggle
 - Fullscreen toggle
 
+## Responsive Layout (Mobile / Tablet / Desktop)
+
+- Desktop (`>=1200px`):
+  - current split layout remains (code + graph/kanban pane)
+  - all desktop drag/drop interactions remain available
+- Tablet (`768px-1199px`):
+  - two-pane layout remains (editor left + right visualization pane)
+  - right pane has a **Graph / Kanban** toggle
+  - graph legend/minimap are reduced/hidden by default for space
+- Mobile (`<768px`):
+  - single-pane mode with tabs: `Code`, `Graph`, `Kanban`, `History`
+  - split dividers are hidden
+  - history panel becomes a mobile bottom sheet
+
+Touch interaction notes:
+
+- Precision drag/drop interactions are reduced/disabled on touch-first small screens where they are unreliable.
+- History viewer mode remains read-only and disables task/code interactions across all breakpoints.
+
 ## Login and Sessions
 
 - Click **Connect** and log in with username/password.
@@ -186,6 +205,7 @@ When renaming a task title in task edit modal, `{old title}` references are upda
 - When snapped to right edge, legend auto-hides to prevent overflow.
 - Horizontal graph|kanban divider resizes kanban and can collapse it.
 - When the graph pane is fully hidden or the graph-top area is collapsed, kanban cards show full task descriptions (graph-style markdown rendering).
+- On mobile, split-pane resizing is disabled (single-pane tabs are used instead).
 
 ## Feedback
 
