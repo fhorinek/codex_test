@@ -86,6 +86,8 @@ export function createCanvas({
   const GRAPH_DROP_LINE_HEIGHT_PX = 3;
   const GRAPH_DROP_OUTER_SPACING_PX = 12;
   const GRAPH_DROP_PREVIEW_SHIFT_MAX_PX = 18;
+  const GRAPH_TOUCH_DRAG_THRESHOLD_PX = 10;
+  const GRAPH_TOUCH_DRAG_SUPPRESS_CLICK_MS = 360;
 
   const formatStoryPointsNumber = (value: any): string => {
     if (!Number.isFinite(value)) {
@@ -129,6 +131,129 @@ export function createCanvas({
 
   const getTaskById = (taskId: string) =>
     state.allTasks.find((item: any) => item.id === taskId) || null;
+
+  let activeTouchTaskDrag: any = null;
+
+  const shouldIgnoreTaskTouchDragStart = (target: EventTarget | null): boolean => {
+    if (!(target instanceof Element)) {
+      return false;
+    }
+    return Boolean(
+      target.closest(
+        "input, textarea, select, button, a, .pill, .collapse-toggle, .task-reference-menu, .task-reference-dropdown, .task-reference-option"
+      )
+    );
+  };
+
+  const findTouchByIdentifier = (touches: TouchList, identifier: number): Touch | null => {
+    for (let index = 0; index < touches.length; index += 1) {
+      const touch = touches.item(index);
+      if (touch && touch.identifier === identifier) {
+        return touch;
+      }
+    }
+    return null;
+  };
+
+  const createTaskTouchDragGhost = (node: HTMLElement, clientX: number, clientY: number): any => {
+    const rect = node.getBoundingClientRect();
+    const ghost = node.cloneNode(true) as HTMLElement;
+    ghost.classList.add("drag-ghost");
+    ghost.style.position = "fixed";
+    ghost.style.top = "0";
+    ghost.style.left = "0";
+    ghost.style.margin = "0";
+    ghost.style.width = `${rect.width}px`;
+    ghost.style.height = `${rect.height}px`;
+    ghost.style.pointerEvents = "none";
+    ghost.style.zIndex = "1200";
+    document.body.appendChild(ghost);
+    const offsetX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    const offsetY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    ghost.style.transform = `translate(${clientX - offsetX}px, ${clientY - offsetY}px)`;
+    return { ghost, offsetX, offsetY };
+  };
+
+  const updateTaskTouchDragGhost = (drag: any): void => {
+    if (!drag?.ghost) {
+      return;
+    }
+    drag.ghost.style.transform = `translate(${drag.lastClientX - drag.ghostOffsetX}px, ${drag.lastClientY - drag.ghostOffsetY}px)`;
+  };
+
+  const clearTaskTouchDragGhost = (drag: any): void => {
+    if (!drag?.ghost) {
+      return;
+    }
+    drag.ghost.remove();
+    drag.ghost = null;
+  };
+
+  const updateGraphTouchDropIndicators = (draggedTaskId: string, clientX: number, clientY: number): void => {
+    const draggedTask = getTaskById(draggedTaskId);
+    if (!draggedTask) {
+      clearGraphDropIndicators();
+      return;
+    }
+    const reorderTarget = onReorderTask
+      ? getGraphReorderTarget({ clientX, clientY } as DragEvent)
+      : null;
+    if (reorderTarget) {
+      applyGraphReorderIndicator(reorderTarget);
+      clearGraphParentTargets();
+      return;
+    }
+    applyGraphReorderIndicator(null);
+    clearGraphParentTargets();
+    const targetEl = document.elementFromPoint(clientX, clientY);
+    const targetNode = targetEl?.closest?.(".task-node[data-task-id]") as HTMLElement | null;
+    if (!targetNode) {
+      return;
+    }
+    const targetTaskId = String(targetNode.dataset["taskId"] || "");
+    const targetTask = targetTaskId ? getTaskById(targetTaskId) : null;
+    if (!targetTask || targetTask.id === draggedTask.id || isCurrentParentTarget(draggedTask, targetTask)) {
+      return;
+    }
+    targetNode.classList.add("drag-parent-target");
+  };
+
+  const performGraphTouchTaskDrop = (draggedTaskId: string, clientX: number, clientY: number): void => {
+    const sourceTask = getTaskById(draggedTaskId);
+    if (!sourceTask) {
+      clearGraphDropIndicators();
+      return;
+    }
+    const dropReorderTarget = activeGraphReorder || getGraphReorderTarget({ clientX, clientY } as DragEvent);
+    if (dropReorderTarget && onReorderTask) {
+      const targetTask = getTaskById(dropReorderTarget.targetTaskId);
+      clearGraphDropIndicators();
+      if (
+        targetTask
+        && onReorderTask(sourceTask, targetTask, dropReorderTarget.position, {
+          allowRootReparent: Boolean(dropReorderTarget.allowRootReparent),
+        })
+      ) {
+        return;
+      }
+    } else {
+      clearGraphReorderIndicators();
+    }
+    const targetEl = document.elementFromPoint(clientX, clientY);
+    const targetNode = targetEl?.closest?.(".task-node[data-task-id]") as HTMLElement | null;
+    if (!targetNode || !onMakeSubtask) {
+      clearGraphParentTargets();
+      return;
+    }
+    const targetTaskId = String(targetNode.dataset["taskId"] || "");
+    const targetTask = targetTaskId ? getTaskById(targetTaskId) : null;
+    if (!targetTask || targetTask.id === sourceTask.id || isCurrentParentTarget(sourceTask, targetTask)) {
+      clearGraphParentTargets();
+      return;
+    }
+    clearGraphParentTargets();
+    onMakeSubtask(sourceTask, targetTask);
+  };
 
   const closeReferenceDropdown = () => {
     if (!openReferenceDropdown) {
@@ -569,6 +694,10 @@ export function createCanvas({
     }
     node.dataset.bound = "true";
     node.addEventListener("click", () => {
+      const suppressUntil = Number(node.dataset.touchDragSuppressUntil || "0");
+      if (Number.isFinite(suppressUntil) && suppressUntil > Date.now()) {
+        return;
+      }
       const task = getTaskById(node.dataset.taskId);
       if (task) {
         onSelectTask(task);
@@ -594,6 +723,104 @@ export function createCanvas({
       if (task) {
         onEditTask(task);
       }
+    });
+    node.addEventListener("touchstart", (event: TouchEvent) => {
+      if (isHistoryViewerActive() || isDraggingToken || shouldIgnoreTaskTouchDragStart(event.target)) {
+        return;
+      }
+      if (event.touches.length !== 1 || activeTouchTaskDrag) {
+        return;
+      }
+      const task = getTaskById(node.dataset.taskId);
+      if (!task) {
+        return;
+      }
+      const touch = event.changedTouches.item(0);
+      if (!touch) {
+        return;
+      }
+      activeTouchTaskDrag = {
+        taskId: task.id,
+        touchId: touch.identifier,
+        sourceNode: node,
+        startClientX: touch.clientX,
+        startClientY: touch.clientY,
+        lastClientX: touch.clientX,
+        lastClientY: touch.clientY,
+        dragging: false,
+        ghost: null,
+        ghostOffsetX: 0,
+        ghostOffsetY: 0,
+      };
+    }, { passive: true });
+    node.addEventListener("touchmove", (event: TouchEvent) => {
+      const drag = activeTouchTaskDrag;
+      if (!drag || drag.sourceNode !== node) {
+        return;
+      }
+      const touch = findTouchByIdentifier(event.touches, drag.touchId);
+      if (!touch) {
+        return;
+      }
+      drag.lastClientX = touch.clientX;
+      drag.lastClientY = touch.clientY;
+      if (!drag.dragging) {
+        const distance = Math.hypot(
+          drag.lastClientX - drag.startClientX,
+          drag.lastClientY - drag.startClientY
+        );
+        if (distance < GRAPH_TOUCH_DRAG_THRESHOLD_PX) {
+          return;
+        }
+        drag.dragging = true;
+        node.classList.add("dragging");
+        activeDraggedTaskId = drag.taskId;
+        const ghostPayload = createTaskTouchDragGhost(node, drag.lastClientX, drag.lastClientY);
+        drag.ghost = ghostPayload.ghost;
+        drag.ghostOffsetX = ghostPayload.offsetX;
+        drag.ghostOffsetY = ghostPayload.offsetY;
+        window.dispatchEvent(new CustomEvent("taskdragstart"));
+      }
+      event.preventDefault();
+      updateTaskTouchDragGhost(drag);
+      updateGraphTouchDropIndicators(drag.taskId, drag.lastClientX, drag.lastClientY);
+    }, { passive: false });
+    node.addEventListener("touchend", (event: TouchEvent) => {
+      const drag = activeTouchTaskDrag;
+      if (!drag || drag.sourceNode !== node) {
+        return;
+      }
+      const endedTouch = findTouchByIdentifier(event.changedTouches, drag.touchId);
+      if (!endedTouch) {
+        return;
+      }
+      drag.lastClientX = endedTouch.clientX;
+      drag.lastClientY = endedTouch.clientY;
+      if (drag.dragging) {
+        event.preventDefault();
+        performGraphTouchTaskDrop(drag.taskId, drag.lastClientX, drag.lastClientY);
+        node.dataset.touchDragSuppressUntil = String(Date.now() + GRAPH_TOUCH_DRAG_SUPPRESS_CLICK_MS);
+        window.dispatchEvent(new CustomEvent("taskdragend"));
+      }
+      clearTaskTouchDragGhost(drag);
+      node.classList.remove("dragging");
+      activeDraggedTaskId = "";
+      clearGraphDropIndicators();
+      activeTouchTaskDrag = null;
+    }, { passive: false });
+    node.addEventListener("touchcancel", () => {
+      const drag = activeTouchTaskDrag;
+      if (!drag || drag.sourceNode !== node) {
+        return;
+      }
+      if (drag.dragging) {
+        window.dispatchEvent(new CustomEvent("taskdragend"));
+      }
+      clearTaskTouchDragGhost(drag);
+      node.classList.remove("dragging");
+      activeDraggedTaskId = "";
+      clearGraphDropIndicators();
+      activeTouchTaskDrag = null;
     });
     node.addEventListener("dragstart", (event: DragEvent) => {
       if (isResponsiveDragDisabled()) {
@@ -1385,9 +1612,21 @@ export function createCanvas({
     }, ZOOM_REDRAW_DELAY_MS);
   };
 
+  const applyZoomAtCanvasPoint = (newScale: number, pointX: number, pointY: number): void => {
+    const currentScale = Math.max(GRAPH_ZOOM_MIN, state.transform.scale || 1);
+    const clampedScale = Math.min(GRAPH_ZOOM_MAX, Math.max(GRAPH_ZOOM_MIN, newScale));
+    const scaleFactor = clampedScale / currentScale;
+    state.transform.x = pointX - (pointX - state.transform.x) * scaleFactor;
+    state.transform.y = pointY - (pointY - state.transform.y) * scaleFactor;
+    state.transform.scale = clampedScale;
+  };
+
   let isPanning = false;
   let isDraggingToken = false;
   let lastPoint = { x: 0, y: 0 };
+  let isTouchPanning = false;
+  let lastTouchPoint = { x: 0, y: 0 };
+  let pinchGesture: any = null;
 
   graphCanvas.addEventListener("dragstart", (event: any) => {
     if (isResponsiveDragDisabled()) {
@@ -1426,6 +1665,131 @@ export function createCanvas({
     clearTokenDragGhost();
   });
 
+  graphCanvas.addEventListener("touchstart", (event: TouchEvent) => {
+    if (isDraggingToken || activeTouchTaskDrag?.dragging) {
+      return;
+    }
+    if (event.touches.length >= 2) {
+      const firstTouch = event.touches.item(0);
+      const secondTouch = event.touches.item(1);
+      if (!firstTouch || !secondTouch) {
+        return;
+      }
+      const distance = Math.hypot(
+        secondTouch.clientX - firstTouch.clientX,
+        secondTouch.clientY - firstTouch.clientY
+      );
+      const midpointClientX = (firstTouch.clientX + secondTouch.clientX) / 2;
+      const midpointClientY = (firstTouch.clientY + secondTouch.clientY) / 2;
+      const rect = graphCanvas.getBoundingClientRect();
+      const midpointCanvasX = midpointClientX - rect.left;
+      const midpointCanvasY = midpointClientY - rect.top;
+      const safeScale = Math.max(GRAPH_ZOOM_MIN, state.transform.scale || 1);
+      pinchGesture = {
+        initialDistance: Math.max(1, distance),
+        initialScale: safeScale,
+        worldX: (midpointCanvasX - state.transform.x) / safeScale,
+        worldY: (midpointCanvasY - state.transform.y) / safeScale,
+      };
+      isTouchPanning = false;
+      event.preventDefault();
+      return;
+    }
+    if (event.touches.length !== 1) {
+      return;
+    }
+    const target = event.target as Element | null;
+    if (target?.closest?.(".task-node")) {
+      return;
+    }
+    const touch = event.touches.item(0);
+    if (!touch) {
+      return;
+    }
+    isTouchPanning = true;
+    pinchGesture = null;
+    lastTouchPoint = { x: touch.clientX, y: touch.clientY };
+  }, { passive: false });
+
+  graphCanvas.addEventListener("touchmove", (event: TouchEvent) => {
+    if (isDraggingToken || activeTouchTaskDrag?.dragging) {
+      return;
+    }
+    if (event.touches.length >= 2) {
+      const firstTouch = event.touches.item(0);
+      const secondTouch = event.touches.item(1);
+      if (!firstTouch || !secondTouch) {
+        return;
+      }
+      const distance = Math.hypot(
+        secondTouch.clientX - firstTouch.clientX,
+        secondTouch.clientY - firstTouch.clientY
+      );
+      const midpointClientX = (firstTouch.clientX + secondTouch.clientX) / 2;
+      const midpointClientY = (firstTouch.clientY + secondTouch.clientY) / 2;
+      const rect = graphCanvas.getBoundingClientRect();
+      const midpointCanvasX = midpointClientX - rect.left;
+      const midpointCanvasY = midpointClientY - rect.top;
+      if (!pinchGesture) {
+        const safeScale = Math.max(GRAPH_ZOOM_MIN, state.transform.scale || 1);
+        pinchGesture = {
+          initialDistance: Math.max(1, distance),
+          initialScale: safeScale,
+          worldX: (midpointCanvasX - state.transform.x) / safeScale,
+          worldY: (midpointCanvasY - state.transform.y) / safeScale,
+        };
+      } else {
+        const ratio = distance / pinchGesture.initialDistance;
+        const nextScale = pinchGesture.initialScale * ratio;
+        state.transform.scale = Math.min(GRAPH_ZOOM_MAX, Math.max(GRAPH_ZOOM_MIN, nextScale));
+        state.transform.x = midpointCanvasX - pinchGesture.worldX * state.transform.scale;
+        state.transform.y = midpointCanvasY - pinchGesture.worldY * state.transform.scale;
+      }
+      isTouchPanning = false;
+      applyTransform();
+      scheduleZoomRedraw();
+      event.preventDefault();
+      return;
+    }
+    if (!isTouchPanning || pinchGesture || event.touches.length !== 1) {
+      return;
+    }
+    const touch = event.touches.item(0);
+    if (!touch) {
+      return;
+    }
+    state.transform.x += touch.clientX - lastTouchPoint.x;
+    state.transform.y += touch.clientY - lastTouchPoint.y;
+    lastTouchPoint = { x: touch.clientX, y: touch.clientY };
+    applyTransform();
+    event.preventDefault();
+  }, { passive: false });
+
+  graphCanvas.addEventListener("touchend", (event: TouchEvent) => {
+    if (activeTouchTaskDrag?.dragging) {
+      return;
+    }
+    if (event.touches.length >= 2) {
+      return;
+    }
+    if (event.touches.length === 1) {
+      const touch = event.touches.item(0);
+      if (touch) {
+        isTouchPanning = true;
+        lastTouchPoint = { x: touch.clientX, y: touch.clientY };
+      }
+      pinchGesture = null;
+      return;
+    }
+    isTouchPanning = false;
+    pinchGesture = null;
+  });
+
+  graphCanvas.addEventListener("touchcancel", () => {
+    isTouchPanning = false;
+    pinchGesture = null;
+  });
+
   graphCanvas.addEventListener("mousedown", (event: any) => {
     if (isDraggingToken) {
       return;
@@ -1458,17 +1822,11 @@ export function createCanvas({
   graphCanvas.addEventListener("wheel", (event: any) => {
     event.preventDefault();
     const delta = event.deltaY > 0 ? -GRAPH_ZOOM_STEP : GRAPH_ZOOM_STEP;
-    const newScale = Math.min(
-      GRAPH_ZOOM_MAX,
-      Math.max(GRAPH_ZOOM_MIN, state.transform.scale + delta)
-    );
+    const newScale = state.transform.scale + delta;
     const rect = graphCanvas.getBoundingClientRect();
     const pointerX = event.clientX - rect.left;
     const pointerY = event.clientY - rect.top;
-    const scaleFactor = newScale / state.transform.scale;
-    state.transform.x = pointerX - (pointerX - state.transform.x) * scaleFactor;
-    state.transform.y = pointerY - (pointerY - state.transform.y) * scaleFactor;
-    state.transform.scale = newScale;
+    applyZoomAtCanvasPoint(newScale, pointerX, pointerY);
     applyTransform();
     scheduleZoomRedraw();
   });

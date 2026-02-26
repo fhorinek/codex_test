@@ -2464,6 +2464,7 @@ html[data-legend-hidden="true"] .legend {
   border: none;
   border-radius: 0;
   overflow: hidden;
+  touch-action: none;
 }
 
 .graph-minimap {

@@ -155,6 +155,9 @@ let lastKanbanClickAt = 0;
 let lastKanbanClickId = "";
 let openReferenceDropdown: HTMLElement | null = null;
 let referenceDropdownHandlersBound = false;
+const KANBAN_TOUCH_DRAG_THRESHOLD_PX = 10;
+const KANBAN_TOUCH_DRAG_SUPPRESS_CLICK_MS = 360;
+let activeKanbanTouchDrag: any = null;
 
 function closeReferenceDropdown() {
   if (!openReferenceDropdown) {
@@ -201,6 +204,81 @@ function isKanbanDragDisabled(state: any): boolean {
     }
   }
   return false;
+}
+
+function findTouchByIdentifier(touches: TouchList, identifier: number): Touch | null {
+  for (let index = 0; index < touches.length; index += 1) {
+    const touch = touches.item(index);
+    if (touch && touch.identifier === identifier) {
+      return touch;
+    }
+  }
+  return null;
+}
+
+function shouldIgnoreKanbanTouchDragStart(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  return Boolean(
+    target.closest(
+      "input, textarea, select, a, .pill, .task-reference-menu, .task-reference-dropdown, .task-reference-option"
+    )
+  );
+}
+
+function clearKanbanTouchDragHoverColumn(drag: any): void {
+  if (!drag?.hoverColumn) {
+    return;
+  }
+  drag.hoverColumn.classList.remove("drag-over");
+  drag.hoverColumn = null;
+}
+
+function setKanbanTouchDragHoverColumn(drag: any, column: HTMLElement | null): void {
+  if (drag?.hoverColumn === column) {
+    return;
+  }
+  clearKanbanTouchDragHoverColumn(drag);
+  if (!column) {
+    return;
+  }
+  column.classList.add("drag-over");
+  drag.hoverColumn = column;
+}
+
+function createKanbanTouchDragGhost(card: HTMLElement, clientX: number, clientY: number): any {
+  const rect = card.getBoundingClientRect();
+  const ghost = card.cloneNode(true) as HTMLElement;
+  ghost.classList.add("drag-ghost");
+  ghost.style.position = "fixed";
+  ghost.style.top = "0";
+  ghost.style.left = "0";
+  ghost.style.margin = "0";
+  ghost.style.width = `${rect.width}px`;
+  ghost.style.height = `${rect.height}px`;
+  ghost.style.pointerEvents = "none";
+  ghost.style.zIndex = "1200";
+  document.body.appendChild(ghost);
+  const offsetX = Math.max(0, Math.min(rect.width, clientX - rect.left));
+  const offsetY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+  ghost.style.transform = `translate(${clientX - offsetX}px, ${clientY - offsetY}px)`;
+  return { ghost, offsetX, offsetY };
+}
+
+function updateKanbanTouchDragGhost(drag: any): void {
+  if (!drag?.ghost) {
+    return;
+  }
+  drag.ghost.style.transform = `translate(${drag.lastClientX - drag.ghostOffsetX}px, ${drag.lastClientY - drag.ghostOffsetY}px)`;
+}
+
+function clearKanbanTouchDragGhost(drag: any): void {
+  if (!drag?.ghost) {
+    return;
+  }
+  drag.ghost.remove();
+  drag.ghost = null;
 }
 
 function uniqueTokens(tokens: any[]): any[] {
@@ -520,13 +598,24 @@ function renderKanbanCardContent({
   }
 }
 
-function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }: any): void {
+function bindKanbanCard({
+  card,
+  state,
+  selectTask,
+  onEditTask,
+  getTaskById,
+  updateTaskState,
+}: any): void {
   card.draggable = !isKanbanDragDisabled(state);
   if (card.dataset.bound) {
     return;
   }
   card.dataset.bound = "true";
   card.addEventListener("click", () => {
+    const suppressUntil = Number(card.dataset.touchDragSuppressUntil || "0");
+    if (Number.isFinite(suppressUntil) && suppressUntil > Date.now()) {
+      return;
+    }
     const task = getTaskById(card.dataset.taskId);
     if (task) {
       selectTask(task);
@@ -551,6 +640,108 @@ function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }: an
     if (task) {
       onEditTask(task);
     }
+  });
+  card.addEventListener("touchstart", (event: TouchEvent) => {
+    if (state?.historyViewerActive || shouldIgnoreKanbanTouchDragStart(event.target)) {
+      return;
+    }
+    if (event.touches.length !== 1 || activeKanbanTouchDrag) {
+      return;
+    }
+    const task = getTaskById(card.dataset.taskId);
+    if (!task) {
+      return;
+    }
+    const touch = event.changedTouches.item(0);
+    if (!touch) {
+      return;
+    }
+    activeKanbanTouchDrag = {
+      taskId: task.id,
+      touchId: touch.identifier,
+      card,
+      startClientX: touch.clientX,
+      startClientY: touch.clientY,
+      lastClientX: touch.clientX,
+      lastClientY: touch.clientY,
+      dragging: false,
+      ghost: null,
+      ghostOffsetX: 0,
+      ghostOffsetY: 0,
+      hoverColumn: null,
+    };
+  }, { passive: true });
+  card.addEventListener("touchmove", (event: TouchEvent) => {
+    const drag = activeKanbanTouchDrag;
+    if (!drag || drag.card !== card) {
+      return;
+    }
+    const touch = findTouchByIdentifier(event.touches, drag.touchId);
+    if (!touch) {
+      return;
+    }
+    drag.lastClientX = touch.clientX;
+    drag.lastClientY = touch.clientY;
+    if (!drag.dragging) {
+      const distance = Math.hypot(
+        drag.lastClientX - drag.startClientX,
+        drag.lastClientY - drag.startClientY
+      );
+      if (distance < KANBAN_TOUCH_DRAG_THRESHOLD_PX) {
+        return;
+      }
+      drag.dragging = true;
+      card.classList.add("dragging");
+      const ghostPayload = createKanbanTouchDragGhost(card, drag.lastClientX, drag.lastClientY);
+      drag.ghost = ghostPayload.ghost;
+      drag.ghostOffsetX = ghostPayload.offsetX;
+      drag.ghostOffsetY = ghostPayload.offsetY;
+      window.dispatchEvent(new CustomEvent("taskdragstart"));
+    }
+    event.preventDefault();
+    updateKanbanTouchDragGhost(drag);
+    const hoveredElement = document.elementFromPoint(drag.lastClientX, drag.lastClientY);
+    const hoveredColumn = hoveredElement?.closest?.(".kanban-column") as HTMLElement | null;
+    setKanbanTouchDragHoverColumn(drag, hoveredColumn);
+  }, { passive: false });
+  card.addEventListener("touchend", (event: TouchEvent) => {
+    const drag = activeKanbanTouchDrag;
+    if (!drag || drag.card !== card) {
+      return;
+    }
+    const endedTouch = findTouchByIdentifier(event.changedTouches, drag.touchId);
+    if (!endedTouch) {
+      return;
+    }
+    drag.lastClientX = endedTouch.clientX;
+    drag.lastClientY = endedTouch.clientY;
+    if (drag.dragging) {
+      event.preventDefault();
+      const task = getTaskById(drag.taskId);
+      const nextState = String(drag.hoverColumn?.dataset?.stateTag || "");
+      if (task && nextState && task.state !== nextState) {
+        updateTaskState(task, nextState);
+      }
+      card.dataset.touchDragSuppressUntil = String(Date.now() + KANBAN_TOUCH_DRAG_SUPPRESS_CLICK_MS);
+      window.dispatchEvent(new CustomEvent("taskdragend"));
+    }
+    clearKanbanTouchDragHoverColumn(drag);
+    clearKanbanTouchDragGhost(drag);
+    card.classList.remove("dragging");
+    activeKanbanTouchDrag = null;
+  }, { passive: false });
+  card.addEventListener("touchcancel", () => {
+    const drag = activeKanbanTouchDrag;
+    if (!drag || drag.card !== card) {
+      return;
+    }
+    if (drag.dragging) {
+      window.dispatchEvent(new CustomEvent("taskdragend"));
+    }
+    clearKanbanTouchDragHoverColumn(drag);
+    clearKanbanTouchDragGhost(drag);
+    card.classList.remove("dragging");
+    activeKanbanTouchDrag = null;
   });
   card.addEventListener("dragstart", (event: DragEvent) => {
     if (isKanbanDragDisabled(state)) {
@@ -655,6 +846,7 @@ function createKanbanColumn({
       selectTask,
       onEditTask,
       getTaskById,
+      updateTaskState,
     });
     list.appendChild(card);
   });
