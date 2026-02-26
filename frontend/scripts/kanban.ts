@@ -501,11 +501,11 @@ function renderKanbanCardContent({
 }
 
 function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }: any): void {
+  card.draggable = !Boolean(state?.historyViewerActive);
   if (card.dataset.bound) {
     return;
   }
   card.dataset.bound = "true";
-  card.draggable = true;
   card.addEventListener("click", () => {
     const task = getTaskById(card.dataset.taskId);
     if (task) {
@@ -533,6 +533,10 @@ function bindKanbanCard({ card, state, selectTask, onEditTask, getTaskById }: an
     }
   });
   card.addEventListener("dragstart", (event: DragEvent) => {
+    if (state?.historyViewerActive) {
+      event.preventDefault();
+      return;
+    }
     const task = getTaskById(card.dataset.taskId);
     if (!task) {
       return;
@@ -636,6 +640,9 @@ function createKanbanColumn({
   });
   column.appendChild(list);
   column.addEventListener("dragover", (event) => {
+    if (state?.historyViewerActive) {
+      return;
+    }
     event.preventDefault();
     column.classList.add("drag-over");
   });
@@ -646,6 +653,11 @@ function createKanbanColumn({
     column.classList.remove("drag-over");
   });
   column.addEventListener("drop", (event) => {
+    if (state?.historyViewerActive) {
+      event.preventDefault();
+      column.classList.remove("drag-over");
+      return;
+    }
     event.preventDefault();
     column.classList.remove("drag-over");
     const dataTransfer = event.dataTransfer;

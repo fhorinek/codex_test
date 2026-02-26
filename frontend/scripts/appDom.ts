@@ -52,6 +52,25 @@ type AppDomSpecific = {
   legend: HTMLElement;
   divider: HTMLElement;
   kanbanDivider: HTMLElement;
+  historyButton: HTMLButtonElement | null;
+  boardHistoryMode: HTMLElement | null;
+  historyViewerBanner: HTMLElement | null;
+  historyViewerBannerLabel: HTMLElement | null;
+  historyPanel: HTMLElement | null;
+  historyTagButton: HTMLButtonElement | null;
+  historyRevertButton: HTMLButtonElement | null;
+  historyCancelButton: HTMLButtonElement | null;
+  historyStepPrev: HTMLButtonElement | null;
+  historyStepNext: HTMLButtonElement | null;
+  historySlider: HTMLInputElement | null;
+  historyMarks: HTMLElement | null;
+  historyCurrentLabel: HTMLElement | null;
+  historyTagModal: HTMLElement | null;
+  historyTagClose: HTMLButtonElement | null;
+  historyTagInput: HTMLInputElement | null;
+  historyTagError: HTMLElement | null;
+  historyTagCancel: HTMLButtonElement | null;
+  historyTagSave: HTMLButtonElement | null;
   spellcheckToggleMain: HTMLButtonElement | null;
   spellcheckToggleModal: HTMLButtonElement | null;
 };
@@ -77,6 +96,8 @@ function createAppDomRaw(doc: Document = document) {
     loadButton: doc.getElementById("load-button"),
     saveButton: doc.getElementById("save-button"),
     formatButton: doc.getElementById("format-button"),
+    historyButton: doc.getElementById("history-button"),
+    boardHistoryMode: doc.getElementById("board-history-mode"),
     connectButton: doc.getElementById("connect-button"),
     themeButton: doc.getElementById("theme-button"),
     fullscreenButton: doc.getElementById("fullscreen-button"),
@@ -223,6 +244,23 @@ function createAppDomRaw(doc: Document = document) {
     storyPointsSummaryKanban: doc.getElementById("story-points-summary-kanban"),
     graphCanvas: doc.getElementById("graph-canvas"),
     divider: doc.getElementById("divider"),
+    historyViewerBanner: doc.getElementById("history-viewer-banner"),
+    historyViewerBannerLabel: doc.getElementById("history-viewer-banner-label"),
+    historyPanel: doc.getElementById("history-panel"),
+    historyTagButton: doc.getElementById("history-tag-button"),
+    historyRevertButton: doc.getElementById("history-revert-button"),
+    historyCancelButton: doc.getElementById("history-cancel-button"),
+    historyStepPrev: doc.getElementById("history-step-prev"),
+    historyStepNext: doc.getElementById("history-step-next"),
+    historySlider: doc.getElementById("history-slider"),
+    historyMarks: doc.getElementById("history-marks"),
+    historyCurrentLabel: doc.getElementById("history-current-label"),
+    historyTagModal: doc.getElementById("history-tag-modal"),
+    historyTagClose: doc.getElementById("history-tag-close"),
+    historyTagInput: doc.getElementById("history-tag-input"),
+    historyTagError: doc.getElementById("history-tag-error"),
+    historyTagCancel: doc.getElementById("history-tag-cancel"),
+    historyTagSave: doc.getElementById("history-tag-save"),
     spellcheckToggleMain: doc.getElementById("spellcheck-toggle-main"),
     spellcheckToggleModal: doc.getElementById("spellcheck-toggle-modal"),
   };

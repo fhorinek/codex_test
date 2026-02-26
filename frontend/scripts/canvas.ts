@@ -38,6 +38,7 @@ export function createCanvas({
   onFiltersChange,
 }: CreateCanvasOptions) {
   const { graphNodes, graphLines, graphCanvas, graphMinimap, minimapSvg } = dom;
+  const isHistoryViewerActive = (): boolean => Boolean(state?.historyViewerActive);
   const GRAPH_ZOOM_MIN = 0.25;
   const GRAPH_ZOOM_MAX = 2.5;
   const GRAPH_ZOOM_STEP = 0.1;
@@ -533,11 +534,11 @@ export function createCanvas({
   };
 
   const bindTaskNode = (node: any): void => {
+    node.draggable = !isHistoryViewerActive();
     if (node.dataset.bound) {
       return;
     }
     node.dataset.bound = "true";
-    node.draggable = true;
     node.addEventListener("click", () => {
       const task = getTaskById(node.dataset.taskId);
       if (task) {
@@ -566,6 +567,10 @@ export function createCanvas({
       }
     });
     node.addEventListener("dragstart", (event: DragEvent) => {
+      if (isHistoryViewerActive()) {
+        event.preventDefault();
+        return;
+      }
       const task = getTaskById(node.dataset.taskId);
       if (!task) {
         return;
@@ -620,6 +625,9 @@ export function createCanvas({
       window.dispatchEvent(new CustomEvent("taskdragend"));
     });
     node.addEventListener("dragover", (event: DragEvent) => {
+      if (isHistoryViewerActive()) {
+        return;
+      }
       event.preventDefault();
       if (event.dataTransfer) {
         event.dataTransfer.dropEffect = "move";
@@ -714,6 +722,11 @@ export function createCanvas({
       node.classList.remove("drag-parent-target");
     });
     node.addEventListener("drop", (event: DragEvent) => {
+      if (isHistoryViewerActive()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       const parentTargetVisible = node.classList.contains("drag-parent-target");
@@ -1333,6 +1346,10 @@ export function createCanvas({
   let lastPoint = { x: 0, y: 0 };
 
   graphCanvas.addEventListener("dragstart", (event: any) => {
+    if (isHistoryViewerActive()) {
+      event.preventDefault();
+      return;
+    }
     if (event.target.closest(".pill")) {
       isDraggingToken = true;
       isPanning = false;
@@ -1413,6 +1430,9 @@ export function createCanvas({
   });
 
   graphCanvas.addEventListener("dragover", (event: any) => {
+    if (isHistoryViewerActive()) {
+      return;
+    }
     event.preventDefault();
     if (event.dataTransfer) {
       event.dataTransfer.dropEffect = "move";
@@ -1428,6 +1448,10 @@ export function createCanvas({
   });
 
   graphCanvas.addEventListener("drop", (event: any) => {
+    if (isHistoryViewerActive()) {
+      event.preventDefault();
+      return;
+    }
     if (event.defaultPrevented) {
       return;
     }

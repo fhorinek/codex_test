@@ -6,6 +6,8 @@ import logging
 import os
 import re
 import secrets
+import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,6 +47,8 @@ SPACES_DIR = Path(__file__).resolve().parent / "spaces"
 SPACES_DIR.mkdir(parents=True, exist_ok=True)
 YSTORE_DIR = Path(__file__).resolve().parent / "ystore"
 YSTORE_DIR.mkdir(parents=True, exist_ok=True)
+HISTORY_DIR = Path(__file__).resolve().parent / "history"
+HISTORY_DIR.mkdir(parents=True, exist_ok=True)
 SESSIONS_FILE = Path(__file__).resolve().parent / "sessions.json"
 
 logging.basicConfig(
@@ -68,6 +72,10 @@ AWARENESS_TTL_MS = PRESENCE_TTL * 1000
 presence: Dict[str, Dict[str, float]] = {}
 space_save_tasks: Dict[str, asyncio.Task] = {}
 SPACE_SAVE_DELAY = 0.5
+HISTORY_AUTO_MIN_INTERVAL_SECONDS = 5 * 60
+SESSIONS_LOCK = threading.RLock()
+USERS_STORE_LOCK = threading.RLock()
+HISTORY_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -226,33 +234,61 @@ def verify_password(user_record: Dict[str, Any], password: str) -> bool:
     return md5_digest(password, salt) == digest
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=str(path.parent),
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+        temp_name = handle.name
+    os.replace(temp_name, path)
+
+
+def _mask_secret(value: str) -> str:
+    secret = value.strip() if isinstance(value, str) else ""
+    if not secret:
+        return ""
+    if len(secret) <= 4:
+        return "*" * len(secret)
+    return f"{'*' * max(4, len(secret) - 4)}{secret[-4:]}"
+
+
 def _load_sessions_data() -> Dict[str, Any]:
-    if not SESSIONS_FILE.exists():
-        return {"sessions": {}}
-    try:
-        raw = SESSIONS_FILE.read_text(encoding="utf-8")
-    except Exception:
-        logger.exception("Failed to read sessions from %s", SESSIONS_FILE)
-        return {"sessions": {}}
-    try:
-        data = json.loads(raw) if raw.strip() else {}
-    except Exception:
-        logger.exception("Failed to parse sessions JSON from %s", SESSIONS_FILE)
-        return {"sessions": {}}
-    if not isinstance(data, dict):
-        return {"sessions": {}}
-    sessions = data.get("sessions")
-    if not isinstance(sessions, dict):
-        data["sessions"] = {}
-    return data
+    with SESSIONS_LOCK:
+        if not SESSIONS_FILE.exists():
+            return {"sessions": {}}
+        try:
+            raw = SESSIONS_FILE.read_text(encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to read sessions from %s", SESSIONS_FILE)
+            return {"sessions": {}}
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+        except Exception:
+            logger.exception("Failed to parse sessions JSON from %s", SESSIONS_FILE)
+            return {"sessions": {}}
+        if not isinstance(data, dict):
+            return {"sessions": {}}
+        sessions = data.get("sessions")
+        if not isinstance(sessions, dict):
+            data["sessions"] = {}
+        return data
 
 
 def _save_sessions_data(data: Dict[str, Any]) -> None:
     try:
-        SESSIONS_FILE.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        with SESSIONS_LOCK:
+            _atomic_write_text(
+                SESSIONS_FILE,
+                json.dumps(data, ensure_ascii=False, indent=2),
+            )
     except Exception:
         logger.exception("Failed to write sessions to %s", SESSIONS_FILE)
 
@@ -303,157 +339,169 @@ def _cleanup_sessions(data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], 
 
 
 def create_session(username: str) -> Tuple[str, int]:
-    data = _load_sessions_data()
-    sessions, _ = _cleanup_sessions(data)
-    token = secrets.token_urlsafe(32)
-    now = int(time.time())
-    expires_at = now + SESSION_TTL_SECONDS
-    sessions[token] = {
-        "username": username,
-        "created_at": now,
-        "expires_at": expires_at,
-        "last_space": "",
-    }
-    data["sessions"] = sessions
-    _save_sessions_data(data)
-    return token, expires_at
+    with SESSIONS_LOCK:
+        data = _load_sessions_data()
+        sessions, _ = _cleanup_sessions(data)
+        token = secrets.token_urlsafe(32)
+        now = int(time.time())
+        expires_at = now + SESSION_TTL_SECONDS
+        sessions[token] = {
+            "username": username,
+            "created_at": now,
+            "expires_at": expires_at,
+            "last_space": "",
+        }
+        data["sessions"] = sessions
+        _save_sessions_data(data)
+        return token, expires_at
 
 
 def remove_session(token: Optional[str]) -> None:
     if not token:
         return
-    data = _load_sessions_data()
-    sessions, changed = _cleanup_sessions(data)
-    if token in sessions:
-        sessions.pop(token, None)
-        changed = True
-    if changed:
-        data["sessions"] = sessions
-        _save_sessions_data(data)
+    with SESSIONS_LOCK:
+        data = _load_sessions_data()
+        sessions, changed = _cleanup_sessions(data)
+        if token in sessions:
+            sessions.pop(token, None)
+            changed = True
+        if changed:
+            data["sessions"] = sessions
+            _save_sessions_data(data)
 
 
-def remove_sessions_for_user(username: str) -> None:
-    data = _load_sessions_data()
-    sessions, changed = _cleanup_sessions(data)
-    keys = [token for token, payload in sessions.items() if payload.get("username") == username]
-    if keys:
-        for key in keys:
-            sessions.pop(key, None)
-        changed = True
-    if changed:
-        data["sessions"] = sessions
-        _save_sessions_data(data)
+def remove_sessions_for_user(username: str, keep_token: Optional[str] = None) -> None:
+    with SESSIONS_LOCK:
+        data = _load_sessions_data()
+        sessions, changed = _cleanup_sessions(data)
+        keys = [
+            token
+            for token, payload in sessions.items()
+            if payload.get("username") == username and token != keep_token
+        ]
+        if keys:
+            for key in keys:
+                sessions.pop(key, None)
+            changed = True
+        if changed:
+            data["sessions"] = sessions
+            _save_sessions_data(data)
 
 
 def auth_from_session(token: Optional[str]) -> Optional[AuthUser]:
     if not token:
         return None
-    data = _load_sessions_data()
-    sessions, changed = _cleanup_sessions(data)
-    payload = sessions.get(token)
-    if changed:
-        data["sessions"] = sessions
-        _save_sessions_data(data)
-    if not payload:
-        return None
-    username = payload.get("username")
-    if not isinstance(username, str) or not username:
-        return None
-    users = load_users_store()
-    record = users.get(username)
-    if not record:
-        sessions.pop(token, None)
-        data["sessions"] = sessions
-        _save_sessions_data(data)
-        return None
-    return user_record_to_auth(username, record)
+    with SESSIONS_LOCK:
+        data = _load_sessions_data()
+        sessions, changed = _cleanup_sessions(data)
+        payload = sessions.get(token)
+        if changed:
+            data["sessions"] = sessions
+            _save_sessions_data(data)
+        if not payload:
+            return None
+        username = payload.get("username")
+        if not isinstance(username, str) or not username:
+            return None
+        users = load_users_store()
+        record = users.get(username)
+        if not record:
+            sessions.pop(token, None)
+            data["sessions"] = sessions
+            _save_sessions_data(data)
+            return None
+        return user_record_to_auth(username, record)
 
 
 def get_session_last_space(token: Optional[str], auth: AuthUser) -> str:
     if not token:
         return ""
-    data = _load_sessions_data()
-    sessions, changed = _cleanup_sessions(data)
-    payload = sessions.get(token)
-    if not isinstance(payload, dict):
+    with SESSIONS_LOCK:
+        data = _load_sessions_data()
+        sessions, changed = _cleanup_sessions(data)
+        payload = sessions.get(token)
+        if not isinstance(payload, dict):
+            if changed:
+                data["sessions"] = sessions
+                _save_sessions_data(data)
+            return ""
+        last_space = payload.get("last_space")
+        if not isinstance(last_space, str):
+            if changed:
+                data["sessions"] = sessions
+                _save_sessions_data(data)
+            return ""
+        candidate = last_space.strip()
+        if not candidate:
+            if changed:
+                data["sessions"] = sessions
+                _save_sessions_data(data)
+            return ""
+        if not re.fullmatch(SPACE_ID_RE, candidate):
+            payload.pop("last_space", None)
+            data["sessions"] = sessions
+            _save_sessions_data(data)
+            return ""
+        if not space_path(candidate).exists() or not can_access_space(auth, candidate):
+            payload.pop("last_space", None)
+            data["sessions"] = sessions
+            _save_sessions_data(data)
+            return ""
         if changed:
             data["sessions"] = sessions
             _save_sessions_data(data)
-        return ""
-    last_space = payload.get("last_space")
-    if not isinstance(last_space, str):
-        if changed:
-            data["sessions"] = sessions
-            _save_sessions_data(data)
-        return ""
-    candidate = last_space.strip()
-    if not candidate:
-        if changed:
-            data["sessions"] = sessions
-            _save_sessions_data(data)
-        return ""
-    if not re.fullmatch(SPACE_ID_RE, candidate):
-        payload.pop("last_space", None)
-        data["sessions"] = sessions
-        _save_sessions_data(data)
-        return ""
-    if not space_path(candidate).exists() or not can_access_space(auth, candidate):
-        payload.pop("last_space", None)
-        data["sessions"] = sessions
-        _save_sessions_data(data)
-        return ""
-    if changed:
-        data["sessions"] = sessions
-        _save_sessions_data(data)
-    return candidate
+        return candidate
 
 
 def set_session_last_space(token: Optional[str], space_id: str) -> None:
     if not token:
         return
-    data = _load_sessions_data()
-    sessions, changed = _cleanup_sessions(data)
-    payload = sessions.get(token)
-    if not isinstance(payload, dict):
+    with SESSIONS_LOCK:
+        data = _load_sessions_data()
+        sessions, changed = _cleanup_sessions(data)
+        payload = sessions.get(token)
+        if not isinstance(payload, dict):
+            if changed:
+                data["sessions"] = sessions
+                _save_sessions_data(data)
+            return
+        current = payload.get("last_space")
+        if current != space_id:
+            payload["last_space"] = space_id
+            changed = True
         if changed:
             data["sessions"] = sessions
             _save_sessions_data(data)
-        return
-    current = payload.get("last_space")
-    if current != space_id:
-        payload["last_space"] = space_id
-        changed = True
-    if changed:
-        data["sessions"] = sessions
-        _save_sessions_data(data)
 
 
 def update_last_space_for_renamed_space(source_id: str, target_id: str) -> None:
-    data = _load_sessions_data()
-    sessions, changed = _cleanup_sessions(data)
-    for payload in sessions.values():
-        if not isinstance(payload, dict):
-            continue
-        if payload.get("last_space") == source_id:
-            payload["last_space"] = target_id
-            changed = True
-    if changed:
-        data["sessions"] = sessions
-        _save_sessions_data(data)
+    with SESSIONS_LOCK:
+        data = _load_sessions_data()
+        sessions, changed = _cleanup_sessions(data)
+        for payload in sessions.values():
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("last_space") == source_id:
+                payload["last_space"] = target_id
+                changed = True
+        if changed:
+            data["sessions"] = sessions
+            _save_sessions_data(data)
 
 
 def clear_last_space_for_deleted_space(space_id: str) -> None:
-    data = _load_sessions_data()
-    sessions, changed = _cleanup_sessions(data)
-    for payload in sessions.values():
-        if not isinstance(payload, dict):
-            continue
-        if payload.get("last_space") == space_id:
-            payload.pop("last_space", None)
-            changed = True
-    if changed:
-        data["sessions"] = sessions
-        _save_sessions_data(data)
+    with SESSIONS_LOCK:
+        data = _load_sessions_data()
+        sessions, changed = _cleanup_sessions(data)
+        for payload in sessions.values():
+            if not isinstance(payload, dict):
+                continue
+            if payload.get("last_space") == space_id:
+                payload.pop("last_space", None)
+                changed = True
+        if changed:
+            data["sessions"] = sessions
+            _save_sessions_data(data)
 
 
 def _normalize_users_store(raw_users: Any) -> Tuple[Dict[str, Dict[str, Any]], bool]:
@@ -500,36 +548,38 @@ def ensure_personal_spaces(users: Dict[str, Dict[str, Any]]) -> None:
 
 
 def load_users_store() -> Dict[str, Dict[str, Any]]:
-    users_data = load_users_config_data()
-    users, changed = _normalize_users_store(users_data.get("users"))
+    with USERS_STORE_LOCK:
+        users_data = load_users_config_data()
+        users, changed = _normalize_users_store(users_data.get("users"))
 
-    if not users:
-        users = {
-            DEFAULT_BOOTSTRAP_USERNAME: {
-                "display_name": DEFAULT_BOOTSTRAP_USERNAME,
-                "role": "admin",
-                "spaces": [],
-                "must_change_password": True,
-                **build_password_record(DEFAULT_BOOTSTRAP_PASSWORD),
+        if not users:
+            users = {
+                DEFAULT_BOOTSTRAP_USERNAME: {
+                    "display_name": DEFAULT_BOOTSTRAP_USERNAME,
+                    "role": "admin",
+                    "spaces": [],
+                    "must_change_password": True,
+                    **build_password_record(DEFAULT_BOOTSTRAP_PASSWORD),
+                }
             }
-        }
-        changed = True
-    if not any(record.get("role") == "admin" for record in users.values()):
-        first_user = sorted(users.keys())[0]
-        users[first_user]["role"] = "admin"
-        changed = True
-    if changed:
-        users_data["users"] = users
-        save_users_config_data(users_data)
-    ensure_personal_spaces(users)
-    return users
+            changed = True
+        if not any(record.get("role") == "admin" for record in users.values()):
+            first_user = sorted(users.keys())[0]
+            users[first_user]["role"] = "admin"
+            changed = True
+        if changed:
+            users_data["users"] = users
+            save_users_config_data(users_data)
+        ensure_personal_spaces(users)
+        return users
 
 
 def save_users_store(users: Dict[str, Dict[str, Any]]) -> None:
-    users_data = load_users_config_data()
-    users_data["users"] = users
-    save_users_config_data(users_data)
-    ensure_personal_spaces(users)
+    with USERS_STORE_LOCK:
+        users_data = load_users_config_data()
+        users_data["users"] = users
+        save_users_config_data(users_data)
+        ensure_personal_spaces(users)
 
 
 def sorted_folder_names(names: Set[str]) -> List[str]:
@@ -618,6 +668,61 @@ def scan_space_files() -> Dict[str, Path]:
     return mapping
 
 
+def canonical_space_path_for_file(path: Path, users: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
+    space_id = normalize_space_id_from_filename(path)
+    if not space_id:
+        return ""
+    users = users or load_users_store()
+    if space_id in users and path.parent == personal_folder_path():
+        return space_id
+    folder_name = folder_from_space_path(path)
+    if not folder_name or is_personal_folder_name(folder_name):
+        return space_id
+    return f"{folder_name}/{space_id}"
+
+
+def list_space_entries(users: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    users = users or load_users_store()
+    entries: List[Dict[str, Any]] = []
+    for path in iter_space_files():
+        space_id = normalize_space_id_from_filename(path)
+        if not space_id:
+            continue
+        canonical_path = canonical_space_path_for_file(path, users)
+        if not canonical_path:
+            continue
+        folder_name = folder_from_space_path(path)
+        personal = space_id in users and path.parent == personal_folder_path()
+        if is_personal_folder_name(folder_name):
+            folder_name = ""
+        entries.append(
+            {
+                "id": space_id,
+                "path": canonical_path,
+                "folder": folder_name,
+                "personal": personal,
+                "file": path,
+            }
+        )
+    entries.sort(key=lambda entry: str(entry.get("path") or entry.get("id") or ""))
+    return entries
+
+
+def find_space_file_by_access_path(
+    space_path_value: str,
+    users: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Optional[Path]:
+    normalized = normalize_folder_name(space_path_value)
+    if not normalized:
+        return None
+    users = users or load_users_store()
+    for entry in list_space_entries(users):
+        if entry.get("path") == normalized:
+            file_path = entry.get("file")
+            return file_path if isinstance(file_path, Path) else None
+    return None
+
+
 def normalize_space_id_from_filename(path: Path) -> str:
     if path.suffix != ".txt":
         return ""
@@ -632,13 +737,30 @@ def find_space_file(space_id: str) -> Optional[Path]:
     return scan_space_files().get(safe_id)
 
 
+def resolve_space_file(
+    space_id: str,
+    *,
+    users: Optional[Dict[str, Dict[str, Any]]] = None,
+    space_path_hint: Optional[str] = None,
+) -> Optional[Path]:
+    safe_id = sanitize_space(space_id)
+    users = users or load_users_store()
+    normalized_hint = normalize_folder_name(space_path_hint)
+    if normalized_hint:
+        hinted_path = find_space_file_by_access_path(normalized_hint, users)
+        if hinted_path and normalize_space_id_from_filename(hinted_path) == safe_id:
+            return hinted_path
+    return find_space_file(safe_id)
+
+
 def folder_for_space(
     space_id: str,
     users: Dict[str, Dict[str, Any]],
+    space_path_hint: Optional[str] = None,
 ) -> str:
     if space_id in users:
         return PERSONAL_FOLDER_NAME
-    path = find_space_file(space_id)
+    path = resolve_space_file(space_id, users=users, space_path_hint=space_path_hint)
     if not path:
         return ""
     folder_name = folder_from_space_path(path)
@@ -661,9 +783,11 @@ def build_space_path_index(
         normalized = normalize_folder_name(folder)
         if normalized:
             folder_paths.add(normalized)
-    for space_id in existing_space_ids():
-        path = space_access_path(space_id, users)
-        normalized_path = normalize_folder_name(path)
+    for entry in list_space_entries(users):
+        space_id = entry.get("id")
+        if not isinstance(space_id, str):
+            continue
+        normalized_path = normalize_folder_name(entry.get("path"))
         if not normalized_path:
             continue
         space_by_path[normalized_path] = space_id
@@ -689,40 +813,41 @@ def update_access_paths_for_space_change(
 ) -> None:
     if not old_space_path or not new_space_path or old_space_path == new_space_path:
         return
-    users = load_users_store()
-    changed = False
-    for username, record in users.items():
-        role = record.get("role", "user")
-        if role != "user":
-            continue
-        rules = record.get("spaces")
-        if not isinstance(rules, list):
-            continue
-        next_rules: List[str] = []
-        local_changed = False
-        for raw_rule in rules:
-            if not isinstance(raw_rule, str):
+    with USERS_STORE_LOCK:
+        users = load_users_store()
+        changed = False
+        for username, record in users.items():
+            role = record.get("role", "user")
+            if role != "user":
                 continue
-            rule = raw_rule.strip()
-            if not rule:
+            rules = record.get("spaces")
+            if not isinstance(rules, list):
                 continue
-            if rule == old_space_path:
-                next_rules.append(new_space_path)
-                local_changed = True
-            else:
-                next_rules.append(rule)
-        if local_changed:
-            normalized = normalize_user_record(
-                username,
-                {
-                    **record,
-                    "spaces": next_rules,
-                },
-            )
-            users[username] = normalized
-            changed = True
-    if changed:
-        save_users_store(users)
+            next_rules: List[str] = []
+            local_changed = False
+            for raw_rule in rules:
+                if not isinstance(raw_rule, str):
+                    continue
+                rule = raw_rule.strip()
+                if not rule:
+                    continue
+                if rule == old_space_path:
+                    next_rules.append(new_space_path)
+                    local_changed = True
+                else:
+                    next_rules.append(rule)
+            if local_changed:
+                normalized = normalize_user_record(
+                    username,
+                    {
+                        **record,
+                        "spaces": next_rules,
+                    },
+                )
+                users[username] = normalized
+                changed = True
+        if changed:
+            save_users_store(users)
 
 
 def user_record_to_auth(username: str, record: Dict[str, Any]) -> AuthUser:
@@ -802,6 +927,7 @@ def can_access_space(
     auth: AuthUser,
     space_id: str,
     users: Optional[Dict[str, Dict[str, Any]]] = None,
+    space_path_hint: Optional[str] = None,
 ) -> bool:
     users = users or load_users_store()
     if is_personal_space(space_id, users):
@@ -810,7 +936,11 @@ def can_access_space(
         return auth.username == space_id
     if auth.role in {"admin", "manager"}:
         return True
-    space_access = space_access_path(space_id, users)
+    normalized_hint = normalize_folder_name(space_path_hint)
+    if normalized_hint and normalized_hint.split("/")[-1] == space_id:
+        space_access = normalized_hint
+    else:
+        space_access = space_access_path(space_id, users)
     rules = set(auth.spaces)
     for rule in rules:
         if path_rule_allows_space(rule, space_access):
@@ -822,8 +952,9 @@ def ensure_space_access(
     auth: AuthUser,
     space_id: str,
     users: Optional[Dict[str, Dict[str, Any]]] = None,
+    space_path_hint: Optional[str] = None,
 ) -> None:
-    if not can_access_space(auth, space_id, users):
+    if not can_access_space(auth, space_id, users, space_path_hint=space_path_hint):
         raise HTTPException(status_code=403, detail="Access denied.")
 
 
@@ -911,6 +1042,19 @@ def list_visible_spaces(auth: AuthUser) -> List[str]:
     return [space_id for space_id in spaces if can_access_space(auth, space_id, users)]
 
 
+def list_visible_space_entries(auth: AuthUser) -> List[Dict[str, Any]]:
+    users = load_users_store()
+    visible: List[Dict[str, Any]] = []
+    for entry in list_space_entries(users):
+        space_id = entry.get("id")
+        space_path_value = entry.get("path")
+        if not isinstance(space_id, str) or not isinstance(space_path_value, str):
+            continue
+        if can_access_space(auth, space_id, users, space_path_hint=space_path_value):
+            visible.append(entry)
+    return visible
+
+
 def existing_space_ids() -> Set[str]:
     return set(scan_space_files().keys())
 
@@ -969,21 +1113,315 @@ def validate_assigned_spaces(
     return sorted(result)
 
 
-def space_path(space_id: str) -> Path:
+def space_path(
+    space_id: str,
+    *,
+    users: Optional[Dict[str, Dict[str, Any]]] = None,
+    space_path_hint: Optional[str] = None,
+) -> Path:
     safe = sanitize_space(space_id)
-    existing = find_space_file(safe)
+    existing = resolve_space_file(safe, users=users, space_path_hint=space_path_hint)
     if existing:
         return existing
     return SPACES_DIR / f"{safe}.txt"
 
 
-def ystore_path(space_id: str) -> Path:
+def ystore_key_for_space(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None) -> str:
     safe = sanitize_space(space_id)
-    return YSTORE_DIR / f"{safe}.ystore"
+    normalized_hint = normalize_folder_name(space_path_hint)
+    if normalized_hint and normalized_hint.split("/")[-1] == safe:
+        return history_key_from_space_canonical_path(normalized_hint)
+    users = users or load_users_store()
+    canonical = space_access_path(safe, users)
+    return history_key_from_space_canonical_path(canonical)
 
 
-def room_name(space_id: str) -> str:
-    return f"/ws/{sanitize_space(space_id)}"
+def ystore_path(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None) -> Path:
+    key = ystore_key_for_space(space_id, users=users, space_path_hint=space_path_hint)
+    return YSTORE_DIR / f"{key}.ystore"
+
+
+def history_key_from_space_canonical_path(space_path_value: str) -> str:
+    canonical = normalize_folder_name(space_path_value)
+    if not canonical:
+        canonical = sanitize_space(space_path_value)
+    # Filesystem-safe and stable for a given canonical path.
+    raw = canonical.encode("utf-8")
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+    return encoded or "root"
+
+
+def history_key_for_space(
+    space_id: str,
+    users: Optional[Dict[str, Dict[str, Any]]] = None,
+    *,
+    space_path_hint: Optional[str] = None,
+) -> str:
+    safe_id = sanitize_space(space_id)
+    normalized_hint = normalize_folder_name(space_path_hint)
+    if normalized_hint and normalized_hint.split("/")[-1] == safe_id:
+        return history_key_from_space_canonical_path(normalized_hint)
+    users = users or load_users_store()
+    canonical = space_access_path(safe_id, users)
+    return history_key_from_space_canonical_path(canonical)
+
+
+def move_history_for_space_path_change(old_space_path: str, new_space_path: str) -> None:
+    old_path = normalize_folder_name(old_space_path)
+    new_path = normalize_folder_name(new_space_path)
+    if not old_path:
+        old_path = sanitize_space(old_space_path)
+    if not new_path:
+        new_path = sanitize_space(new_space_path)
+    if old_path == new_path:
+        return
+
+    old_key = history_key_from_space_canonical_path(old_path)
+    new_key = history_key_from_space_canonical_path(new_path)
+    if old_key == new_key:
+        return
+
+    source_dir = history_space_dir(old_key)
+    target_dir = history_space_dir(new_key)
+
+    with HISTORY_LOCK:
+        if not source_dir.exists():
+            return
+        if not target_dir.exists():
+            source_dir.rename(target_dir)
+            return
+
+        source_entries = load_history_index(old_key)
+        target_entries = load_history_index(new_key)
+        merged_entries = list(target_entries)
+
+        for entry in source_entries:
+            checkpoint_id = entry.get("id")
+            if not isinstance(checkpoint_id, str):
+                continue
+            source_file = history_checkpoint_path(old_key, checkpoint_id)
+            if not source_file.exists():
+                continue
+            target_checkpoint_id = checkpoint_id
+            target_file = history_checkpoint_path(new_key, target_checkpoint_id)
+            if target_file.exists():
+                target_checkpoint_id = f"{checkpoint_id}-{secrets.token_hex(2)}"
+                target_file = history_checkpoint_path(new_key, target_checkpoint_id)
+                entry = {**entry, "id": target_checkpoint_id}
+            target_file.parent.mkdir(parents=True, exist_ok=True)
+            source_file.rename(target_file)
+            merged_entries.append(entry)
+
+        save_history_index(new_key, merged_entries)
+        try:
+            source_index = history_index_path(old_key)
+            if source_index.exists():
+                source_index.unlink()
+            source_dir.rmdir()
+        except Exception:
+            logger.exception("Failed to clean old history dir %s after merge", source_dir)
+
+
+def history_space_dir(space_key: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", space_key or ""):
+        raise HTTPException(status_code=400, detail="Invalid history key.")
+    return HISTORY_DIR / space_key
+
+
+def history_index_path(space_key: str) -> Path:
+    return history_space_dir(space_key) / "index.json"
+
+
+def history_checkpoint_path(space_key: str, checkpoint_id: str) -> Path:
+    if not re.fullmatch(r"[a-zA-Z0-9_.-]+", checkpoint_id or ""):
+        raise HTTPException(status_code=400, detail="Invalid checkpoint id.")
+    if checkpoint_id == "index":
+        raise HTTPException(status_code=400, detail="Invalid checkpoint id.")
+    return history_space_dir(space_key) / f"{checkpoint_id}.txt"
+
+
+def history_content_hash(content: str) -> str:
+    return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
+
+
+def _history_timestamp_iso(epoch_seconds: int) -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch_seconds))
+
+
+def _normalize_history_index(raw: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return []
+    entries = raw.get("checkpoints")
+    if not isinstance(entries, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    for item in entries:
+        if not isinstance(item, dict):
+            continue
+        checkpoint_id = item.get("id")
+        if not isinstance(checkpoint_id, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]+", checkpoint_id):
+            continue
+        created_at = item.get("created_at")
+        if not isinstance(created_at, int):
+            continue
+        kind = item.get("kind")
+        if kind not in {"auto", "manual", "revert-base"}:
+            kind = "auto"
+        label = item.get("label")
+        if not isinstance(label, str) or not label.strip():
+            label = None
+        content_hash = item.get("content_hash")
+        if not isinstance(content_hash, str) or not re.fullmatch(r"[0-9a-f]{64}", content_hash):
+            continue
+        size = item.get("size")
+        if not isinstance(size, int) or size < 0:
+            size = 0
+        created_at_iso = item.get("created_at_iso")
+        if not isinstance(created_at_iso, str) or not created_at_iso.strip():
+            created_at_iso = _history_timestamp_iso(created_at)
+        normalized.append(
+            {
+                "id": checkpoint_id,
+                "created_at": created_at,
+                "created_at_iso": created_at_iso,
+                "kind": kind,
+                "label": label,
+                "content_hash": content_hash,
+                "size": size,
+            }
+        )
+    normalized.sort(key=lambda entry: int(entry.get("created_at", 0)))
+    return normalized
+
+
+def load_history_index(space_key: str) -> List[Dict[str, Any]]:
+    index_path = history_index_path(space_key)
+    with HISTORY_LOCK:
+        if not index_path.exists():
+            return []
+        try:
+            raw = index_path.read_text(encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to read history index for key %s", space_key)
+            return []
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+        except Exception:
+            logger.exception("Failed to parse history index for key %s", space_key)
+            return []
+        return _normalize_history_index(data)
+
+
+def save_history_index(space_key: str, checkpoints: List[Dict[str, Any]]) -> None:
+    index_path = history_index_path(space_key)
+    payload = json.dumps(
+        {
+            "checkpoints": _normalize_history_index({"checkpoints": checkpoints}),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    with HISTORY_LOCK:
+        _atomic_write_text(index_path, payload)
+
+
+def read_history_checkpoint(space_key: str, checkpoint_id: str) -> str:
+    path = history_checkpoint_path(space_key, checkpoint_id)
+    with HISTORY_LOCK:
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="History checkpoint not found.")
+        try:
+            return path.read_text(encoding="utf-8")
+        except Exception:
+            logger.exception("Failed to read history checkpoint %s for key %s", checkpoint_id, space_key)
+            raise HTTPException(status_code=500, detail="Failed to read history checkpoint.")
+
+
+def create_history_checkpoint(
+    space_key: str,
+    content: str,
+    *,
+    kind: str = "auto",
+    label: Optional[str] = None,
+    created_at: Optional[int] = None,
+) -> Dict[str, Any]:
+    if kind not in {"auto", "manual", "revert-base"}:
+        kind = "auto"
+    normalized_label = label.strip() if isinstance(label, str) else ""
+    if not normalized_label:
+        normalized_label = None
+    timestamp = int(created_at if isinstance(created_at, int) else time.time())
+    checkpoint_id = f"{timestamp}-{secrets.token_hex(4)}"
+    text = content if isinstance(content, str) else str(content or "")
+    metadata = {
+        "id": checkpoint_id,
+        "created_at": timestamp,
+        "created_at_iso": _history_timestamp_iso(timestamp),
+        "kind": kind,
+        "label": normalized_label,
+        "content_hash": history_content_hash(text),
+        "size": len(text),
+    }
+    checkpoint_path = history_checkpoint_path(space_key, checkpoint_id)
+    with HISTORY_LOCK:
+        _atomic_write_text(checkpoint_path, text)
+        checkpoints = load_history_index(space_key)
+        checkpoints.append(metadata)
+        save_history_index(space_key, checkpoints)
+    return metadata
+
+
+def latest_history_checkpoint(space_key: str) -> Optional[Dict[str, Any]]:
+    checkpoints = load_history_index(space_key)
+    return checkpoints[-1] if checkpoints else None
+
+
+def maybe_create_auto_history_checkpoint(
+    space_key: str,
+    content: str,
+    *,
+    now_epoch: Optional[int] = None,
+) -> Optional[Dict[str, Any]]:
+    timestamp = int(now_epoch if isinstance(now_epoch, int) else time.time())
+    text = content if isinstance(content, str) else str(content or "")
+    digest = history_content_hash(text)
+    previous = latest_history_checkpoint(space_key)
+    if previous:
+        if previous.get("content_hash") == digest:
+            return None
+        previous_ts = previous.get("created_at")
+        if isinstance(previous_ts, int) and timestamp - previous_ts < HISTORY_AUTO_MIN_INTERVAL_SECONDS:
+            return None
+    return create_history_checkpoint(
+        space_key,
+        text,
+        kind="auto",
+        created_at=timestamp,
+    )
+
+
+def write_space_text_and_maybe_checkpoint(space_id: str, content: str, *, space_path_hint: Optional[str] = None) -> None:
+    text = content if isinstance(content, str) else str(content or "")
+    _atomic_write_text(space_path(space_id, space_path_hint=space_path_hint), text)
+    maybe_create_auto_history_checkpoint(history_key_for_space(space_id, space_path_hint=space_path_hint), text)
+
+
+def room_name(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None) -> str:
+    safe_id = sanitize_space(space_id)
+    normalized_hint = normalize_folder_name(space_path_hint)
+    if normalized_hint and normalized_hint.split("/")[-1] == safe_id:
+        return f"/ws/{normalized_hint}"
+    return f"/ws/{safe_id}"
+
+
+def normalize_space_path_hint_for_id(space_id: str, value: Any) -> str:
+    normalized = normalize_folder_name(value)
+    if not normalized:
+        return ""
+    safe_id = sanitize_space(space_id)
+    if normalized.split("/")[-1] != safe_id:
+        raise HTTPException(status_code=400, detail="Space path does not match space id.")
+    return normalized
 
 
 async def disconnect_space_clients(space_id: str) -> int:
@@ -1044,8 +1482,9 @@ def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
     ydoc.transact(apply)
 
 
-def schedule_space_snapshot(space_id: str, room) -> None:
-    mapped_room = websocket_server.rooms.get(room_name(space_id))
+def schedule_space_snapshot(space_id: str, room, *, space_path_hint: Optional[str] = None) -> None:
+    task_key = room_name(space_id, space_path_hint=space_path_hint)
+    mapped_room = websocket_server.rooms.get(task_key)
     if mapped_room is not room:
         return
     try:
@@ -1053,31 +1492,35 @@ def schedule_space_snapshot(space_id: str, room) -> None:
     except RuntimeError:
         try:
             content = ydoc_to_text(room.ydoc)
-            space_path(space_id).write_text(content, encoding="utf-8")
+            write_space_text_and_maybe_checkpoint(space_id, content, space_path_hint=space_path_hint)
         except Exception:
             logger.exception("Failed to snapshot space %s (sync)", space_id)
         return
 
-    if space_id in space_save_tasks:
-        space_save_tasks[space_id].cancel()
+    if task_key in space_save_tasks:
+        space_save_tasks[task_key].cancel()
+
+    task_ref: Optional[asyncio.Task] = None
 
     async def _save():
         try:
             await asyncio.sleep(SPACE_SAVE_DELAY)
             content = ydoc_to_text(room.ydoc)
-            space_path(space_id).write_text(content, encoding="utf-8")
+            await asyncio.to_thread(write_space_text_and_maybe_checkpoint, space_id, content, space_path_hint=space_path_hint)
         except asyncio.CancelledError:
             return
         except Exception:
             logger.exception("Failed to snapshot space %s", space_id)
         finally:
-            space_save_tasks.pop(space_id, None)
+            if task_ref is not None and space_save_tasks.get(task_key) is task_ref:
+                space_save_tasks.pop(task_key, None)
 
-    space_save_tasks[space_id] = asyncio.create_task(_save())
+    task_ref = asyncio.create_task(_save())
+    space_save_tasks[task_key] = task_ref
 
 
-async def hydrate_room_from_storage(space_id: str, room) -> None:
-    store_path = ystore_path(space_id)
+async def hydrate_room_from_storage(space_id: str, room, *, space_path_hint: Optional[str] = None) -> None:
+    store_path = ystore_path(space_id, space_path_hint=space_path_hint)
     loaded_from_ystore = False
     if store_path.exists():
         try:
@@ -1100,7 +1543,7 @@ async def hydrate_room_from_storage(space_id: str, room) -> None:
                     logger.exception("Failed to remove corrupt ystore for %s", space_id)
 
     if not loaded_from_ystore:
-        content_path = space_path(space_id)
+        content_path = space_path(space_id, space_path_hint=space_path_hint)
         if content_path.exists():
             content = content_path.read_text(encoding="utf-8")
             if content:
@@ -1110,15 +1553,15 @@ async def hydrate_room_from_storage(space_id: str, room) -> None:
                 except Exception:
                     logger.exception("Failed to seed ystore for %s from snapshot", space_id)
     room.ready = True
-    schedule_space_snapshot(space_id, room)
+    schedule_space_snapshot(space_id, room, space_path_hint=space_path_hint)
 
 
-def attach_snapshot_hook(space_id: str, room) -> None:
+def attach_snapshot_hook(space_id: str, room, *, space_path_hint: Optional[str] = None) -> None:
     if getattr(room, "_snapshot_hook", False):
         return
 
     def _after_txn(*_args, **_kwargs):
-        schedule_space_snapshot(space_id, room)
+        schedule_space_snapshot(space_id, room, space_path_hint=space_path_hint)
 
     room.ydoc.observe_after_transaction(_after_txn)
     room._snapshot_hook = True
@@ -1284,6 +1727,7 @@ def read_me(request: Request, user: AuthUser = Depends(require_auth)) -> Dict[st
 
 @app.put("/api/me")
 def update_me(
+    request: Request = None,
     payload: Dict[str, Any] = Body(default={}),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
@@ -1313,6 +1757,11 @@ def update_me(
 
     users[user.username] = normalize_user_record(user.username, record)
     save_users_store(users)
+    if "password" in payload and request is not None:
+        remove_sessions_for_user(
+            user.username,
+            keep_token=request.cookies.get(SESSION_COOKIE_NAME),
+        )
     refreshed = user_record_to_auth(user.username, users[user.username])
     return {
         "ok": True,
@@ -1382,6 +1831,7 @@ def create_user(
 @app.put("/api/users/{username}")
 def update_user(
     username: str,
+    request: Request = None,
     payload: Dict[str, Any] = Body(default={}),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
@@ -1419,6 +1869,11 @@ def update_user(
             target["must_change_password"] = False
         users[target_username] = normalize_user_record(target_username, target)
         save_users_store(users)
+        if "password" in payload and request is not None:
+            remove_sessions_for_user(
+                target_username,
+                keep_token=request.cookies.get(SESSION_COOKIE_NAME),
+            )
         return {"ok": True, "user": user_view(target_username, users[target_username], user)}
 
     desired_role = None
@@ -1449,6 +1904,8 @@ def update_user(
 
     users[target_username] = normalize_user_record(target_username, target)
     save_users_store(users)
+    if "password" in payload:
+        remove_sessions_for_user(target_username)
     return {"ok": True, "user": user_view(target_username, users[target_username], user)}
 
 
@@ -1481,17 +1938,17 @@ def delete_user(username: str, user: AuthUser = Depends(require_auth)) -> Dict[s
 
 @app.get("/api/spaces")
 def list_spaces(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
-    visible = list_visible_spaces(user)
+    visible_entries = list_visible_space_entries(user)
     users = load_users_store()
     data = [
         {
-            "id": space_id,
-            "users": users_for_space(space_id),
-            "folder": folder_for_space(space_id, users),
-            "path": space_access_path(space_id, users),
-            "personal": space_id in users,
+            "id": entry["id"],
+            "users": users_for_space(entry["id"], space_path_hint=entry.get("path")),
+            "folder": entry.get("folder", ""),
+            "path": entry.get("path", entry["id"]),
+            "personal": bool(entry.get("personal")),
         }
-        for space_id in visible
+        for entry in visible_entries
     ]
     if can_manage_spaces(user):
         folders = list_space_folder_names()
@@ -1560,7 +2017,9 @@ def set_space_folder(
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid folder payload.")
     safe_id = sanitize_space(space_id)
-    ensure_space_exists(safe_id)
+    space_path_hint = normalize_space_path_hint_for_id(safe_id, payload.get("path") if isinstance(payload, dict) else None)
+    if not space_path(safe_id, space_path_hint=space_path_hint).exists():
+        raise HTTPException(status_code=404, detail="Space not found.")
     if is_personal_space(safe_id):
         raise HTTPException(
             status_code=400,
@@ -1576,11 +2035,13 @@ def set_space_folder(
     else:
         raise HTTPException(status_code=400, detail="Invalid folder payload.")
 
-    source = find_space_file(safe_id)
+    source = resolve_space_file(safe_id, users=load_users_store(), space_path_hint=space_path_hint)
     if not source:
         raise HTTPException(status_code=404, detail="Space not found.")
     users = load_users_store()
     old_space_path = space_access_path(safe_id, users)
+    if space_path_hint:
+        old_space_path = space_path_hint
 
     if not folder_name:
         target = SPACES_DIR / f"{safe_id}.txt"
@@ -1589,6 +2050,17 @@ def set_space_folder(
                 raise HTTPException(status_code=409, detail="Space already exists.")
             source.rename(target)
             update_access_paths_for_space_change(old_space_path, safe_id)
+            move_history_for_space_path_change(old_space_path, safe_id)
+            source_store = ystore_path(safe_id, users=users, space_path_hint=old_space_path)
+            target_store = ystore_path(safe_id, users=users, space_path_hint=safe_id)
+            if source_store.exists():
+                source_store.rename(target_store)
+            room = websocket_server.rooms.get(room_name(safe_id, space_path_hint=old_space_path))
+            if room:
+                websocket_server.rename_room(to_name=room_name(safe_id, space_path_hint=safe_id), from_room=room)
+                schedule_space_snapshot(safe_id, room, space_path_hint=safe_id)
+            if old_space_path in presence:
+                presence[safe_id] = presence.pop(old_space_path)
         return {"ok": True, "folder": ""}
 
     folder_name = sanitize_folder_name(folder_name)
@@ -1605,11 +2077,143 @@ def set_space_folder(
         if target.exists():
             raise HTTPException(status_code=409, detail="Space already exists.")
         source.rename(target)
+        new_space_path = f"{folder_name}/{safe_id}"
         update_access_paths_for_space_change(
             old_space_path,
-            f"{folder_name}/{safe_id}",
+            new_space_path,
         )
+        move_history_for_space_path_change(old_space_path, new_space_path)
+        source_store = ystore_path(safe_id, users=users, space_path_hint=old_space_path)
+        target_store = ystore_path(safe_id, users=users, space_path_hint=new_space_path)
+        if source_store.exists():
+            source_store.rename(target_store)
+        room = websocket_server.rooms.get(room_name(safe_id, space_path_hint=old_space_path))
+        if room:
+            websocket_server.rename_room(to_name=room_name(safe_id, space_path_hint=new_space_path), from_room=room)
+            schedule_space_snapshot(safe_id, room, space_path_hint=new_space_path)
+        if old_space_path in presence:
+            presence[new_space_path] = presence.pop(old_space_path)
     return {"ok": True, "folder": folder_name}
+
+
+@app.get("/api/spaces/{space_id}/history")
+def read_space_history(
+    space_id: str,
+    path: Optional[str] = Query(default=None),
+    user: AuthUser = Depends(require_auth),
+) -> Dict[str, Any]:
+    safe_id = sanitize_space(space_id)
+    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
+    if not space_path(safe_id, space_path_hint=space_path_hint).exists():
+        raise HTTPException(status_code=404, detail="Space not found.")
+    return {"checkpoints": load_history_index(history_key_for_space(safe_id, space_path_hint=space_path_hint))}
+
+
+@app.get("/api/spaces/{space_id}/history/{checkpoint_id}")
+def read_space_history_checkpoint(
+    space_id: str,
+    checkpoint_id: str,
+    path: Optional[str] = Query(default=None),
+    user: AuthUser = Depends(require_auth),
+) -> Response:
+    safe_id = sanitize_space(space_id)
+    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
+    if not space_path(safe_id, space_path_hint=space_path_hint).exists():
+        raise HTTPException(status_code=404, detail="Space not found.")
+    history_key = history_key_for_space(safe_id, space_path_hint=space_path_hint)
+    return Response(
+        read_history_checkpoint(history_key, checkpoint_id),
+        media_type="text/plain",
+    )
+
+
+@app.post("/api/spaces/{space_id}/history/revert")
+async def revert_space_history_checkpoint(
+    space_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+    user: AuthUser = Depends(require_auth),
+) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid history revert payload.")
+    safe_id = sanitize_space(space_id)
+    space_path_hint = normalize_space_path_hint_for_id(safe_id, payload.get("path") if isinstance(payload, dict) else None)
+    ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
+    target_path = space_path(safe_id, space_path_hint=space_path_hint)
+    if not target_path.exists():
+        raise HTTPException(status_code=404, detail="Space not found.")
+    checkpoint_id = payload.get("checkpoint_id")
+    if not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
+        raise HTTPException(status_code=400, detail="Checkpoint id is required.")
+    pre_revert_content = payload.get("pre_revert_content")
+    if not isinstance(pre_revert_content, str):
+        raise HTTPException(status_code=400, detail="Pre-revert content is required.")
+    pre_revert_label = payload.get("pre_revert_label")
+    if not isinstance(pre_revert_label, str) or not pre_revert_label.strip():
+        pre_revert_label = "revoked"
+
+    history_key = history_key_for_space(safe_id, space_path_hint=space_path_hint)
+    restored_content = read_history_checkpoint(history_key, checkpoint_id.strip())
+    revert_base = create_history_checkpoint(
+        history_key,
+        pre_revert_content,
+        kind="revert-base",
+        label=pre_revert_label,
+    )
+
+    _atomic_write_text(target_path, restored_content)
+    room = websocket_server.rooms.get(room_name(safe_id, space_path_hint=space_path_hint))
+    if room:
+        replace_ydoc_text(room.ydoc, restored_content)
+        schedule_space_snapshot(safe_id, room, space_path_hint=space_path_hint)
+    else:
+        store_path = ystore_path(safe_id, space_path_hint=space_path_hint)
+        if store_path.exists():
+            try:
+                store_path.unlink()
+            except Exception:
+                logger.exception("Failed to remove ystore after history revert for %s", safe_id)
+
+    return {
+        "ok": True,
+        "content": restored_content,
+        "revert_base": revert_base,
+    }
+
+
+@app.post("/api/spaces/{space_id}/history/tag")
+def tag_space_history_checkpoint(
+    space_id: str,
+    payload: Dict[str, Any] = Body(default={}),
+    user: AuthUser = Depends(require_auth),
+) -> Dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid history tag payload.")
+    safe_id = sanitize_space(space_id)
+    space_path_hint = normalize_space_path_hint_for_id(safe_id, payload.get("path") if isinstance(payload, dict) else None)
+    ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
+    if not space_path(safe_id, space_path_hint=space_path_hint).exists():
+        raise HTTPException(status_code=404, detail="Space not found.")
+    label = payload.get("label")
+    if not isinstance(label, str) or not label.strip():
+        raise HTTPException(status_code=400, detail="Label is required.")
+    history_key = history_key_for_space(safe_id, space_path_hint=space_path_hint)
+    raw_content = payload.get("content")
+    if isinstance(raw_content, str):
+        content = raw_content
+    else:
+        checkpoint_id = payload.get("checkpoint_id")
+        if not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
+            raise HTTPException(status_code=400, detail="Checkpoint id or content is required.")
+        content = read_history_checkpoint(history_key, checkpoint_id.strip())
+    checkpoint = create_history_checkpoint(
+        history_key,
+        content,
+        kind="manual",
+        label=label.strip(),
+    )
+    return {"ok": True, "checkpoint": checkpoint}
 
 
 @app.get("/api/jira-config")
@@ -1644,33 +2248,40 @@ def write_jira_config(
 
 
 @app.get("/api/spaces/{space_id}")
-def read_space(space_id: str, user: AuthUser = Depends(require_auth)) -> Response:
+def read_space(
+    space_id: str,
+    path: Optional[str] = Query(default=None),
+    user: AuthUser = Depends(require_auth),
+) -> Response:
     safe_id = sanitize_space(space_id)
-    ensure_space_access(user, safe_id)
-    path = space_path(safe_id)
-    if not path.exists():
+    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
+    target_path = space_path(safe_id, space_path_hint=space_path_hint)
+    if not target_path.exists():
         raise HTTPException(status_code=404, detail="Space not found.")
-    return Response(path.read_text(encoding="utf-8"), media_type="text/plain")
+    return Response(target_path.read_text(encoding="utf-8"), media_type="text/plain")
 
 
 @app.put("/api/spaces/{space_id}")
 async def write_space(
     space_id: str,
     content: str = Body(default="", media_type="text/plain"),
+    path: Optional[str] = Query(default=None),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
     safe_id = sanitize_space(space_id)
-    ensure_space_access(user, safe_id)
-    path = space_path(safe_id)
-    if not path.exists():
+    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
+    target_path = space_path(safe_id, space_path_hint=space_path_hint)
+    if not target_path.exists():
         raise HTTPException(status_code=404, detail="Space not found.")
-    path.write_text(content, encoding="utf-8")
-    room = websocket_server.rooms.get(room_name(safe_id))
+    await asyncio.to_thread(write_space_text_and_maybe_checkpoint, safe_id, content, space_path_hint=space_path_hint)
+    room = websocket_server.rooms.get(room_name(safe_id, space_path_hint=space_path_hint))
     if room:
         replace_ydoc_text(room.ydoc, content)
-        schedule_space_snapshot(safe_id, room)
+        schedule_space_snapshot(safe_id, room, space_path_hint=space_path_hint)
     else:
-        store_path = ystore_path(safe_id)
+        store_path = ystore_path(safe_id, space_path_hint=space_path_hint)
         if store_path.exists():
             store_path.unlink()
     return {"ok": True}
@@ -1689,16 +2300,24 @@ def create_space(space_id: str, user: AuthUser = Depends(require_auth)) -> Dict[
 
 
 @app.delete("/api/spaces/{space_id}")
-async def delete_space(space_id: str, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+async def delete_space(
+    space_id: str,
+    path: Optional[str] = Query(default=None),
+    user: AuthUser = Depends(require_auth),
+) -> Dict[str, Any]:
     if not can_manage_spaces(user):
         raise HTTPException(status_code=403, detail="Not allowed.")
     safe_id = sanitize_space(space_id)
+    request_path_hint = normalize_space_path_hint_for_id(safe_id, path)
     if is_personal_space(safe_id):
         raise HTTPException(status_code=400, detail="Personal spaces cannot be deleted.")
+    users = load_users_store()
+    target_path = resolve_space_file(safe_id, users=users, space_path_hint=request_path_hint)
+    if not target_path:
+        raise HTTPException(status_code=404, detail="Space not found.")
+    canonical_path = canonical_space_path_for_file(target_path, users)
 
-    await disconnect_space_clients(safe_id)
-
-    room_key = room_name(safe_id)
+    room_key = room_name(safe_id, space_path_hint=canonical_path)
     room = websocket_server.rooms.get(room_key)
     if room:
         try:
@@ -1707,25 +2326,18 @@ async def delete_space(space_id: str, user: AuthUser = Depends(require_auth)) ->
             logger.exception("Failed to stop websocket room for %s", safe_id)
             websocket_server.rooms.pop(room_key, None)
 
-    task = space_save_tasks.pop(safe_id, None)
+    task = space_save_tasks.pop(room_key, None)
     if task:
         task.cancel()
-    removed = False
-    for candidate in iter_space_files():
-        if normalize_space_id_from_filename(candidate) != safe_id:
-            continue
-        try:
-            candidate.unlink()
-            removed = True
-        except FileNotFoundError:
-            continue
-    if not removed:
+    try:
+        target_path.unlink()
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Space not found.")
     clear_last_space_for_deleted_space(safe_id)
-    store_path = ystore_path(safe_id)
+    store_path = ystore_path(safe_id, users=users, space_path_hint=canonical_path)
     if store_path.exists():
         store_path.unlink()
-    presence.pop(safe_id, None)
+    presence.pop(canonical_path, None)
     return {"ok": True}
 
 
@@ -1741,10 +2353,11 @@ def rename_space(
     if is_personal_space(source_id):
         raise HTTPException(status_code=400, detail="Personal spaces cannot be renamed.")
     users = load_users_store()
-    old_space_path = space_access_path(source_id, users)
+    source_path_hint = normalize_space_path_hint_for_id(source_id, payload.get("path") if isinstance(payload, dict) else None)
+    old_space_path = source_path_hint or space_access_path(source_id, users)
 
-    old_folder = folder_for_space(source_id, users)
-    source = space_path(source_id)
+    old_folder = folder_for_space(source_id, users, space_path_hint=source_path_hint)
+    source = space_path(source_id, users=users, space_path_hint=source_path_hint)
     if not source.exists():
         raise HTTPException(status_code=404, detail="Space not found.")
     new_name = ""
@@ -1763,22 +2376,21 @@ def rename_space(
     target = source.with_name(f"{target_id}.txt")
     if target.exists():
         raise HTTPException(status_code=409, detail="Space already exists.")
-    if find_space_file(target_id):
-        raise HTTPException(status_code=409, detail="Space already exists.")
     source.rename(target)
     new_space_path = f"{old_folder}/{target_id}" if old_folder else target_id
     update_access_paths_for_space_change(old_space_path, new_space_path)
+    move_history_for_space_path_change(old_space_path, new_space_path)
     update_last_space_for_renamed_space(source_id, target_id)
-    source_store = ystore_path(source_id)
-    target_store = ystore_path(target_id)
+    source_store = ystore_path(source_id, users=users, space_path_hint=old_space_path)
+    target_store = ystore_path(target_id, users=users, space_path_hint=new_space_path)
     if source_store.exists():
         source_store.rename(target_store)
-    room = websocket_server.rooms.get(room_name(source_id))
+    room = websocket_server.rooms.get(room_name(source_id, space_path_hint=old_space_path))
     if room:
-        websocket_server.rename_room(to_name=room_name(target_id), from_room=room)
-        schedule_space_snapshot(target_id, room)
-    if source_id in presence:
-        presence[target_id] = presence.pop(source_id)
+        websocket_server.rename_room(to_name=room_name(target_id, space_path_hint=new_space_path), from_room=room)
+        schedule_space_snapshot(target_id, room, space_path_hint=new_space_path)
+    if old_space_path in presence:
+        presence[new_space_path] = presence.pop(old_space_path)
     return {"ok": True, "id": target_id}
 
 
@@ -1786,24 +2398,31 @@ def rename_space(
 def update_presence(
     space_id: str,
     request: Request,
+    path: Optional[str] = Query(default=None),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
     safe_id = sanitize_space(space_id)
-    ensure_space_access(user, safe_id)
-    if not space_path(safe_id).exists():
+    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
+    if not space_path(safe_id, space_path_hint=space_path_hint).exists():
         raise HTTPException(status_code=404, detail="Space not found.")
     set_session_last_space(request.cookies.get(SESSION_COOKIE_NAME), safe_id)
-    mark_presence(safe_id, user.username)
+    mark_presence(safe_id, user.username, space_path_hint=space_path_hint)
     return {"ok": True}
 
 
 @app.delete("/api/spaces/{space_id}/presence")
-def clear_presence(space_id: str, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+def clear_presence(
+    space_id: str,
+    path: Optional[str] = Query(default=None),
+    user: AuthUser = Depends(require_auth),
+) -> Dict[str, Any]:
     safe_id = sanitize_space(space_id)
-    ensure_space_access(user, safe_id)
-    if not space_path(safe_id).exists():
+    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
+    if not space_path(safe_id, space_path_hint=space_path_hint).exists():
         raise HTTPException(status_code=404, detail="Space not found.")
-    remove_presence(safe_id, user.username)
+    remove_presence(safe_id, user.username, space_path_hint=space_path_hint)
     return {"ok": True}
 
 
@@ -1818,22 +2437,29 @@ def cleanup_presence() -> None:
             presence.pop(space_id, None)
 
 
-def mark_presence(space_id: str, username: str) -> None:
+def _presence_key(space_id: str, *, space_path_hint: Optional[str] = None) -> str:
+    normalized_hint = normalize_folder_name(space_path_hint)
+    if normalized_hint:
+        return normalized_hint
+    return sanitize_space(space_id)
+
+
+def mark_presence(space_id: str, username: str, *, space_path_hint: Optional[str] = None) -> None:
     cleanup_presence()
-    presence.setdefault(space_id, {})[username] = time.time()
+    presence.setdefault(_presence_key(space_id, space_path_hint=space_path_hint), {})[username] = time.time()
 
 
-def remove_presence(space_id: str, username: str) -> None:
-    users = presence.get(space_id)
+def remove_presence(space_id: str, username: str, *, space_path_hint: Optional[str] = None) -> None:
+    users = presence.get(_presence_key(space_id, space_path_hint=space_path_hint))
     if not users:
         return
     users.pop(username, None)
     if not users:
-        presence.pop(space_id, None)
+        presence.pop(_presence_key(space_id, space_path_hint=space_path_hint), None)
 
 
-def users_for_space(space_id: str) -> List[str]:
-    room = websocket_server.rooms.get(room_name(space_id))
+def users_for_space(space_id: str, *, space_path_hint: Optional[str] = None) -> List[str]:
+    room = websocket_server.rooms.get(room_name(space_id, space_path_hint=space_path_hint))
     if room is not None and getattr(room, "awareness", None) is not None:
         _cleanup_room_awareness(room)
         names: Set[str] = set()
@@ -1856,7 +2482,7 @@ def users_for_space(space_id: str) -> List[str]:
         if names:
             return sorted(names)
     cleanup_presence()
-    users = presence.get(space_id, {})
+    users = presence.get(_presence_key(space_id, space_path_hint=space_path_hint), {})
     return sorted(users.keys())
 
 
@@ -1895,17 +2521,25 @@ def ensure_jira_daemon_credentials() -> None:
         save_jira_config_data(jira_data)
 
 
-def space_from_path(path: str) -> Optional[str]:
+def space_ref_from_ws_path(path: str) -> Optional[Tuple[str, str]]:
     if "/ws/" not in path:
         return None
     tail = path.split("/ws/", 1)[1]
     if not tail:
         return None
-    name = tail.split("/", 1)[0]
+    canonical = normalize_folder_name(tail)
+    if not canonical:
+        return None
+    name = canonical.split("/")[-1]
     try:
-        return sanitize_space(name)
+        return sanitize_space(name), canonical
     except HTTPException:
         return None
+
+
+def space_from_path(path: str) -> Optional[str]:
+    ref = space_ref_from_ws_path(path)
+    return ref[0] if ref else None
 
 
 def ws_credentials(scope: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
@@ -1940,19 +2574,21 @@ def ws_session_token(scope: Dict[str, Any]) -> Optional[str]:
 
 
 async def on_connect(_message: Dict[str, Any], scope: Dict[str, Any]) -> bool:
-    space_id = space_from_path(scope.get("path", ""))
-    if not space_id:
+    ref = space_ref_from_ws_path(scope.get("path", ""))
+    if not ref:
         return True
+    space_id, space_path_hint = ref
     try:
-        ensure_space_exists(space_id)
+        if not space_path(space_id, space_path_hint=space_path_hint).exists():
+            raise HTTPException(status_code=404, detail="Space not found.")
     except HTTPException:
         return True
 
     auth = auth_from_session(ws_session_token(scope))
     if auth:
-        if not can_access_space(auth, space_id):
+        if not can_access_space(auth, space_id, space_path_hint=space_path_hint):
             return True
-        mark_presence(space_id, auth.username)
+        mark_presence(space_id, auth.username, space_path_hint=space_path_hint)
         return False
 
     username, password = ws_credentials(scope)
@@ -1961,22 +2597,23 @@ async def on_connect(_message: Dict[str, Any], scope: Dict[str, Any]) -> bool:
     auth = authenticate(username.strip(), password)
     if not auth:
         return True
-    if not can_access_space(auth, space_id):
+    if not can_access_space(auth, space_id, space_path_hint=space_path_hint):
         return True
-    mark_presence(space_id, auth.username)
+    mark_presence(space_id, auth.username, space_path_hint=space_path_hint)
     return False
 
 
 class PersistentWebsocketServer(WebsocketServer):
     async def get_room(self, name: str):
         if name not in self.rooms.keys():
-            space_id = space_from_path(name)
-            if space_id:
-                store = FileYStore(str(ystore_path(space_id)))
+            ref = space_ref_from_ws_path(name)
+            if ref:
+                space_id, space_path_hint = ref
+                store = FileYStore(str(ystore_path(space_id, space_path_hint=space_path_hint)))
                 room = YRoom(ready=False, ystore=store, log=self.log)
                 self.rooms[name] = room
-                await hydrate_room_from_storage(space_id, room)
-                attach_snapshot_hook(space_id, room)
+                await hydrate_room_from_storage(space_id, room, space_path_hint=space_path_hint)
+                attach_snapshot_hook(space_id, room, space_path_hint=space_path_hint)
                 attach_awareness_hook(room)
             else:
                 room = YRoom(ready=self.rooms_ready, log=self.log)
@@ -2119,7 +2756,20 @@ async def main() -> None:
         if remainder is not None:
             raise remainder
         logger.info("Suppressed benign websocket disconnect errors during shutdown.")
+    finally:
+        pending_save_tasks = list(space_save_tasks.values())
+        for task in pending_save_tasks:
+            task.cancel()
+        if pending_save_tasks:
+            results = await asyncio.gather(*pending_save_tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException) and not _is_benign_shutdown_error(result):
+                    logger.warning("Unexpected error while shutting down snapshot task: %r", result)
+        space_save_tasks.clear()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Shutdown requested (Ctrl+C).")

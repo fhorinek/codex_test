@@ -31,3 +31,4 @@ backend/htmlcov/
 backend/coverage.xml
 frontend/coverage/
 frontend/.nyc_output/
+backend/history/**

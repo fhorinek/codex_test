@@ -378,6 +378,20 @@ const collab: any = {
   offlineDraftSavedValue: "",
 };
 
+const historyMode: any = {
+  panelOpen: false,
+  viewerActive: false,
+  loading: false,
+  spaceId: null,
+  spacePath: "",
+  originalText: "",
+  wasConnected: false,
+  checkpoints: [],
+  selectedIndex: -1,
+  cache: new Map(),
+  disabledButtons: new Map(),
+};
+
 let pendingDeleteSpace: any = null;
 let pendingDeleteFolder: any = null;
 let pendingDeleteUser: any = null;
@@ -2323,7 +2337,8 @@ async function deleteSpaceFolderRequest(folderId: any) {
   return response.json();
 }
 
-async function moveSpaceToFolderRequest(spaceId: any, folder: any) {
+async function moveSpaceToFolderRequest(spaceId: any, folder: any, spacePath: any = "") {
+  const normalizedPath = typeof spacePath === "string" ? spacePath.trim() : "";
   let response;
   try {
     response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/folder`, {
@@ -2332,7 +2347,7 @@ async function moveSpaceToFolderRequest(spaceId: any, folder: any) {
         ...authHeaders(),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ folder }),
+      body: JSON.stringify(normalizedPath ? { folder, path: normalizedPath } : { folder }),
     });
   } catch {
     throw new Error("Unable to reach the backend.");
@@ -2760,7 +2775,7 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
           return;
         }
         try {
-          await moveSpaceToFolderRequest(draggedSpaceId, targetFolder);
+          await moveSpaceToFolderRequest(draggedSpaceId, targetFolder, draggedSpacePath);
           clearSpaceError();
           await loadSpaceList({ showLoading: false });
           const movedPath = buildSpacePath(draggedSpaceId, targetFolder);
@@ -2834,7 +2849,7 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
       }
       try {
         const newSpacePath = buildSpacePath(trimmed, space.folder || "");
-        await renameSpace(space.id, trimmed);
+        await renameSpace(space.id, trimmed, spacePath);
         clearSpaceError();
         row.classList.remove("editing");
         await loadSpaceList({ showLoading: false });
@@ -2945,7 +2960,7 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
         return;
       }
       try {
-        await moveSpaceToFolderRequest(spaceId, folderId);
+        await moveSpaceToFolderRequest(spaceId, folderId, sourcePath);
         clearSpaceError();
         await loadSpaceList({ showLoading: false });
         const fromPath = sourcePath || spaceId;
@@ -3075,7 +3090,7 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
         return;
       }
       try {
-        await moveSpaceToFolderRequest(draggedSpaceId, "");
+        await moveSpaceToFolderRequest(draggedSpaceId, "", draggedSpacePath);
         clearSpaceError();
         await loadSpaceList({ showLoading: false });
         showToast(`Space '${draggedSpacePath}' moved to '${draggedSpaceId}'.`);
@@ -4195,7 +4210,7 @@ async function submitCreateSpace() {
     applyAuthFromInputs({ markDirty: false });
     await createSpace(name);
     if (targetFolder) {
-      await moveSpaceToFolderRequest(name, targetFolder);
+      await moveSpaceToFolderRequest(name, targetFolder, name);
     }
     if (dom.spaceNew) {
       dom.spaceNew.value = "";
@@ -4497,28 +4512,34 @@ async function createSpace(name: any) {
   }
 }
 
-async function deleteSpace(name: any) {
-  const trimmed = name.trim();
+async function deleteSpace(name: any, spacePath: any = "") {
+  const trimmed = String(name || "").trim();
+  const normalizedSpacePath = typeof spacePath === "string" ? spacePath.trim() : "";
   if (!trimmed) {
     return;
   }
   applyAuthFromInputs({ markDirty: false });
-  const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(trimmed)}`, {
+  const pathQuery = normalizedSpacePath ? `?path=${encodeURIComponent(normalizedSpacePath)}` : "";
+  const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(trimmed)}${pathQuery}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
   if (!response.ok) {
     throw new Error(spaceResponseError(response, "Unable to remove space."));
   }
-  if (collab.spaceId === trimmed) {
+  if (
+    collab.spaceId === trimmed
+    && (!normalizedSpacePath || !collab.spacePath || collab.spacePath === normalizedSpacePath)
+  ) {
     disconnectSpace();
   }
   await loadSpaceList({ showLoading: false });
 }
 
-async function renameSpace(oldName: any, newName: any) {
+async function renameSpace(oldName: any, newName: any, oldPath: any = "") {
   const source = oldName.trim();
   const target = newName.trim();
+  const sourcePath = typeof oldPath === "string" ? oldPath.trim() : "";
   if (!source || !target || source === target) {
     return;
   }
@@ -4531,7 +4552,7 @@ async function renameSpace(oldName: any, newName: any) {
         ...authHeaders(),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ name: target }),
+      body: JSON.stringify(sourcePath ? { name: target, path: sourcePath } : { name: target }),
     }
   );
   if (!response.ok) {
@@ -4657,6 +4678,7 @@ function updateConnectButtonLabel() {
 
 function disconnectSpace() {
   syncEngine.disconnectSpace();
+  updateHistoryButtonState();
 }
 
 async function hydrateFromRemote(spaceId: any, ytext: any) {
@@ -4668,7 +4690,564 @@ function scheduleCollabSync() {
 }
 
 async function connectToSpace(spaceId: any, spacePath: any = "") {
-  return syncEngine.connectToSpace(spaceId, spacePath);
+  const result = await syncEngine.connectToSpace(spaceId, spacePath);
+  updateHistoryButtonState();
+  return result;
+}
+
+function historyCheckpointDisplayLabel(checkpoint: any): string {
+  if (!checkpoint || typeof checkpoint !== "object") {
+    return "";
+  }
+  const ts = typeof checkpoint.created_at_iso === "string" && checkpoint.created_at_iso
+    ? checkpoint.created_at_iso
+    : (typeof checkpoint.created_at === "number"
+      ? new Date(checkpoint.created_at * 1000).toISOString()
+      : "");
+  const date = ts ? new Date(ts) : null;
+  const dateLabel = date && Number.isFinite(date.getTime())
+    ? date.toLocaleString()
+    : (ts || "Unknown time");
+  const customLabel = typeof checkpoint.label === "string" && checkpoint.label.trim()
+    ? checkpoint.label.trim()
+    : "";
+  return customLabel ? `${customLabel} · ${dateLabel}` : dateLabel;
+}
+
+function positionHistoryViewerBanner(): void {
+  if (!dom.historyViewerBanner) {
+    return;
+  }
+  let topPx = 18;
+  const searchAnchor =
+    dom.searchInput?.closest?.(".graph-search")
+    || document.querySelector(".app-topbar");
+  if (searchAnchor instanceof HTMLElement) {
+    const rect = searchAnchor.getBoundingClientRect();
+    if (Number.isFinite(rect.bottom)) {
+      topPx = Math.max(8, Math.round(rect.bottom + 8));
+    }
+  }
+  dom.historyViewerBanner.style.top = `${topPx}px`;
+}
+
+function historyCheckpointTimestamp(checkpoint: any): number | null {
+  if (checkpoint && Number.isFinite(checkpoint.created_at)) {
+    return Number(checkpoint.created_at);
+  }
+  if (typeof checkpoint?.created_at_iso === "string" && checkpoint.created_at_iso) {
+    const ts = Date.parse(checkpoint.created_at_iso);
+    if (Number.isFinite(ts)) {
+      return Math.floor(ts / 1000);
+    }
+  }
+  return null;
+}
+
+function getHistoryTimelineBounds(checkpoints: any[]): { min: number; max: number } {
+  const times = checkpoints
+    .map((checkpoint) => historyCheckpointTimestamp(checkpoint))
+    .filter((value): value is number => Number.isFinite(value));
+  if (!times.length) {
+    return { min: 0, max: 1 };
+  }
+  const min = Math.min(...times);
+  const max = Math.max(...times);
+  if (max <= min) {
+    return { min, max: min + 1 };
+  }
+  return { min, max };
+}
+
+function historySliderValueForIndex(checkpoints: any[], index: number): number {
+  const selected = checkpoints?.[Math.max(0, Math.min((checkpoints?.length || 1) - 1, index))];
+  const timestamp = historyCheckpointTimestamp(selected);
+  if (Number.isFinite(timestamp)) {
+    return Number(timestamp);
+  }
+  const bounds = getHistoryTimelineBounds(checkpoints || []);
+  if ((checkpoints?.length || 0) <= 1) {
+    return bounds.min;
+  }
+  const ratio = Math.max(0, Math.min(1, index / ((checkpoints.length - 1) || 1)));
+  return Math.round(bounds.min + (bounds.max - bounds.min) * ratio);
+}
+
+function findNearestHistoryCheckpointIndexByTime(checkpoints: any[], value: number): number {
+  if (!Array.isArray(checkpoints) || !checkpoints.length) {
+    return -1;
+  }
+  const target = Number(value);
+  let bestIndex = 0;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  checkpoints.forEach((checkpoint, index) => {
+    const ts = historyCheckpointTimestamp(checkpoint);
+    const compare = Number.isFinite(ts) ? Number(ts) : historySliderValueForIndex(checkpoints, index);
+    const distance = Math.abs(compare - target);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestIndex = index;
+    }
+  });
+  return bestIndex;
+}
+
+function updateHistoryViewerBanner(): void {
+  const banner = dom.historyViewerBanner;
+  const label = dom.historyViewerBannerLabel;
+  if (!banner || !label) {
+    return;
+  }
+  if (!historyMode.viewerActive) {
+    banner.classList.add("hidden");
+    return;
+  }
+  positionHistoryViewerBanner();
+  const checkpoints = Array.isArray(historyMode.checkpoints) ? historyMode.checkpoints : [];
+  const selected = checkpoints[Math.max(0, Math.min(historyMode.selectedIndex, checkpoints.length - 1))];
+  label.textContent = selected ? historyCheckpointDisplayLabel(selected) : "Unknown time";
+  banner.classList.remove("hidden");
+}
+
+function setHistoryViewerButtonsDisabled(disabled: boolean): void {
+  const buttons = [dom.undoButton, dom.redoButton, dom.loadButton, dom.saveButton, dom.formatButton, dom.graphAddTask]
+    .filter((button): button is HTMLButtonElement => Boolean(button));
+  if (disabled) {
+    historyMode.disabledButtons = new Map();
+    buttons.forEach((button) => {
+      historyMode.disabledButtons.set(button, Boolean(button.disabled));
+      button.disabled = true;
+    });
+    return;
+  }
+  buttons.forEach((button) => {
+    const previous = historyMode.disabledButtons?.get?.(button);
+    button.disabled = Boolean(previous);
+  });
+  historyMode.disabledButtons = new Map();
+}
+
+function setHistoryViewerMode(active: boolean): void {
+  const next = Boolean(active);
+  if (historyMode.viewerActive === next) {
+    return;
+  }
+  historyMode.viewerActive = next;
+  state.historyViewerActive = next;
+  document.documentElement.toggleAttribute("data-history-viewer", next);
+  dom.boardHistoryMode?.classList.toggle("hidden", !next);
+  if (next) {
+    const activeEl = document.activeElement;
+    if (activeEl instanceof HTMLElement) {
+      activeEl.blur();
+    }
+  }
+  editorController?.setReadOnly?.(next);
+  setHistoryViewerButtonsDisabled(next);
+  if (dom.historyRevertButton) {
+    dom.historyRevertButton.disabled = !next;
+  }
+  updateHistoryViewerBanner();
+  renderHistoryPanel();
+}
+
+function updateHistoryButtonState(): void {
+  if (!dom.historyButton) {
+    return;
+  }
+  const available = Boolean(collab.spaceId && collab.isAuthenticated);
+  dom.historyButton.disabled = historyMode.loading || !available;
+}
+
+async function fetchSpaceHistoryList(spaceId: string, spacePath = ""): Promise<any[]> {
+  const pathQuery = spacePath ? `?path=${encodeURIComponent(spacePath)}` : "";
+  const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/history${pathQuery}`, {
+    headers: authHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`History list request failed (${response.status})`);
+  }
+  const data = await response.json();
+  return Array.isArray(data?.checkpoints) ? data.checkpoints : [];
+}
+
+async function fetchSpaceHistoryCheckpointContent(spaceId: string, checkpointId: string, spacePath = ""): Promise<string> {
+  const pathQuery = spacePath ? `?path=${encodeURIComponent(spacePath)}` : "";
+  const response = await fetch(
+    `${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/history/${encodeURIComponent(checkpointId)}${pathQuery}`,
+    { headers: authHeaders() }
+  );
+  if (!response.ok) {
+    throw new Error(`History checkpoint request failed (${response.status})`);
+  }
+  return response.text();
+}
+
+async function postSpaceHistoryRevert(
+  spaceId: string,
+  checkpointId: string,
+  preRevertContent: string,
+  spacePath = ""
+): Promise<any> {
+  const response = await fetch(
+    `${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/history/revert`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        checkpoint_id: checkpointId,
+        pre_revert_content: preRevertContent,
+        pre_revert_label: "revoked",
+        path: spacePath || undefined,
+      }),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`History revert failed (${response.status})`);
+  }
+  return response.json();
+}
+
+async function postSpaceHistoryTag(
+  spaceId: string,
+  options: { checkpointId?: string; label: string; content?: string; path?: string }
+): Promise<any> {
+  const body: { label: string; checkpoint_id?: string; content?: string; path?: string } = {
+    label: options.label,
+  };
+  if (typeof options.checkpointId === "string" && options.checkpointId) {
+    body.checkpoint_id = options.checkpointId;
+  }
+  if (typeof options.content === "string") {
+    body.content = options.content;
+  }
+  if (typeof options.path === "string" && options.path.trim()) {
+    body.path = options.path.trim();
+  }
+  const response = await fetch(
+    `${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/history/tag`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify(body),
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`History tag failed (${response.status})`);
+  }
+  return response.json();
+}
+
+function renderHistoryMarks(): void {
+  if (!dom.historyMarks) {
+    return;
+  }
+  dom.historyMarks.innerHTML = "";
+  const checkpoints = Array.isArray(historyMode.checkpoints) ? historyMode.checkpoints : [];
+  const bounds = getHistoryTimelineBounds(checkpoints);
+  const span = Math.max(1, bounds.max - bounds.min);
+  checkpoints.forEach((checkpoint: any, index: number) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "history-mark";
+    if (index === historyMode.selectedIndex) {
+      button.classList.add("active");
+    }
+    if (typeof checkpoint?.kind === "string") {
+      button.dataset["kind"] = checkpoint.kind;
+    }
+    const label = historyCheckpointDisplayLabel(checkpoint);
+    button.textContent = "";
+    button.dataset["label"] = label;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    const ts = historyCheckpointTimestamp(checkpoint);
+    const percent = Number.isFinite(ts)
+      ? Math.max(0, Math.min(100, ((Number(ts) - bounds.min) / span) * 100))
+      : (checkpoints.length <= 1 ? 50 : (index / (checkpoints.length - 1)) * 100);
+    button.style.left = `${percent}%`;
+    button.addEventListener("click", () => {
+      void selectHistoryCheckpoint(index);
+    });
+    dom.historyMarks?.appendChild(button);
+  });
+}
+
+function renderHistoryPanel(): void {
+  if (!dom.historyPanel || !dom.historySlider || !dom.historyCurrentLabel) {
+    return;
+  }
+  const checkpoints = Array.isArray(historyMode.checkpoints) ? historyMode.checkpoints : [];
+  const hasPoints = checkpoints.length > 0;
+  const timelineBounds = getHistoryTimelineBounds(checkpoints);
+  dom.historyPanel.classList.toggle("hidden", !historyMode.panelOpen);
+  dom.historySlider.disabled = !hasPoints;
+  dom.historySlider.min = String(timelineBounds.min);
+  dom.historySlider.max = String(timelineBounds.max);
+  dom.historySlider.step = "1";
+  dom.historySlider.value = String(
+    hasPoints && historyMode.selectedIndex >= 0
+      ? historySliderValueForIndex(checkpoints, historyMode.selectedIndex)
+      : timelineBounds.min
+  );
+  if (dom.historyStepPrev) {
+    dom.historyStepPrev.disabled = !hasPoints || historyMode.loading || historyMode.selectedIndex <= 0;
+  }
+  if (dom.historyStepNext) {
+    dom.historyStepNext.disabled = !hasPoints || historyMode.loading || historyMode.selectedIndex < 0 || historyMode.selectedIndex >= checkpoints.length - 1;
+  }
+  if (!hasPoints) {
+    dom.historyCurrentLabel.textContent = historyMode.loading ? "Loading history..." : "No history checkpoints for this space yet.";
+    if (dom.historyRevertButton) {
+      dom.historyRevertButton.textContent = "Revert";
+    }
+    if (dom.historyTagButton) {
+      dom.historyTagButton.disabled = !Boolean(historyMode.panelOpen && historyMode.spaceId && !historyMode.loading);
+    }
+    if (dom.historyRevertButton) {
+      dom.historyRevertButton.disabled = true;
+    }
+  } else {
+    const selected = checkpoints[Math.max(0, Math.min(historyMode.selectedIndex, checkpoints.length - 1))];
+    dom.historyCurrentLabel.textContent = selected
+      ? historyCheckpointDisplayLabel(selected)
+      : "Select a history point";
+    if (dom.historyRevertButton) {
+      dom.historyRevertButton.textContent = selected
+        ? `Revert to ${historyCheckpointDisplayLabel(selected)}`
+        : "Revert";
+    }
+    if (dom.historyTagButton) {
+      dom.historyTagButton.disabled = !Boolean(historyMode.panelOpen && historyMode.spaceId && !historyMode.loading);
+    }
+    if (!historyMode.viewerActive) {
+      if (dom.historyRevertButton) {
+        dom.historyRevertButton.disabled = true;
+      }
+    }
+  }
+  updateHistoryViewerBanner();
+  renderHistoryMarks();
+}
+
+async function stepHistorySelection(delta: number): Promise<void> {
+  const checkpoints = Array.isArray(historyMode.checkpoints) ? historyMode.checkpoints : [];
+  if (!checkpoints.length) {
+    return;
+  }
+  const current = Number.isFinite(historyMode.selectedIndex) ? historyMode.selectedIndex : -1;
+  const fallback = checkpoints.length - 1;
+  const baseIndex = current >= 0 ? current : fallback;
+  const nextIndex = Math.max(0, Math.min(checkpoints.length - 1, baseIndex + (delta < 0 ? -1 : 1)));
+  if (nextIndex === current) {
+    return;
+  }
+  await selectHistoryCheckpoint(nextIndex);
+}
+
+async function selectHistoryCheckpoint(index: number): Promise<void> {
+  const checkpoints = historyMode.checkpoints;
+  if (!Array.isArray(checkpoints) || !checkpoints.length) {
+    return;
+  }
+  const boundedIndex = Math.max(0, Math.min(checkpoints.length - 1, Number(index) || 0));
+  historyMode.selectedIndex = boundedIndex;
+  renderHistoryPanel();
+  const selected = checkpoints[boundedIndex];
+  if (!selected?.id || !historyMode.spaceId) {
+    return;
+  }
+  if (!historyMode.viewerActive) {
+    if (historyMode.wasConnected) {
+      disconnectSpace();
+    }
+    setHistoryViewerMode(true);
+  }
+  try {
+    const cacheKey = String(selected.id);
+    let content = historyMode.cache.get(cacheKey);
+    if (typeof content !== "string") {
+      content = await fetchSpaceHistoryCheckpointContent(historyMode.spaceId, cacheKey, historyMode.spacePath || "");
+      historyMode.cache.set(cacheKey, content);
+    }
+    forceEditorRefresh(content, { collapseSelection: true });
+  } catch (error: any) {
+    showToast(error?.message || "Failed to load history point.", "error");
+  }
+}
+
+async function closeHistoryPanel({ restoreOriginal = true }: { restoreOriginal?: boolean } = {}): Promise<void> {
+  if (!historyMode.panelOpen) {
+    return;
+  }
+  const shouldRestore = restoreOriginal && historyMode.viewerActive && typeof historyMode.originalText === "string";
+  historyMode.panelOpen = false;
+  if (dom.historyPanel) {
+    dom.historyPanel.classList.add("hidden");
+  }
+  if (shouldRestore) {
+    forceEditorRefresh(historyMode.originalText, { collapseSelection: true });
+  }
+  setHistoryViewerMode(false);
+  const reconnectSpaceId = historyMode.wasConnected ? historyMode.spaceId : null;
+  const reconnectSpacePath = historyMode.spacePath;
+  historyMode.spaceId = null;
+  historyMode.spacePath = "";
+  historyMode.originalText = "";
+  historyMode.wasConnected = false;
+  historyMode.checkpoints = [];
+  historyMode.selectedIndex = -1;
+  historyMode.cache = new Map();
+  renderHistoryPanel();
+  if (reconnectSpaceId) {
+    try {
+      await connectToSpace(reconnectSpaceId, reconnectSpacePath || "");
+    } catch {
+      showToast("Failed to reconnect after leaving history mode.", "error");
+    }
+  }
+  updateHistoryButtonState();
+}
+
+async function openHistoryPanel(): Promise<void> {
+  if (historyMode.loading) {
+    return;
+  }
+  if (!collab.spaceId || !collab.isAuthenticated) {
+    showToast("Open a shared space first to browse history.", "error");
+    return;
+  }
+  historyMode.loading = true;
+  updateHistoryButtonState();
+  try {
+    historyMode.panelOpen = true;
+    historyMode.viewerActive = false;
+    historyMode.spaceId = String(collab.spaceId);
+    historyMode.spacePath = String(collab.spacePath || "");
+    historyMode.originalText = editorController.getValue();
+    historyMode.wasConnected = Boolean(collab.spaceId);
+    historyMode.cache = new Map();
+    historyMode.checkpoints = await fetchSpaceHistoryList(historyMode.spaceId, historyMode.spacePath || "");
+    historyMode.selectedIndex = historyMode.checkpoints.length ? (historyMode.checkpoints.length - 1) : -1;
+    renderHistoryPanel();
+  } catch (error: any) {
+    historyMode.panelOpen = false;
+    renderHistoryPanel();
+    showToast(error?.message || "Failed to load history.", "error");
+  } finally {
+    historyMode.loading = false;
+    renderHistoryPanel();
+    updateHistoryButtonState();
+  }
+}
+
+function openHistoryTagModal(): void {
+  if (!dom.historyTagModal || !dom.historyTagInput) {
+    return;
+  }
+  resetInlineError(dom.historyTagError);
+  dom.historyTagInput.value = "";
+  dom.historyTagModal.classList.remove("hidden");
+  queueMicrotask(() => {
+    dom.historyTagInput?.focus();
+    dom.historyTagInput?.select();
+  });
+}
+
+function closeHistoryTagModal(): void {
+  dom.historyTagModal?.classList.add("hidden");
+  resetInlineError(dom.historyTagError);
+}
+
+async function submitHistoryTag(): Promise<void> {
+  if (!historyMode.panelOpen || !historyMode.spaceId) {
+    return;
+  }
+  const selected = historyMode.checkpoints?.[historyMode.selectedIndex];
+  const checkpointId = typeof selected?.id === "string" ? selected.id : "";
+  const label = dom.historyTagInput?.value?.trim() || "";
+  if (!label) {
+    setInlineToastError(dom.historyTagError, "Enter a label.");
+    return;
+  }
+  try {
+    if (dom.historyTagSave) {
+      dom.historyTagSave.disabled = true;
+    }
+    const tagRequest: { label: string; checkpointId?: string; content: string; path?: string } = {
+      label,
+      content: editorController.getValue(),
+    };
+    if (historyMode.spacePath) {
+      tagRequest.path = historyMode.spacePath;
+    }
+    if (checkpointId) {
+      tagRequest.checkpointId = checkpointId;
+    }
+    const tagged = await postSpaceHistoryTag(historyMode.spaceId, tagRequest);
+    closeHistoryTagModal();
+    historyMode.checkpoints = await fetchSpaceHistoryList(historyMode.spaceId, historyMode.spacePath || "");
+    const newId = tagged?.checkpoint?.id;
+    if (typeof newId === "string") {
+      const nextIndex = historyMode.checkpoints.findIndex((entry: any) => entry?.id === newId);
+      historyMode.selectedIndex = nextIndex >= 0 ? nextIndex : historyMode.selectedIndex;
+    }
+    renderHistoryPanel();
+    showToast("History point tagged.", "success");
+  } catch (error: any) {
+    setInlineToastError(dom.historyTagError, error?.message || "Failed to tag history point.");
+  } finally {
+    if (dom.historyTagSave) {
+      dom.historyTagSave.disabled = false;
+    }
+  }
+}
+
+async function revertFromHistorySelection(): Promise<void> {
+  if (!historyMode.viewerActive || !historyMode.spaceId) {
+    return;
+  }
+  const selected = historyMode.checkpoints?.[historyMode.selectedIndex];
+  const checkpointId = typeof selected?.id === "string" ? selected.id : "";
+  if (!checkpointId) {
+    return;
+  }
+  const targetLabel = selected ? historyCheckpointDisplayLabel(selected) : "selected history point";
+  const confirmed = window.confirm(
+    `Revert to ${targetLabel}?\n\nCurrent code will be saved to history as "revoked".`
+  );
+  if (!confirmed) {
+    return;
+  }
+  try {
+    if (dom.historyRevertButton) {
+      dom.historyRevertButton.disabled = true;
+    }
+    const result = await postSpaceHistoryRevert(
+      historyMode.spaceId,
+      checkpointId,
+      typeof historyMode.originalText === "string" ? historyMode.originalText : editorController.getValue(),
+      historyMode.spacePath || ""
+    );
+    if (typeof result?.content === "string") {
+      forceEditorRefresh(result.content, { collapseSelection: true });
+    }
+    await closeHistoryPanel({ restoreOriginal: false });
+    showToast("Reverted to selected history point.", "success");
+  } catch (error: any) {
+    showToast(error?.message || "Failed to revert history point.", "error");
+    renderHistoryPanel();
+  } finally {
+    if (dom.historyRevertButton && historyMode.panelOpen) {
+      dom.historyRevertButton.disabled = false;
+    }
+  }
 }
 
 function matchesFilters(task: any) {
@@ -4683,6 +5262,9 @@ function matchesFilters(task: any) {
 
 if (dom.undoButton) {
   dom.undoButton.addEventListener("click", () => {
+    if (historyMode.viewerActive) {
+      return;
+    }
     editorController.focus();
     editorController.undo();
     syncEditorState();
@@ -4691,6 +5273,9 @@ if (dom.undoButton) {
 
 if (dom.redoButton) {
   dom.redoButton.addEventListener("click", () => {
+    if (historyMode.viewerActive) {
+      return;
+    }
     editorController.focus();
     editorController.redo();
     syncEditorState();
@@ -4703,6 +5288,10 @@ if (dom.loadButton && dom.fileInput) {
     fileInput.click();
   });
   fileInput.addEventListener("change", async (event) => {
+    if (historyMode.viewerActive) {
+      fileInput.value = "";
+      return;
+    }
     const target = event.target as HTMLInputElement | null;
     const file = target?.files?.[0];
     if (!file) {
@@ -4717,6 +5306,9 @@ if (dom.loadButton && dom.fileInput) {
 
 if (dom.saveButton) {
   dom.saveButton.addEventListener("click", () => {
+    if (historyMode.viewerActive) {
+      return;
+    }
     const title = state.config?.boardName || dom.boardTitle?.textContent || "tasks";
     const filename = `${toSafeFilename(title)}.txt`;
     const blob = new Blob([editorController.getValue()], { type: "text/plain" });
@@ -4733,6 +5325,9 @@ if (dom.saveButton) {
 
 if (dom.formatButton) {
   dom.formatButton.addEventListener("click", () => {
+    if (historyMode.viewerActive) {
+      return;
+    }
     const currentValue = editorController.getValue();
     const formatted = formatTaskScript(currentValue);
     if (formatted === currentValue) {
@@ -4740,6 +5335,88 @@ if (dom.formatButton) {
     }
     applyEditorValue(formatted);
     syncEditorState();
+  });
+}
+
+if (dom.historyButton) {
+  dom.historyButton.addEventListener("click", () => {
+    if (historyMode.panelOpen) {
+      void closeHistoryPanel();
+      return;
+    }
+    void openHistoryPanel();
+  });
+}
+
+if (dom.historySlider) {
+  dom.historySlider.addEventListener("input", (event) => {
+    const target = event.target as HTMLInputElement | null;
+    const sliderValue = Number.parseInt(target?.value || "0", 10);
+    const index = findNearestHistoryCheckpointIndexByTime(historyMode.checkpoints, sliderValue);
+    void selectHistoryCheckpoint(index);
+  });
+}
+
+if (dom.historyStepPrev) {
+  dom.historyStepPrev.addEventListener("click", () => {
+    void stepHistorySelection(-1);
+  });
+}
+
+if (dom.historyStepNext) {
+  dom.historyStepNext.addEventListener("click", () => {
+    void stepHistorySelection(1);
+  });
+}
+
+if (dom.historyCancelButton) {
+  dom.historyCancelButton.addEventListener("click", () => {
+    void closeHistoryPanel();
+  });
+}
+
+if (dom.historyTagButton) {
+  dom.historyTagButton.addEventListener("click", () => {
+    if (!historyMode.panelOpen || !historyMode.spaceId) {
+      return;
+    }
+    openHistoryTagModal();
+  });
+}
+
+if (dom.historyRevertButton) {
+  dom.historyRevertButton.addEventListener("click", () => {
+    void revertFromHistorySelection();
+  });
+}
+
+if (dom.historyTagClose) {
+  dom.historyTagClose.addEventListener("click", () => {
+    closeHistoryTagModal();
+  });
+}
+
+if (dom.historyTagCancel) {
+  dom.historyTagCancel.addEventListener("click", () => {
+    closeHistoryTagModal();
+  });
+}
+
+if (dom.historyTagSave) {
+  dom.historyTagSave.addEventListener("click", () => {
+    void submitHistoryTag();
+  });
+}
+
+if (dom.historyTagInput) {
+  dom.historyTagInput.addEventListener("keydown", (event: any) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void submitHistoryTag();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeHistoryTagModal();
+    }
   });
 }
 
@@ -5000,6 +5677,9 @@ if (dom.taskEditSave) {
 
 if (dom.graphAddTask) {
   dom.graphAddTask.addEventListener("click", () => {
+    if (historyMode.viewerActive) {
+      return;
+    }
     openTaskCreateModal();
   });
 }
@@ -5163,8 +5843,17 @@ window.addEventListener("taskdragend", () => {
   setTaskDragActive(false);
 });
 
+window.addEventListener("resize", () => {
+  if (historyMode.viewerActive) {
+    positionHistoryViewerBanner();
+  }
+});
+
 if (dom.taskTrash) {
   dom.taskTrash.addEventListener("dragover", (event: any) => {
+    if (historyMode.viewerActive) {
+      return;
+    }
     event.preventDefault();
     dom.taskTrash.classList.add("drag-over");
     document.body.classList.add("task-trash-over");
@@ -5174,6 +5863,11 @@ if (dom.taskTrash) {
     document.body.classList.remove("task-trash-over");
   });
   dom.taskTrash.addEventListener("drop", (event: any) => {
+    if (historyMode.viewerActive) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const dragEvent = /** @type {DragEvent} */ (event);
     event.preventDefault();
     event.stopPropagation();
@@ -5337,7 +6031,7 @@ if (dom.deleteConfirm) {
     }
     const target = pendingDeleteSpace;
     try {
-      await deleteSpace(target.id);
+      await deleteSpace(target.id, target.path || "");
       clearSpaceError();
       showToast(`Space '${target.path || target.id}' deleted.`);
     } catch (error) {
@@ -5570,6 +6264,7 @@ updateKanbanGroupButtons();
 
 initializeSecretToggles();
 updateConnectButtonLabel();
+updateHistoryButtonState();
 updateLegendHiddenFromLayout();
 restoreSessionFromCookie();
 sync();

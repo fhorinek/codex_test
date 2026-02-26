@@ -1345,6 +1345,7 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
             getDisplayCursorRects: (): VisibleRect[] => [],
             syncOverlayMetrics: () => { },
             setCollabExtensions: () => { },
+            setReadOnly: () => { },
         };
     }
     let suppressTextareaInput = false;
@@ -1357,6 +1358,8 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
     const themeCompartment = new Compartment();
     const contentAttrCompartment = new Compartment();
     const collabCompartment = new Compartment();
+    const readOnlyCompartment = new Compartment();
+    const editableCompartment = new Compartment();
     const initialDarkTheme = document.documentElement.dataset["theme"] === "dark";
     let spellcheckEnabled = Boolean(spellcheck);
     const scopedSpellcheckEnabled = Boolean(scopedSpellcheck);
@@ -1527,6 +1530,8 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
                 themeCompartment.of(themeExtension(initialDarkTheme)),
                 contentAttrCompartment.of(contentAttributesExtension()),
                 collabCompartment.of([]),
+                readOnlyCompartment.of(EditorState.readOnly.of(false)),
+                editableCompartment.of(EditorView.editable.of(true)),
                 history(),
                 indentUnit.of("    "),
                 updateListener,
@@ -1830,6 +1835,15 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
                 effects: collabCompartment.reconfigure(normalized.filter(Boolean)),
             });
             syncTextareaOverlayMetrics();
+        },
+        setReadOnly: (enabled: any) => {
+            const readOnly = Boolean(enabled);
+            view.dispatch({
+                effects: [
+                    readOnlyCompartment.reconfigure(EditorState.readOnly.of(readOnly)),
+                    editableCompartment.reconfigure(EditorView.editable.of(!readOnly)),
+                ],
+            });
         },
     };
 }

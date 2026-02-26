@@ -96,7 +96,12 @@ export function createSyncEngine(options: SyncEngineOptions) {
 
   async function hydrateFromRemote(spaceId: any, ytext: any) {
     try {
-      const response = await fetchImpl(`${remoteBase}/api/spaces/${spaceId}`, {
+      const normalizedPath =
+        typeof collab.spacePath === "string" && collab.spacePath.trim()
+          ? collab.spacePath.trim()
+          : String(spaceId || "");
+      const pathQuery = normalizedPath ? `?path=${encodeURIComponent(normalizedPath)}` : "";
+      const response = await fetchImpl(`${remoteBase}/api/spaces/${spaceId}${pathQuery}`, {
         headers: authHeaders(),
       });
       if (!response.ok) {
@@ -177,7 +182,7 @@ export function createSyncEngine(options: SyncEngineOptions) {
       wsParams["user"] = collab.username;
       wsParams["pass"] = collab.authToken;
     }
-    const provider = new WebsocketProvider(wsBase, spaceId, ydoc, {
+    const provider = new WebsocketProvider(wsBase, normalizedPath, ydoc, {
       params: wsParams,
     });
     const ytext = ydoc.getText("content");
