@@ -5,7 +5,7 @@ import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger("jira-worker")
 _JSON_IO_LOCK = threading.RLock()
@@ -148,7 +148,7 @@ def save_jira_config(
     return config
 
 
-def load_jira_worker_credentials() -> tuple[str, str]:
+def load_jira_worker_credentials() -> Tuple[str, str]:
     data = load_jira_config_data()
     username = _normalize_value(data.get("worker_username")) or JIRA_DAEMON_USERNAME
     password = _normalize_value(data.get("worker_password"))
