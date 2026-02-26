@@ -689,6 +689,7 @@ function bindKanbanCard({
         drag.lastClientY - drag.startClientY
       );
       if (distance < KANBAN_TOUCH_DRAG_THRESHOLD_PX) {
+        event.preventDefault();
         return;
       }
       drag.dragging = true;

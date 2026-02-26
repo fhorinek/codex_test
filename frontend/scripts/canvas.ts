@@ -1666,7 +1666,7 @@ export function createCanvas({
   });
 
   graphCanvas.addEventListener("touchstart", (event: TouchEvent) => {
-    if (isDraggingToken || activeTouchTaskDrag?.dragging) {
+    if (isDraggingToken || activeTouchTaskDrag) {
       return;
     }
     if (event.touches.length >= 2) {
@@ -1700,6 +1700,8 @@ export function createCanvas({
     }
     const target = event.target as Element | null;
     if (target?.closest?.(".task-node")) {
+      isTouchPanning = false;
+      pinchGesture = null;
       return;
     }
     const touch = event.touches.item(0);
@@ -1712,7 +1714,7 @@ export function createCanvas({
   }, { passive: false });
 
   graphCanvas.addEventListener("touchmove", (event: TouchEvent) => {
-    if (isDraggingToken || activeTouchTaskDrag?.dragging) {
+    if (isDraggingToken || activeTouchTaskDrag) {
       return;
     }
     if (event.touches.length >= 2) {
@@ -1766,7 +1768,7 @@ export function createCanvas({
   }, { passive: false });
 
   graphCanvas.addEventListener("touchend", (event: TouchEvent) => {
-    if (activeTouchTaskDrag?.dragging) {
+    if (activeTouchTaskDrag) {
       return;
     }
     if (event.touches.length >= 2) {
