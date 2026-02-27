@@ -4439,6 +4439,22 @@ html[data-theme="dark"] .history-panel .toolbar-button.danger:hover {
 
 html[data-viewport="mobile"] .app {
   grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  height: 100svh;
+  min-height: 100svh;
+}
+
+@supports (height: 100dvh) {
+  html[data-viewport="mobile"] .app {
+    height: 100dvh;
+    min-height: 100dvh;
+  }
+}
+
+html[data-viewport="mobile"],
+html[data-viewport="mobile"] body {
+  height: 100%;
+  overflow: hidden;
 }
 
 html[data-viewport="mobile"] .divider {
