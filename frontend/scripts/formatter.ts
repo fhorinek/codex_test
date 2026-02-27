@@ -1,4 +1,8 @@
 // @ts-check
+/**
+ * Module: Task script formatting and normalization utilities.
+ */
+
 import {
   findEstimateToken,
   findStateToken,
@@ -8,18 +12,34 @@ import {
   removeStateAndEstimateTokens,
 } from "./taskTokens.js";
 
+// Defines the SplitLine type structure for this module.
 type SplitLine = { indent: string; content: string };
 
+/**
+ * Handles the splitIndent function logic.
+ * Input: line: string.
+ * Output: SplitLine.
+ */
 export function splitIndent(line: string): SplitLine {
   const match = line.match(/^(\s*)/);
   const indent = match?.[1] ?? "";
   return { indent, content: line.slice(indent.length) };
 }
 
+/**
+ * Handles the normalizeContent function logic.
+ * Input: content: string.
+ * Output: string.
+ */
 export function normalizeContent(content: string): string {
   return content.replace(/\s{2,}/g, " ").trim();
 }
 
+/**
+ * Handles the sharedPrefix function logic.
+ * Input: a: string, b: string.
+ * Output: string.
+ */
 function sharedPrefix(a: string, b: string): string {
   const max = Math.min(a.length, b.length);
   let i = 0;
@@ -29,6 +49,11 @@ function sharedPrefix(a: string, b: string): string {
   return a.slice(0, i);
 }
 
+/**
+ * Handles the normalizeIndentToTaskDepth function logic.
+ * Input: indent: string.
+ * Output: string.
+ */
 function normalizeIndentToTaskDepth(indent: string): string {
   if (!/^[ ]*$/.test(indent)) {
     return indent;
@@ -37,10 +62,20 @@ function normalizeIndentToTaskDepth(indent: string): string {
   return " ".repeat(depth * 4);
 }
 
+/**
+ * Handles the getLine function logic.
+ * Input: lines: string[], index: number.
+ * Output: string.
+ */
 function getLine(lines: string[], index: number): string {
   return lines[index] ?? "";
 }
 
+/**
+ * Handles the prependTokenToLine function logic.
+ * Input: line: string, token: string.
+ * Output: string.
+ */
 export function prependTokenToLine(line: string, token: string): string {
   const { indent, content } = splitIndent(line);
   const trimmed = content.trimStart();
@@ -50,6 +85,11 @@ export function prependTokenToLine(line: string, token: string): string {
   return `${indent}${token} ${trimmed}`;
 }
 
+/**
+ * Handles the compactBlankLines function logic.
+ * Input: lines: string[].
+ * Output: string[].
+ */
 function compactBlankLines(lines: string[]): string[] {
   const firstTaskIndex = lines.findIndex((line) => /^\s*%\s+/.test(line));
   const compact: string[] = [];
@@ -73,6 +113,11 @@ function compactBlankLines(lines: string[]): string[] {
   return compact;
 }
 
+/**
+ * Handles the ensureConfigTaskSeparator function logic.
+ * Input: lines: string[].
+ * Output: string[].
+ */
 function ensureConfigTaskSeparator(lines: string[]): string[] {
   const firstTaskIndex = lines.findIndex((line) => /^\s*%\s+/.test(line));
   if (firstTaskIndex <= 0) {
@@ -96,6 +141,11 @@ function ensureConfigTaskSeparator(lines: string[]): string[] {
   return nextLines;
 }
 
+/**
+ * Handles the formatTaskScript function logic.
+ * Input: text: string.
+ * Output: string.
+ */
 export function formatTaskScript(text: string): string {
   const normalized = text.replace(/\r\n?/g, "\n");
   let lines = normalized.split("\n").map((line) => line.replace(/[ \t]+$/g, ""));

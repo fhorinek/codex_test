@@ -1,3 +1,7 @@
+/**
+ * Module: Main frontend application orchestration, state management, and UI event wiring.
+ */
+
 import { parseTasks, parseJiraTitle, renderMarkdown } from "./task.js";
 import { createEditor } from "./editor.js";
 import { createCanvas } from "./canvas.js";
@@ -38,14 +42,19 @@ import {
 } from "./taskCommands.js";
 import { createSyncEngine } from "./syncEngine.js";
 
+// Stores the REMOTE_BASE module constant.
 const REMOTE_BASE = window.location.origin;
+// Stores the WS_BASE module constant.
 const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
+// Stores the AUTH_TOKEN module constant.
 const AUTH_TOKEN = "";
+// Stores the COLLAB_LIBS module constant.
 const COLLAB_LIBS = {
   yjs: "yjs",
   ywebsocket: "y-websocket",
   ycodemirror: "y-codemirror.next",
 };
+// Stores the COLLAB_COLORS module constant.
 const COLLAB_COLORS = [
   { r: 45, g: 80, b: 237 },
   { r: 232, g: 93, b: 73 },
@@ -55,25 +64,45 @@ const COLLAB_COLORS = [
   { r: 66, g: 153, b: 225 },
   { r: 236, g: 112, b: 99 },
 ];
+// Stores the IDLE_TIMEOUT_MS module constant.
 const IDLE_TIMEOUT_MS = 60000;
+// Stores the IDLE_CHECK_MS module constant.
 const IDLE_CHECK_MS = 5000;
+// Stores the OFFLINE_DRAFT_STORAGE_KEY module constant.
 const OFFLINE_DRAFT_STORAGE_KEY = "taskScript.offlineDraft.v1";
+// Stores the OFFLINE_DRAFT_SAVE_INTERVAL_MS module constant.
 const OFFLINE_DRAFT_SAVE_INTERVAL_MS = 10000;
+// Stores the SPELLCHECK_STORAGE_KEY module constant.
 const SPELLCHECK_STORAGE_KEY = "taskScript.spellcheckEnabled.v1";
+// Stores the LAST_SPACE_STORAGE_KEY module constant.
 const LAST_SPACE_STORAGE_KEY = "taskScript.lastSpace.v1";
+// Stores the MOBILE_PANE_STORAGE_KEY module constant.
 const MOBILE_PANE_STORAGE_KEY = "taskScript.mobilePane.v1";
+// Stores the TABLET_PANE_STORAGE_KEY module constant.
 const TABLET_PANE_STORAGE_KEY = "taskScript.tabletPane.v1";
+// Stores the TABLET_PANE_LAYOUT_STORAGE_KEY module constant.
 const TABLET_PANE_LAYOUT_STORAGE_KEY = "taskScript.tabletPaneLayout.v1";
+// Stores the RESPONSIVE_LAYOUT_STORAGE_KEY module constant.
 const RESPONSIVE_LAYOUT_STORAGE_KEY = "taskScript.responsiveLayout.v1";
+// Stores the VIEWPORT_TABLET_MIN_PX module constant.
 const VIEWPORT_TABLET_MIN_PX = 768;
+// Stores the VIEWPORT_DESKTOP_MIN_PX module constant.
 const VIEWPORT_DESKTOP_MIN_PX = 1200;
+// Stores the VIEWPORT_COMPACT_HEIGHT_PX module constant.
 const VIEWPORT_COMPACT_HEIGHT_PX = 700;
+// Stores the HISTORY_PANEL_ANIMATION_MS module constant.
 const HISTORY_PANEL_ANIMATION_MS = 220;
+// Stores the BOOT_LOADER_CONNECT_TIMEOUT_MS module constant.
 const BOOT_LOADER_CONNECT_TIMEOUT_MS = 15000;
+// Stores the BOOT_LOADER_POLL_INTERVAL_MS module constant.
 const BOOT_LOADER_POLL_INTERVAL_MS = 120;
+// Stores the DEFAULT_LEFT_WIDTH_PERCENT module constant.
 const DEFAULT_LEFT_WIDTH_PERCENT = 45;
+// Stores the DEFAULT_KANBAN_HEIGHT_PX module constant.
 const DEFAULT_KANBAN_HEIGHT_PX = 180;
+// Stores the DEFAULT_TABLET_HORIZONTAL_TOP_PERCENT module constant.
 const DEFAULT_TABLET_HORIZONTAL_TOP_PERCENT = 50;
+// Stores the STATUS_LABELS module constant.
 const STATUS_LABELS: Record<string, string> = {
   connected: "live",
   connecting: "reconnecting",
@@ -85,6 +114,11 @@ const STATUS_LABELS: Record<string, string> = {
   idle: "idle",
 };
 
+/**
+ * Handles the copyToClipboard function logic.
+ * Input: text: any.
+ * Output: Promise<void>.
+ */
 async function copyToClipboard(text: any): Promise<void> {
   if (!text) {
     return;
@@ -108,6 +142,11 @@ async function copyToClipboard(text: any): Promise<void> {
   }
 }
 
+/**
+ * Handles the createJiraTitlePill function logic.
+ * Input: key: any.
+ * Output: result produced by this function.
+ */
 function createJiraTitlePill(key: any) {
   const pill = document.createElement("span");
   pill.className = "pill jira-pill";
@@ -120,6 +159,11 @@ function createJiraTitlePill(key: any) {
   return pill;
 }
 
+/**
+ * Handles the ensureSecretVisibilityToggle function logic.
+ * Input: input: any.
+ * Output: void.
+ */
 function ensureSecretVisibilityToggle(input: any): void {
   if (!input || input.dataset.secretToggle === "true") {
     return;
@@ -147,6 +191,11 @@ function ensureSecretVisibilityToggle(input: any): void {
   icon.setAttribute("aria-hidden", "true");
   button.appendChild(icon);
 
+  /**
+   * Handles the refresh function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const refresh = () => {
     const visible = input.type === "text";
     icon.className = `fa-solid ${visible ? "fa-eye-slash" : "fa-eye"}`;
@@ -167,6 +216,11 @@ function ensureSecretVisibilityToggle(input: any): void {
   refresh();
 }
 
+/**
+ * Handles the updateTaskEditJiraPill function logic.
+ * Input: key: any.
+ * Output: void.
+ */
 function updateTaskEditJiraPill(key: any): void {
   if (!dom.taskEditJiraPill) {
     return;
@@ -182,6 +236,11 @@ function updateTaskEditJiraPill(key: any): void {
   dom.taskEditJiraPill.classList.remove("hidden");
 }
 
+/**
+ * Handles the safeLocalStorageGet function logic.
+ * Input: key: string.
+ * Output: string | null.
+ */
 function safeLocalStorageGet(key: string): string | null {
   try {
     return localStorage.getItem(key);
@@ -190,6 +249,11 @@ function safeLocalStorageGet(key: string): string | null {
   }
 }
 
+/**
+ * Handles the safeLocalStorageSet function logic.
+ * Input: key: string, value: string.
+ * Output: void.
+ */
 function safeLocalStorageSet(key: string, value: string): void {
   try {
     localStorage.setItem(key, value);
@@ -198,6 +262,11 @@ function safeLocalStorageSet(key: string, value: string): void {
   }
 }
 
+/**
+ * Handles the getStoredResponsiveLayoutProfile function logic.
+ * Input: none.
+ * Output: any.
+ */
 function getStoredResponsiveLayoutProfile(): any {
   const raw = safeLocalStorageGet(RESPONSIVE_LAYOUT_STORAGE_KEY);
   if (!raw) {
@@ -211,14 +280,29 @@ function getStoredResponsiveLayoutProfile(): any {
   }
 }
 
+/**
+ * Handles the persistResponsiveLayoutProfile function logic.
+ * Input: none.
+ * Output: void.
+ */
 function persistResponsiveLayoutProfile(): void {
   safeLocalStorageSet(RESPONSIVE_LAYOUT_STORAGE_KEY, JSON.stringify(responsiveLayoutProfile));
 }
 
+/**
+ * Handles the normalizeViewportOrientation function logic.
+ * Input: value: any.
+ * Output: "portrait" | "landscape".
+ */
 function normalizeViewportOrientation(value: any): "portrait" | "landscape" {
   return String(value || "").toLowerCase() === "portrait" ? "portrait" : "landscape";
 }
 
+/**
+ * Handles the getViewportOrientationForSize function logic.
+ * Input: width: number, height: number.
+ * Output: "portrait" | "landscape".
+ */
 function getViewportOrientationForSize(width: number, height: number): "portrait" | "landscape" {
   if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
     return "landscape";
@@ -226,23 +310,48 @@ function getViewportOrientationForSize(width: number, height: number): "portrait
   return height > width ? "portrait" : "landscape";
 }
 
+/**
+ * Handles the parseFiniteNumber function logic.
+ * Input: value: any, fallback: number.
+ * Output: number.
+ */
 function parseFiniteNumber(value: any, fallback: number): number {
   const parsed = typeof value === "number" ? value : Number.parseFloat(String(value || ""));
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+/**
+ * Handles the clampNumber function logic.
+ * Input: value: number, min: number, max: number.
+ * Output: number.
+ */
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
+/**
+ * Handles the normalizeLeftWidthPercent function logic.
+ * Input: value: any, fallback = DEFAULT_LEFT_WIDTH_PERCENT.
+ * Output: number.
+ */
 function normalizeLeftWidthPercent(value: any, fallback = DEFAULT_LEFT_WIDTH_PERCENT): number {
   return clampNumber(parseFiniteNumber(value, fallback), 0, 100);
 }
 
+/**
+ * Handles the normalizeKanbanHeightPx function logic.
+ * Input: value: any, fallback = DEFAULT_KANBAN_HEIGHT_PX.
+ * Output: number.
+ */
 function normalizeKanbanHeightPx(value: any, fallback = DEFAULT_KANBAN_HEIGHT_PX): number {
   return Math.max(0, parseFiniteNumber(value, fallback));
 }
 
+/**
+ * Handles the normalizeTabletHorizontalTopPercent function logic.
+ * Input: value: any, fallback = DEFAULT_TABLET_HORIZONTAL_TOP_PERCENT.
+ * Output: number.
+ */
 function normalizeTabletHorizontalTopPercent(
   value: any,
   fallback = DEFAULT_TABLET_HORIZONTAL_TOP_PERCENT
@@ -250,11 +359,21 @@ function normalizeTabletHorizontalTopPercent(
   return clampNumber(parseFiniteNumber(value, fallback), 0, 100);
 }
 
+/**
+ * Handles the readCssCustomNumber function logic.
+ * Input: name: string, fallback: number.
+ * Output: number.
+ */
 function readCssCustomNumber(name: string, fallback: number): number {
   const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return parseFiniteNumber(raw, fallback);
 }
 
+/**
+ * Handles the getResponsiveLayoutBucket function logic.
+ * Input: viewport: any, orientation: any, { create = false }: { create?: boolean } = {}.
+ * Output: any.
+ */
 function getResponsiveLayoutBucket(
   viewport: any,
   orientation: any,
@@ -286,8 +405,14 @@ function getResponsiveLayoutBucket(
   return bucket;
 }
 
+// Stores the responsiveLayoutProfile module constant.
 let responsiveLayoutProfile: any = getStoredResponsiveLayoutProfile();
 
+/**
+ * Handles the getStoredLastSpaceRef function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getStoredLastSpaceRef(): { id: string; path: string } | null {
   const raw = safeLocalStorageGet(LAST_SPACE_STORAGE_KEY);
   if (!raw) {
@@ -306,6 +431,11 @@ function getStoredLastSpaceRef(): { id: string; path: string } | null {
   }
 }
 
+/**
+ * Handles the setStoredLastSpaceRef function logic.
+ * Input: spaceId: any, spacePath: any = "".
+ * Output: void.
+ */
 function setStoredLastSpaceRef(spaceId: any, spacePath: any = ""): void {
   const id = typeof spaceId === "string" ? spaceId.trim() : "";
   if (!id) {
@@ -315,6 +445,11 @@ function setStoredLastSpaceRef(spaceId: any, spacePath: any = ""): void {
   safeLocalStorageSet(LAST_SPACE_STORAGE_KEY, JSON.stringify({ id, path }));
 }
 
+/**
+ * Handles the resetInlineError function logic.
+ * Input: element: HTMLElement | null | undefined.
+ * Output: void.
+ */
 function resetInlineError(element: HTMLElement | null | undefined): void {
   if (!element) {
     return;
@@ -323,6 +458,11 @@ function resetInlineError(element: HTMLElement | null | undefined): void {
   element.classList.add("hidden");
 }
 
+/**
+ * Handles the setInlineToastError function logic.
+ * Input: element: HTMLElement | null | undefined, message: any.
+ * Output: void.
+ */
 function setInlineToastError(element: HTMLElement | null | undefined, message: any): void {
   const text = typeof message === "string" ? message.trim() : "";
   resetInlineError(element);
@@ -331,6 +471,11 @@ function setInlineToastError(element: HTMLElement | null | undefined, message: a
   }
 }
 
+/**
+ * Handles the getCollabIdentity function logic.
+ * Input: preferredName?: string.
+ * Output: result produced by this function.
+ */
 function getCollabIdentity(preferredName?: string) {
   const cached = safeLocalStorageGet("collabIdentity");
   if (cached) {
@@ -364,10 +509,17 @@ function getCollabIdentity(preferredName?: string) {
   return identity;
 }
 
+// Stores the dom module constant.
 /** @type {import("./appDom.js").AppDom} */
 const dom = createAppDom(document);
+// Stores the slugRenameUi module constant.
 const slugRenameUi = createSlugRenameUi(dom, document);
 
+/**
+ * Handles the initializeSecretToggles function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function initializeSecretToggles() {
   [
     dom.loginPassword,
@@ -380,6 +532,11 @@ function initializeSecretToggles() {
   ].forEach((input) => ensureSecretVisibilityToggle(input));
 }
 
+/**
+ * Handles the setButtonIcon function logic.
+ * Input: button: any, icon: any.
+ * Output: void.
+ */
 function setButtonIcon(button: any, icon: any): void {
   if (!button) {
     return;
@@ -394,10 +551,16 @@ function setButtonIcon(button: any, icon: any): void {
   iconEl.className = `fa-solid ${icon}`;
 }
 
+/**
+ * Handles the getStoredSpellcheckEnabled function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getStoredSpellcheckEnabled() {
   return safeLocalStorageGet(SPELLCHECK_STORAGE_KEY) === "1";
 }
 
+// Stores the state module constant.
 const state: any = {
   tasks: [],
   allTasks: [],
@@ -436,8 +599,14 @@ const state: any = {
   pendingResponsiveKanbanBuild: false,
 };
 
+// Stores the KANBAN_GROUPS module constant.
 const KANBAN_GROUPS = new Set(["none", "person", "tag"]);
 
+/**
+ * Handles the normalizeKanbanGroup function logic.
+ * Input: value: any.
+ * Output: string.
+ */
 function normalizeKanbanGroup(value: any): string {
   if (typeof value !== "string") {
     return "none";
@@ -446,18 +615,38 @@ function normalizeKanbanGroup(value: any): string {
   return KANBAN_GROUPS.has(trimmed) ? trimmed : "none";
 }
 
+/**
+ * Handles the getStoredKanbanGroup function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getStoredKanbanGroup() {
   return normalizeKanbanGroup(safeLocalStorageGet("kanbanGroupBy"));
 }
 
+/**
+ * Handles the getStoredMobilePane function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getStoredMobilePane() {
   return normalizeMobilePane(safeLocalStorageGet(MOBILE_PANE_STORAGE_KEY));
 }
 
+/**
+ * Handles the getStoredTabletRightPane function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getStoredTabletRightPane() {
   return normalizeTabletRightPane(safeLocalStorageGet(TABLET_PANE_STORAGE_KEY));
 }
 
+/**
+ * Handles the normalizeTabletPaneLayout function logic.
+ * Input: value: any.
+ * Output: "code" | "hide" | "vertical" | "horizontal".
+ */
 function normalizeTabletPaneLayout(value: any): "code" | "hide" | "vertical" | "horizontal" {
   const normalized = String(value || "").toLowerCase();
   if (normalized === "code") {
@@ -472,10 +661,20 @@ function normalizeTabletPaneLayout(value: any): "code" | "hide" | "vertical" | "
   return "vertical";
 }
 
+/**
+ * Handles the getStoredTabletPaneLayout function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getStoredTabletPaneLayout() {
   return normalizeTabletPaneLayout(safeLocalStorageGet(TABLET_PANE_LAYOUT_STORAGE_KEY));
 }
 
+/**
+ * Handles the rememberResponsivePaneSelectionForCurrentViewport function logic.
+ * Input: none.
+ * Output: void.
+ */
 function rememberResponsivePaneSelectionForCurrentViewport(): void {
   const bucket = getResponsiveLayoutBucket(state.viewportMode, state.viewportOrientation, { create: true });
   if (!bucket) {
@@ -490,6 +689,11 @@ function rememberResponsivePaneSelectionForCurrentViewport(): void {
   persistResponsiveLayoutProfile();
 }
 
+/**
+ * Handles the rememberLayoutGeometryForCurrentViewport function logic.
+ * Input: none.
+ * Output: void.
+ */
 function rememberLayoutGeometryForCurrentViewport(): void {
   const bucket = getResponsiveLayoutBucket(state.viewportMode, state.viewportOrientation, { create: true });
   if (!bucket) {
@@ -526,6 +730,11 @@ function rememberLayoutGeometryForCurrentViewport(): void {
   }
 }
 
+/**
+ * Handles the applyStoredLayoutForCurrentViewport function logic.
+ * Input: none.
+ * Output: void.
+ */
 function applyStoredLayoutForCurrentViewport(): void {
   const bucket = getResponsiveLayoutBucket(state.viewportMode, state.viewportOrientation);
   const currentLeftWidth = normalizeLeftWidthPercent(
@@ -567,6 +776,11 @@ function applyStoredLayoutForCurrentViewport(): void {
   document.documentElement.style.setProperty("--kanban-height", `${kanbanHeight}px`);
 }
 
+/**
+ * Handles the updateKanbanGroupButtons function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateKanbanGroupButtons() {
   if (!dom.kanbanGroup) {
     return;
@@ -580,6 +794,11 @@ function updateKanbanGroupButtons() {
   });
 }
 
+/**
+ * Handles the setKanbanGroupBy function logic.
+ * Input: value: any, { persist = true }: { persist?: boolean } = {}.
+ * Output: result produced by this function.
+ */
 function setKanbanGroupBy(value: any, { persist = true }: { persist?: boolean } = {}) {
   const nextValue = normalizeKanbanGroup(value);
   if (nextValue === state.kanbanGroupBy) {
@@ -593,6 +812,11 @@ function setKanbanGroupBy(value: any, { persist = true }: { persist?: boolean } 
   buildKanban();
 }
 
+/**
+ * Handles the applyResponsivePaneDatasets function logic.
+ * Input: none.
+ * Output: void.
+ */
 function applyResponsivePaneDatasets(): void {
   const root = document.documentElement;
   root.dataset["mobilePane"] = normalizeMobilePane(state.mobileActivePane);
@@ -600,6 +824,11 @@ function applyResponsivePaneDatasets(): void {
   root.dataset["tabletPaneLayout"] = normalizeTabletPaneLayout(state.tabletPaneLayout);
 }
 
+/**
+ * Handles the setMobileToolbarMenuOpen function logic.
+ * Input: open: boolean.
+ * Output: void.
+ */
 function setMobileToolbarMenuOpen(open: boolean): void {
   const next = Boolean(open) && (state.viewportMode === "mobile" || state.viewportMode === "tablet");
   document.documentElement.toggleAttribute("data-mobile-toolbar-open", next);
@@ -610,19 +839,39 @@ function setMobileToolbarMenuOpen(open: boolean): void {
   }
 }
 
+/**
+ * Handles the closeMobileToolbarMenu function logic.
+ * Input: none.
+ * Output: void.
+ */
 function closeMobileToolbarMenu(): void {
   setMobileToolbarMenuOpen(false);
 }
 
+/**
+ * Handles the toggleMobileToolbarMenu function logic.
+ * Input: none.
+ * Output: void.
+ */
 function toggleMobileToolbarMenu(): void {
   const isOpen = document.documentElement.hasAttribute("data-mobile-toolbar-open");
   setMobileToolbarMenuOpen(!isOpen);
 }
 
+/**
+ * Handles the isCompactToolbarMenuViewport function logic.
+ * Input: none.
+ * Output: boolean.
+ */
 function isCompactToolbarMenuViewport(): boolean {
   return state.viewportMode === "mobile" || state.viewportMode === "tablet";
 }
 
+/**
+ * Handles the updateResponsiveSearchPlacement function logic.
+ * Input: none.
+ * Output: void.
+ */
 function updateResponsiveSearchPlacement(): void {
   const searchRoot = dom.searchInput?.closest?.(".graph-search");
   if (!(searchRoot instanceof HTMLElement) || !dom.topbarActions) {
@@ -648,6 +897,11 @@ function updateResponsiveSearchPlacement(): void {
   topbarCenter.prepend(searchRoot);
 }
 
+/**
+ * Handles the updateResponsivePaneButtons function logic.
+ * Input: none.
+ * Output: void.
+ */
 function updateResponsivePaneButtons(): void {
   if (dom.mobilePaneTabs) {
     dom.mobilePaneTabs.querySelectorAll("button[data-mobile-pane]").forEach((button: any) => {
@@ -675,6 +929,11 @@ function updateResponsivePaneButtons(): void {
   }
 }
 
+/**
+ * Handles the isResponsiveGraphVisible function logic.
+ * Input: none.
+ * Output: boolean.
+ */
 function isResponsiveGraphVisible(): boolean {
   if (state.viewportMode === "mobile") {
     return state.mobileActivePane === "graph";
@@ -688,6 +947,11 @@ function isResponsiveGraphVisible(): boolean {
   return true;
 }
 
+/**
+ * Handles the isResponsiveKanbanVisible function logic.
+ * Input: none.
+ * Output: boolean.
+ */
 function isResponsiveKanbanVisible(): boolean {
   if (state.viewportMode === "mobile") {
     return state.mobileActivePane === "kanban";
@@ -701,6 +965,11 @@ function isResponsiveKanbanVisible(): boolean {
   return true;
 }
 
+/**
+ * Handles the flushResponsiveDeferredRenders function logic.
+ * Input: none.
+ * Output: void.
+ */
 function flushResponsiveDeferredRenders(): void {
   if (state.pendingResponsiveGraphRender && isResponsiveGraphVisible()) {
     state.pendingResponsiveGraphRender = false;
@@ -712,6 +981,11 @@ function flushResponsiveDeferredRenders(): void {
   }
 }
 
+/**
+ * Handles the setMobileActivePane function logic.
+ * Input: value: any, { persist = true }: { persist?: boolean } = {}.
+ * Output: void.
+ */
 function setMobileActivePane(value: any, { persist = true }: { persist?: boolean } = {}): void {
   const next = normalizeMobilePane(value);
   if (next === state.mobileActivePane) {
@@ -730,6 +1004,11 @@ function setMobileActivePane(value: any, { persist = true }: { persist?: boolean
   flushResponsiveDeferredRenders();
 }
 
+/**
+ * Handles the setTabletRightPane function logic.
+ * Input: value: any, { persist = true }: { persist?: boolean } = {}.
+ * Output: void.
+ */
 function setTabletRightPane(value: any, { persist = true }: { persist?: boolean } = {}): void {
   const next = normalizeTabletRightPane(value);
   if (next === state.tabletRightPane) {
@@ -745,6 +1024,11 @@ function setTabletRightPane(value: any, { persist = true }: { persist?: boolean 
   flushResponsiveDeferredRenders();
 }
 
+/**
+ * Handles the setTabletPaneLayout function logic.
+ * Input: value: any, { persist = true }: { persist?: boolean } = {}.
+ * Output: void.
+ */
 function setTabletPaneLayout(value: any, { persist = true }: { persist?: boolean } = {}): void {
   const next = normalizeTabletPaneLayout(value);
   if (next === state.tabletPaneLayout) {
@@ -758,9 +1042,11 @@ function setTabletPaneLayout(value: any, { persist = true }: { persist?: boolean
     rememberResponsivePaneSelectionForCurrentViewport();
   }
   updateResponsiveLayoutOffsets();
+  updateLegendHiddenFromLayout();
   flushResponsiveDeferredRenders();
 }
 
+// Stores the collab module constant.
 const collab: any = {
   spaceId: null,
   spacePath: "",
@@ -802,6 +1088,7 @@ const collab: any = {
   offlineDraftSavedValue: "",
 };
 
+// Stores the historyMode module constant.
 const historyMode: any = {
   panelOpen: false,
   panelOpening: false,
@@ -822,15 +1109,28 @@ state.mobileActivePane = getStoredMobilePane();
 state.tabletRightPane = getStoredTabletRightPane();
 state.tabletPaneLayout = getStoredTabletPaneLayout();
 
+// Stores the pendingDeleteSpace module constant.
 let pendingDeleteSpace: any = null;
+// Stores the pendingDeleteFolder module constant.
 let pendingDeleteFolder: any = null;
+// Stores the pendingDeleteUser module constant.
 let pendingDeleteUser: any = null;
+// Stores the pendingPasswordUser module constant.
 let pendingPasswordUser: any = null;
+// Stores the pendingBoardRename module constant.
 let pendingBoardRename = false;
+// Stores the createUserSpacesPicker module constant.
 let createUserSpacesPicker: any = null;
+// Stores the toastContainer module constant.
 let toastContainer: any = null;
+// Stores the lastToast module constant.
 let lastToast = { message: "", kind: "", at: 0 };
 
+/**
+ * Handles the normalizeMobilePane function logic.
+ * Input: value: any.
+ * Output: "code" | "graph" | "kanban".
+ */
 function normalizeMobilePane(value: any): "code" | "graph" | "kanban" {
   switch (String(value || "").toLowerCase()) {
     case "graph":
@@ -842,10 +1142,20 @@ function normalizeMobilePane(value: any): "code" | "graph" | "kanban" {
   }
 }
 
+/**
+ * Handles the normalizeTabletRightPane function logic.
+ * Input: value: any.
+ * Output: "graph" | "kanban".
+ */
 function normalizeTabletRightPane(value: any): "graph" | "kanban" {
   return String(value || "").toLowerCase() === "kanban" ? "kanban" : "graph";
 }
 
+/**
+ * Handles the getViewportModeForWidth function logic.
+ * Input: width: number.
+ * Output: "desktop" | "tablet" | "mobile".
+ */
 function getViewportModeForWidth(width: number): "desktop" | "tablet" | "mobile" {
   if (!Number.isFinite(width) || width < VIEWPORT_TABLET_MIN_PX) {
     return "mobile";
@@ -856,6 +1166,11 @@ function getViewportModeForWidth(width: number): "desktop" | "tablet" | "mobile"
   return "desktop";
 }
 
+/**
+ * Handles the getViewportHeightModeForHeight function logic.
+ * Input: height: number.
+ * Output: "compact" | "regular".
+ */
 function getViewportHeightModeForHeight(height: number): "compact" | "regular" {
   if (!Number.isFinite(height) || height < VIEWPORT_COMPACT_HEIGHT_PX) {
     return "compact";
@@ -863,6 +1178,11 @@ function getViewportHeightModeForHeight(height: number): "compact" | "regular" {
   return "regular";
 }
 
+/**
+ * Handles the applyViewportDatasets function logic.
+ * Input: none.
+ * Output: void.
+ */
 function applyViewportDatasets(): void {
   const root = document.documentElement;
   root.dataset["viewport"] = state.viewportMode || "desktop";
@@ -870,6 +1190,11 @@ function applyViewportDatasets(): void {
   root.dataset["viewportOrientation"] = normalizeViewportOrientation(state.viewportOrientation);
 }
 
+/**
+ * Handles the updateResponsiveLayoutOffsets function logic.
+ * Input: none.
+ * Output: void.
+ */
 function updateResponsiveLayoutOffsets(): void {
   const root = document.documentElement;
   const appRoot = document.querySelector(".app") as HTMLElement | null;
@@ -900,6 +1225,11 @@ function updateResponsiveLayoutOffsets(): void {
   }
 }
 
+/**
+ * Handles the updateViewportMode function logic.
+ * Input: none.
+ * Output: void.
+ */
 function updateViewportMode(): void {
   const width = window.innerWidth || document.documentElement.clientWidth || 0;
   const height = window.innerHeight || document.documentElement.clientHeight || 0;
@@ -930,6 +1260,11 @@ function updateViewportMode(): void {
   flushResponsiveDeferredRenders();
 }
 
+/**
+ * Handles the ensureToastContainer function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function ensureToastContainer() {
   if (toastContainer && document.body.contains(toastContainer)) {
     return toastContainer;
@@ -942,6 +1277,11 @@ function ensureToastContainer() {
   return toastContainer;
 }
 
+/**
+ * Handles the showToast function logic.
+ * Input: message: any, kind: any = "success", durationMs = 3200.
+ * Output: void.
+ */
 function showToast(message: any, kind: any = "success", durationMs = 3200): void {
   const text = typeof message === "string" ? message.trim() : "";
   if (!text) {
@@ -965,6 +1305,11 @@ function showToast(message: any, kind: any = "success", durationMs = 3200): void
   requestAnimationFrame(() => {
     toast.classList.add("show");
   });
+  /**
+   * Handles the closeToast function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const closeToast = () => {
     if (!toast.parentElement) {
       return;
@@ -977,6 +1322,11 @@ function showToast(message: any, kind: any = "success", durationMs = 3200): void
   setTimeout(closeToast, Math.max(1200, durationMs));
 }
 
+/**
+ * Handles the updateBootLoaderStatus function logic.
+ * Input: message: any.
+ * Output: void.
+ */
 function updateBootLoaderStatus(message: any): void {
   if (!dom.appBootLoaderStatus) {
     return;
@@ -985,6 +1335,11 @@ function updateBootLoaderStatus(message: any): void {
   dom.appBootLoaderStatus.textContent = text || "Preparing workspace...";
 }
 
+/**
+ * Handles the setBootLoaderVisible function logic.
+ * Input: visible: boolean, statusText = "".
+ * Output: void.
+ */
 function setBootLoaderVisible(visible: boolean, statusText = ""): void {
   if (!dom.appBootLoader) {
     return;
@@ -995,10 +1350,20 @@ function setBootLoaderVisible(visible: boolean, statusText = ""): void {
   dom.appBootLoader.classList.toggle("hidden", !visible);
 }
 
+/**
+ * Handles the isBootLoaderVisible function logic.
+ * Input: none.
+ * Output: boolean.
+ */
 function isBootLoaderVisible(): boolean {
   return Boolean(dom.appBootLoader && !dom.appBootLoader.classList.contains("hidden"));
 }
 
+/**
+ * Handles the updateBootLoaderStatusFromConnection function logic.
+ * Input: status: string.
+ * Output: void.
+ */
 function updateBootLoaderStatusFromConnection(status: string): void {
   if (!isBootLoaderVisible()) {
     return;
@@ -1035,6 +1400,11 @@ function updateBootLoaderStatusFromConnection(status: string): void {
   updateBootLoaderStatus("Preparing workspace...");
 }
 
+/**
+ * Handles the waitForInitialConnectionReady function logic.
+ * Input: timeoutMs = BOOT_LOADER_CONNECT_TIMEOUT_MS.
+ * Output: Promise<void>.
+ */
 async function waitForInitialConnectionReady(timeoutMs = BOOT_LOADER_CONNECT_TIMEOUT_MS): Promise<void> {
   if (!collab.spaceId) {
     return;
@@ -1051,6 +1421,11 @@ async function waitForInitialConnectionReady(timeoutMs = BOOT_LOADER_CONNECT_TIM
   }
 }
 
+/**
+ * Handles the normalizePermissions function logic.
+ * Input: value: any.
+ * Output: result produced by this function.
+ */
 function normalizePermissions(value: any) {
   if (!value || typeof value !== "object") {
     return {
@@ -1068,6 +1443,11 @@ function normalizePermissions(value: any) {
   };
 }
 
+/**
+ * Handles the normalizeOptionalDisplayName function logic.
+ * Input: displayName: any, username: any.
+ * Output: result produced by this function.
+ */
 function normalizeOptionalDisplayName(displayName: any, username: any) {
   const normalizedDisplayName =
     typeof displayName === "string" ? displayName.trim() : "";
@@ -1081,6 +1461,11 @@ function normalizeOptionalDisplayName(displayName: any, username: any) {
   return normalizedDisplayName;
 }
 
+/**
+ * Handles the applySessionFromServer function logic.
+ * Input: data: any.
+ * Output: void.
+ */
 function applySessionFromServer(data: any): void {
   if (!data || typeof data !== "object") {
     return;
@@ -1115,6 +1500,11 @@ function applySessionFromServer(data: any): void {
   updateRoleVisibility();
 }
 
+/**
+ * Handles the updateRoleVisibility function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateRoleVisibility() {
   if (dom.jiraConfigButton) {
     dom.jiraConfigButton.classList.toggle("hidden", !collab.permissions.can_manage_jira);
@@ -1149,6 +1539,11 @@ function updateRoleVisibility() {
   updateCreateFolderButton();
 }
 
+/**
+ * Handles the getStoredAuth function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getStoredAuth() {
   const cached = safeLocalStorageGet("collabAuth");
   if (!cached) {
@@ -1167,16 +1562,31 @@ function getStoredAuth() {
   return null;
 }
 
+/**
+ * Handles the persistAuth function logic.
+ * Input: auth: any.
+ * Output: void.
+ */
 function persistAuth(auth: any): void {
   safeLocalStorageSet("collabAuth", JSON.stringify(auth));
 }
 
+/**
+ * Handles the readAuthInputs function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function readAuthInputs() {
   const username = dom.loginUsername?.value?.trim() || "";
   const authToken = dom.loginPassword?.value || AUTH_TOKEN;
   return { username, authToken };
 }
 
+/**
+ * Handles the applyAuthFromInputs function logic.
+ * Input: { store = true, markDirty = true } = {}.
+ * Output: result produced by this function.
+ */
 function applyAuthFromInputs({ store = true, markDirty = true } = {}) {
   const { username, authToken } = readAuthInputs();
   const safeUsername = username || "user";
@@ -1205,6 +1615,11 @@ function applyAuthFromInputs({ store = true, markDirty = true } = {}) {
   updateRoleVisibility();
 }
 
+/**
+ * Handles the initializeAuthInputs function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function initializeAuthInputs() {
   const stored = getStoredAuth();
   if (dom.loginUsername) {
@@ -1217,6 +1632,11 @@ function initializeAuthInputs() {
   applyAuthFromInputs({ store: false, markDirty: false });
 }
 
+/**
+ * Handles the getServerLabel function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getServerLabel() {
   try {
     return new URL(REMOTE_BASE).hostname;
@@ -1225,6 +1645,11 @@ function getServerLabel() {
   }
 }
 
+/**
+ * Handles the setConnectionStatus function logic.
+ * Input: status: string.
+ * Output: void.
+ */
 function setConnectionStatus(status: string): void {
   if (collab.connectionStatus === status) {
     return;
@@ -1234,6 +1659,11 @@ function setConnectionStatus(status: string): void {
   updateBoardConnectionLabel();
 }
 
+/**
+ * Handles the markActivity function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function markActivity() {
   collab.lastActivityAt = Date.now();
   if (collab.connectionStatus === "idle" && collab.synced) {
@@ -1241,6 +1671,11 @@ function markActivity() {
   }
 }
 
+/**
+ * Handles the startIdleWatch function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function startIdleWatch() {
   collab.lastActivityAt = Date.now();
   if (collab.idleTimer) {
@@ -1259,6 +1694,11 @@ function startIdleWatch() {
   }, IDLE_CHECK_MS);
 }
 
+/**
+ * Handles the stopIdleWatch function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function stopIdleWatch() {
   if (collab.idleTimer) {
     clearInterval(collab.idleTimer);
@@ -1266,6 +1706,11 @@ function stopIdleWatch() {
   }
 }
 
+/**
+ * Handles the updateBoardConnectionLabel function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateBoardConnectionLabel() {
   if (!dom.boardConnection && !dom.boardMobileConnection) {
     return;
@@ -1321,10 +1766,20 @@ function updateBoardConnectionLabel() {
   updateResponsiveLayoutOffsets();
 }
 
+/**
+ * Handles the isOfflineMode function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function isOfflineMode() {
   return !collab.spaceId;
 }
 
+/**
+ * Handles the readOfflineDraft function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function readOfflineDraft() {
   const raw = safeLocalStorageGet(OFFLINE_DRAFT_STORAGE_KEY);
   if (raw === null) {
@@ -1341,6 +1796,11 @@ function readOfflineDraft() {
   return raw;
 }
 
+/**
+ * Handles the writeOfflineDraft function logic.
+ * Input: text: any.
+ * Output: void.
+ */
 function writeOfflineDraft(text: any): void {
   safeLocalStorageSet(
     OFFLINE_DRAFT_STORAGE_KEY,
@@ -1351,6 +1811,11 @@ function writeOfflineDraft(text: any): void {
   );
 }
 
+/**
+ * Handles the stopOfflineDraftTimer function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function stopOfflineDraftTimer() {
   if (collab.offlineDraftTimer) {
     clearInterval(collab.offlineDraftTimer);
@@ -1358,6 +1823,11 @@ function stopOfflineDraftTimer() {
   }
 }
 
+/**
+ * Handles the flushOfflineDraft function logic.
+ * Input: { force = false } = {}.
+ * Output: result produced by this function.
+ */
 function flushOfflineDraft({ force = false } = {}) {
   if (!isOfflineMode()) {
     stopOfflineDraftTimer();
@@ -1380,6 +1850,11 @@ function flushOfflineDraft({ force = false } = {}) {
   collab.offlineDraftDirty = false;
 }
 
+/**
+ * Handles the ensureOfflineDraftTimer function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function ensureOfflineDraftTimer() {
   if (collab.offlineDraftTimer) {
     return;
@@ -1397,6 +1872,11 @@ function ensureOfflineDraftTimer() {
   }, OFFLINE_DRAFT_SAVE_INTERVAL_MS);
 }
 
+/**
+ * Handles the trackOfflineDraftChange function logic.
+ * Input: value: any.
+ * Output: void.
+ */
 function trackOfflineDraftChange(value: any): void {
   if (!isOfflineMode()) {
     stopOfflineDraftTimer();
@@ -1411,6 +1891,11 @@ function trackOfflineDraftChange(value: any): void {
   ensureOfflineDraftTimer();
 }
 
+/**
+ * Handles the getInitialEditorValue function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getInitialEditorValue() {
   const stored = readOfflineDraft();
   if (stored !== null) {
@@ -1421,14 +1906,21 @@ function getInitialEditorValue() {
   return sample;
 }
 
+// Stores the sample module constant.
 const sample = `Example board:\n    people:\n        maya:\n            name: Maya Rivera\n        luis:\n            name: Luis Ortega\n        sam:\n            name: Sam Patel\n        nina:\n            name: Nina Lopez\n        zara:\n            name: Zara Chen\n    tags:\n        planning\n        backend\n        ux\n        research\n\n% Kickoff sprint\n!todo @maya #planning #ux\n**Goal:** Align scope, risks, and owners. {Architecture}\n- Define success metrics\n- Draft roadmap milestones\n[ ] Share notes with stakeholders\n[ ] Lock sprint goals\n\n    % Collect requirements\n    !inprogress @sam #research\n    Interview 5 users and summarize themes.\n    [ ] Write interview guide\n    [x] Schedule sessions\n\n        % Summarize insights\n        !todo @nina #research #planning\n        Capture themes and map to product risks.\n\n    % Create UX flow\n    !todo @maya #ux\n    Map onboarding screens and happy path.\n    - Wireframe key screens\n    - Validate navigation\n\n% Architecture\n!inprogress @luis #backend\nDefine data contracts and core services.\n| Area | Owner | Status |\n| --- | --- | --- |\n| API | Luis | Draft |\n| Data | Maya | Review |\n\n    % Build service skeleton\n    !todo @luis #backend\n    [ ] Set up repo and CI\n    [ ] Define API endpoints\n\n    % Integrate auth\n    !todo @sam #backend\n    Connect OAuth provider and session storage.\n\n        % Validate permissions\n        !todo @zara #backend #research\n        Check scopes and error handling.\n\n% Release prep\n!todo @maya #planning\nFinalize checklist and release timeline.\n{Kickoff sprint}\n`;
 
 if (dom.editor) {
   dom.editor.value = getInitialEditorValue();
 }
 
+// Stores the editorController module constant.
 let editorController: any;
 
+/**
+ * Handles the shouldSuppressTextareaInputEcho function logic.
+ * Input: value: any.
+ * Output: boolean.
+ */
 function shouldSuppressTextareaInputEcho(value: any): boolean {
   void value;
   if (!collab.ytext || !collab.ydoc) {
@@ -1444,6 +1936,11 @@ editorController = createEditor({
   onSync: sync,
   onSelectTask: handleEditorSelection,
   onLocalChange: shouldSuppressTextareaInputEcho,
+  /**
+   * Handles the onTaskTitleDoubleClick function logic.
+   * Input: { lineIndex }: any.
+   * Output: result produced by this function.
+   */
   onTaskTitleDoubleClick: ({ lineIndex }: any) => {
     const task = state.allTasks.find((item: any) => item.lineIndex === lineIndex);
     if (!task) {
@@ -1451,6 +1948,11 @@ editorController = createEditor({
     }
     openTaskEditModal(task);
   },
+  /**
+   * Handles the onTokenDoubleClick function logic.
+   * Input: token: any.
+   * Output: result produced by this function.
+   */
   onTokenDoubleClick: (token: any) => {
     openSlugRenameModal(token);
   },
@@ -1458,21 +1960,43 @@ editorController = createEditor({
   scopedSpellcheck: true,
 });
 
+// Stores the taskCommandController module constant.
 const taskCommandController = createTaskCommandController({
+  /**
+   * Handles the getEditorValue function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   getEditorValue: () => editorController.getValue(),
+  /**
+   * Handles the applyEditorValue function logic.
+   * Input: value: string.
+   * Output: result produced by this function.
+   */
   applyEditorValue: (value: string) => {
     applyEditorValue(value);
   },
+  /**
+   * Handles the syncEditorState function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   syncEditorState: () => {
     syncEditorState();
   },
 });
 
+// Stores the canvasController module constant.
 const canvasController = createCanvas({
   state,
   dom,
   renderMarkdown,
   onSelectTask: selectTask,
+  /**
+   * Handles the onEditTask function logic.
+   * Input: task: any.
+   * Output: result produced by this function.
+   */
   onEditTask: (task: any) => openTaskEditModal(task),
   findTaskByName,
   onUpdateTaskToken: updateTaskToken,
@@ -1480,6 +2004,11 @@ const canvasController = createCanvas({
   onMakeSubtask: moveTaskAsSubtask,
   onReorderTask: reorderKanbanTask,
   onToggleCheckbox: toggleCheckboxAtLine,
+  /**
+   * Handles the onFiltersChange function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   onFiltersChange: () => {
     buildTagPersonLists();
     buildKanban();
@@ -1502,6 +2031,11 @@ if (canvasController?.renderGraph) {
 
 if (typeof window !== "undefined") {
   window.__taskScriptTestHooks = {
+    /**
+     * Handles the setEditorSelectionRange function logic.
+     * Input: start: number, end: number.
+     * Output: result produced by this function.
+     */
     setEditorSelectionRange(start: number, end: number) {
       if (!editorController?.setSelectionRange) {
         return null;
@@ -1509,9 +2043,19 @@ if (typeof window !== "undefined") {
       editorController.setSelectionRange(start, end);
       return editorController.getSelectionRange?.() || null;
     },
+    /**
+     * Handles the getEditorSelectionRange function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     getEditorSelectionRange() {
       return editorController?.getSelectionRange?.() || null;
     },
+    /**
+     * Handles the getEditorDisplayRects function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     getEditorDisplayRects() {
       return {
         selection:
@@ -1520,32 +2064,75 @@ if (typeof window !== "undefined") {
           editorController?.getDisplayCursorRects?.() || [],
       };
     },
+    /**
+     * Handles the syncEditorOverlayMetrics function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     syncEditorOverlayMetrics() {
       editorController?.syncOverlayMetrics?.();
     },
   };
 }
 
+// Stores the modalEditorController module constant.
 let modalEditorController: any = null;
+// Stores the modalEditorState module constant.
 let modalEditorState: any = null;
 
+// Stores the slugRenameModalController module constant.
 const slugRenameModalController = createSlugRenameModalController({
   dom,
   slugRenameUi,
+  /**
+   * Handles the getConfig function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   getConfig: () => state.config,
+  /**
+   * Handles the getEditorValue function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   getEditorValue: () => editorController.getValue(),
+  /**
+   * Handles the applyEditorValue function logic.
+   * Input: value: string.
+   * Output: result produced by this function.
+   */
   applyEditorValue: (value: string) => {
     forceEditorRefresh(value, { collapseSelection: true });
   },
+  /**
+   * Handles the isTaskEditModalOpen function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   isTaskEditModalOpen: () => Boolean(
     modalEditorController
     && dom.taskEditModal
     && !dom.taskEditModal.classList.contains("hidden")
   ),
+  /**
+   * Handles the getTaskEditModalValue function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   getTaskEditModalValue: () => modalEditorController?.getValue?.() || "",
+  /**
+   * Handles the setTaskEditModalValue function logic.
+   * Input: value: string.
+   * Output: result produced by this function.
+   */
   setTaskEditModalValue: (value: string) => {
     modalEditorController?.setValue?.(value);
   },
+  /**
+   * Handles the showToast function logic.
+   * Input: message: any, kind: any.
+   * Output: result produced by this function.
+   */
   showToast: (message: any, kind: any) => {
     showToast(message, kind);
   },
@@ -1553,11 +2140,17 @@ const slugRenameModalController = createSlugRenameModalController({
 
 setScopedSpellcheckEnabled(state.spellcheckEnabled, { persist: false });
 
+// Stores the syncEngine module constant.
 const syncEngine = createSyncEngine({
   collab,
   dom,
   remoteBase: REMOTE_BASE,
   wsBase: WS_BASE,
+  /**
+   * Handles the getEditorController function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   getEditorController: () => editorController,
   applyAuthFromInputs,
   closeSpacesModal,
@@ -1578,6 +2171,11 @@ const syncEngine = createSyncEngine({
   trackOfflineDraftChange,
 });
 
+/**
+ * Handles the applyEditorValue function logic.
+ * Input: nextValue: string.
+ * Output: void.
+ */
 function applyEditorValue(nextValue: string): void {
   const currentValue = editorController.getValue();
   const { start, end } = editorController.getSelectionRange();
@@ -1624,10 +2222,20 @@ function applyEditorValue(nextValue: string): void {
   editorController.setScroll({ top: scrollTop, left: scrollLeft });
 }
 
+/**
+ * Handles the dispatchEditorInput function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function dispatchEditorInput() {
   editorController.dispatchInput();
 }
 
+/**
+ * Handles the forceEditorRefresh function logic.
+ * Input: value: string, { collapseSelection = false }: { collapseSelection?: boolean } = {}.
+ * Output: void.
+ */
 function forceEditorRefresh(value: string, { collapseSelection = false }: { collapseSelection?: boolean } = {}): void {
   applyEditorValue(value);
   if (collapseSelection) {
@@ -1639,6 +2247,11 @@ function forceEditorRefresh(value: string, { collapseSelection = false }: { coll
   dispatchEditorInput();
 }
 
+/**
+ * Handles the handleEditorSelection function logic.
+ * Input: line: any.
+ * Output: void.
+ */
 function handleEditorSelection(line: any): void {
   const task = state.allTasks.find(
     (item: any) =>
@@ -1660,6 +2273,11 @@ function handleEditorSelection(line: any): void {
   }
 }
 
+/**
+ * Handles the selectTask function logic.
+ * Input: task: any.
+ * Output: void.
+ */
 function selectTask(task: any): void {
   state.selectedTaskId = task.id;
   state.selectedLine = task.lineIndex;
@@ -1683,6 +2301,11 @@ function selectTask(task: any): void {
   renderStoryPointsSummary();
 }
 
+/**
+ * Handles the buildTagPersonLists function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function buildTagPersonLists() {
   dom.tagList.innerHTML = "";
   dom.personList.innerHTML = "";
@@ -1747,6 +2370,11 @@ function buildTagPersonLists() {
   setLegendHasVisibleContent(hasVisibleLegendGroups);
 }
 
+/**
+ * Handles the formatStoryPointsNumber function logic.
+ * Input: value: any.
+ * Output: string.
+ */
 function formatStoryPointsNumber(value: any): string {
   if (!Number.isFinite(value)) {
     return "0";
@@ -1754,6 +2382,11 @@ function formatStoryPointsNumber(value: any): string {
   return Number.isInteger(value) ? String(value) : String(value);
 }
 
+/**
+ * Handles the renderStoryPointsSummary function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function renderStoryPointsSummary() {
   const targets = [dom.storyPointsSummaryGraph, dom.storyPointsSummaryKanban].filter(
     (pill): pill is HTMLElement => Boolean(pill)
@@ -1810,6 +2443,11 @@ function renderStoryPointsSummary() {
   updateResponsiveLayoutOffsets();
 }
 
+/**
+ * Handles the sync function logic.
+ * Input: none.
+ * Output: void.
+ */
 function sync(): void {
   if (!editorController) {
     return;
@@ -1862,6 +2500,11 @@ function sync(): void {
   updateClearFiltersVisibility();
 }
 
+/**
+ * Handles the buildKanban function logic.
+ * Input: none.
+ * Output: void.
+ */
 function buildKanban(): void {
   if (!isResponsiveKanbanVisible()) {
     state.pendingResponsiveKanbanBuild = true;
@@ -1873,6 +2516,11 @@ function buildKanban(): void {
     dom,
     renderMarkdown,
     selectTask,
+    /**
+     * Handles the onEditTask function logic.
+     * Input: task: any.
+     * Output: result produced by this function.
+     */
     onEditTask: (task: any) => openTaskEditModal(task),
     matchesSearchTask,
     filtersActive,
@@ -1883,27 +2531,55 @@ function buildKanban(): void {
   });
 }
 
+/**
+ * Handles the updateTaskState function logic.
+ * Input: task: any, newState: any.
+ * Output: void.
+ */
 function updateTaskState(task: any, newState: any): void {
   updateTaskStateInEditor({ task, newState, dom, sync, applyEditorValue });
 }
 
+/**
+ * Handles the updateTaskToken function logic.
+ * Input: task: any, token: any, action: any.
+ * Output: void.
+ */
 function updateTaskToken(task: any, token: any, action: any): void {
   updateTaskTokenInEditor({ task, token, action, dom, sync, applyEditorValue });
 }
 
+// Stores the editingTaskRange module constant.
 let editingTaskRange: any = null;
+// Stores the editingTaskIndent module constant.
 let editingTaskIndent = "";
+// Stores the editingTaskJiraKey module constant.
 let editingTaskJiraKey: any = null;
+// Stores the editingTaskRef module constant.
 let editingTaskRef: any = null;
+// Stores the creatingTask module constant.
 let creatingTask = false;
+// Stores the pendingDeleteTask module constant.
 let pendingDeleteTask: any = null;
+// Stores the isTaskDragActive module constant.
 let isTaskDragActive = false;
+// Stores the taskEditDragHandlersBound module constant.
 let taskEditDragHandlersBound = false;
 
+/**
+ * Handles the getTaskEditParsedBody function logic.
+ * Input: none.
+ * Output: any.
+ */
 function getTaskEditParsedBody(): any {
   return parseTaskBody(modalEditorController?.getValue?.() || "");
 }
 
+/**
+ * Handles the toggleTaskEditTokenByClick function logic.
+ * Input: type: "state" | "tag" | "person", token: string.
+ * Output: void.
+ */
 function toggleTaskEditTokenByClick(type: "state" | "tag" | "person", token: string): void {
   if (!modalEditorController || !token) {
     return;
@@ -1927,6 +2603,11 @@ function toggleTaskEditTokenByClick(type: "state" | "tag" | "person", token: str
   }
 }
 
+/**
+ * Handles the setTaskDragActive function logic.
+ * Input: active: any.
+ * Output: void.
+ */
 function setTaskDragActive(active: any): void {
   if (isTaskDragActive === active) {
     return;
@@ -1939,6 +2620,11 @@ function setTaskDragActive(active: any): void {
   }
 }
 
+/**
+ * Handles the renderTaskEditTokenList function logic.
+ * Input: container: any, tokens: any[], metaMap: any, type: any.
+ * Output: void.
+ */
 function renderTaskEditTokenList(container: any, tokens: any[], metaMap: any, type: any): void {
   if (!container) {
     return;
@@ -1998,6 +2684,11 @@ function renderTaskEditTokenList(container: any, tokens: any[], metaMap: any, ty
   });
 }
 
+/**
+ * Handles the refreshTaskEditTokenLists function logic.
+ * Input: none.
+ * Output: void.
+ */
 function refreshTaskEditTokenLists(): void {
   const stateOrder = state.config?.states?.map((item: any) => `!${item.key}`) || [];
   const extraStates = Array.from(state.states)
@@ -2027,6 +2718,11 @@ function refreshTaskEditTokenLists(): void {
   }
 }
 
+/**
+ * Handles the ensureTaskEditDragHandlers function logic.
+ * Input: none.
+ * Output: void.
+ */
 function ensureTaskEditDragHandlers(): void {
   if (taskEditDragHandlersBound) {
     return;
@@ -2102,6 +2798,11 @@ function ensureTaskEditDragHandlers(): void {
   }
 }
 
+/**
+ * Handles the updateTaskEditPreviewFromText function logic.
+ * Input: text: any.
+ * Output: void.
+ */
 function updateTaskEditPreviewFromText(text: any): void {
   if (!dom.taskEditPreview) {
     return;
@@ -2112,6 +2813,11 @@ function updateTaskEditPreviewFromText(text: any): void {
   const displayKey = jiraKey || editingTaskJiraKey;
   updateTaskEditJiraPill(displayKey);
   const displayTitle = jiraTitle || "Untitled task";
+  /**
+   * Handles the formatStoryPoints function logic.
+   * Input: value: any.
+   * Output: String(value));.
+   */
   const formatStoryPoints = (value: any) => (Number.isInteger(value) ? String(value) : String(value));
   dom.taskEditPreview.innerHTML = "";
   const card = document.createElement("div");
@@ -2183,6 +2889,11 @@ function updateTaskEditPreviewFromText(text: any): void {
   });
   decorateDescriptionReferences(desc, {
     addInlineLinkClass: true,
+    /**
+     * Handles the resolveTaskByName function logic.
+     * Input: name: any.
+     * Output: result produced by this function.
+     */
     resolveTaskByName: (name: any) => findTaskByName(name),
   });
   card.appendChild(desc);
@@ -2192,6 +2903,11 @@ function updateTaskEditPreviewFromText(text: any): void {
     tagMeta: state.tagMeta,
     peopleMeta: state.peopleMeta,
     colorText: true,
+    /**
+     * Handles the onPill function logic.
+     * Input: { pill, type, value }: any.
+     * Output: result produced by this function.
+     */
     onPill: ({ pill, type, value }: any) => {
       if (type === "jira") {
         pill.title = `Copy ${value}`;
@@ -2224,6 +2940,11 @@ function updateTaskEditPreviewFromText(text: any): void {
     selector: 'input[type="checkbox"][data-line]',
     lineFromClosest: false,
     triggerEvent: "change",
+    /**
+     * Handles the onToggle function logic.
+     * Input: { lineIndex, checked }: any.
+     * Output: result produced by this function.
+     */
     onToggle: ({ lineIndex, checked }: any) => {
       if (!modalEditorController) {
         return;
@@ -2240,6 +2961,11 @@ function updateTaskEditPreviewFromText(text: any): void {
   refreshTaskEditTokenLists();
 }
 
+/**
+ * Handles the ensureTaskEditEditor function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function ensureTaskEditEditor() {
   if (!dom.taskEditCode || !dom.taskEditCodeHost) {
     return null;
@@ -2261,15 +2987,45 @@ function ensureTaskEditEditor() {
     modalEditorController = createEditor({
       state: modalEditorState,
       dom: { editor: dom.taskEditCode, editorHost: dom.taskEditCodeHost },
+      /**
+       * Handles the onSync function logic.
+       * Input: none.
+       * Output: result produced by this function.
+       */
       onSync: () => {
         if (dom.taskEditModal && !dom.taskEditModal.classList.contains("hidden")) {
           updateTaskEditPreviewFromText(modalEditorController.getValue());
         }
       },
+      /**
+       * Handles the onSelectTask function logic.
+       * Input: none.
+       * Output: result produced by this function.
+       */
       onSelectTask: () => {},
+      /**
+       * Handles the onLocalChange function logic.
+       * Input: none.
+       * Output: result produced by this function.
+       */
       onLocalChange: () => true,
+      /**
+       * Handles the onSelectionChange function logic.
+       * Input: none.
+       * Output: result produced by this function.
+       */
       onSelectionChange: () => {},
+      /**
+       * Handles the onFocusChange function logic.
+       * Input: none.
+       * Output: result produced by this function.
+       */
       onFocusChange: () => {},
+      /**
+       * Handles the onTokenDoubleClick function logic.
+       * Input: token: any.
+       * Output: result produced by this function.
+       */
       onTokenDoubleClick: (token: any) => {
         openSlugRenameModal(token);
       },
@@ -2282,6 +3038,11 @@ function ensureTaskEditEditor() {
   return modalEditorController;
 }
 
+/**
+ * Handles the getTaskEditDeleteTarget function logic.
+ * Input: none.
+ * Output: any.
+ */
 function getTaskEditDeleteTarget(): any {
   if (creatingTask || !editingTaskRef) {
     return null;
@@ -2305,6 +3066,11 @@ function getTaskEditDeleteTarget(): any {
   return editingTaskRef;
 }
 
+/**
+ * Handles the updateTaskEditDeleteButtonVisibility function logic.
+ * Input: none.
+ * Output: void.
+ */
 function updateTaskEditDeleteButtonVisibility(): void {
   if (!dom.taskEditDelete) {
     return;
@@ -2315,6 +3081,11 @@ function updateTaskEditDeleteButtonVisibility(): void {
   dom.taskEditDelete.disabled = !visible;
 }
 
+/**
+ * Handles the openTaskEditModal function logic.
+ * Input: task: any.
+ * Output: void.
+ */
 function openTaskEditModal(task: any): void {
   if (!dom.taskEditModal || !task) {
     return;
@@ -2353,6 +3124,11 @@ function openTaskEditModal(task: any): void {
   }
 }
 
+/**
+ * Handles the openTaskCreateModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function openTaskCreateModal() {
   if (!dom.taskEditModal) {
     return;
@@ -2386,6 +3162,11 @@ function openTaskCreateModal() {
   dom.taskEditTitleInput?.focus();
 }
 
+/**
+ * Handles the closeTaskEditModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeTaskEditModal() {
   if (!dom.taskEditModal) {
     return;
@@ -2400,6 +3181,11 @@ function closeTaskEditModal() {
   updateTaskEditJiraPill(null);
 }
 
+/**
+ * Handles the updateBoardNameInEditor function logic.
+ * Input: nextBoardName: any.
+ * Output: void.
+ */
 function updateBoardNameInEditor(nextBoardName: any): void {
   if (!editorController) {
     return;
@@ -2408,6 +3194,11 @@ function updateBoardNameInEditor(nextBoardName: any): void {
   forceEditorRefresh(nextText, { collapseSelection: true });
 }
 
+/**
+ * Handles the openBoardRenameModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function openBoardRenameModal() {
   if (!dom.boardRenameModal || !dom.boardRenameInput) {
     return;
@@ -2422,6 +3213,11 @@ function openBoardRenameModal() {
   dom.boardRenameInput.select();
 }
 
+/**
+ * Handles the closeBoardRenameModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeBoardRenameModal() {
   if (!dom.boardRenameModal) {
     return;
@@ -2430,6 +3226,11 @@ function closeBoardRenameModal() {
   pendingBoardRename = false;
 }
 
+/**
+ * Handles the submitBoardRename function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function submitBoardRename() {
   if (!pendingBoardRename) {
     closeBoardRenameModal();
@@ -2445,18 +3246,38 @@ function submitBoardRename() {
   closeBoardRenameModal();
 }
 
+/**
+ * Handles the openSlugRenameModal function logic.
+ * Input: token: any.
+ * Output: void.
+ */
 function openSlugRenameModal(token: any): void {
   slugRenameModalController.open(token);
 }
 
+/**
+ * Handles the closeSlugRenameModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeSlugRenameModal() {
   slugRenameModalController.close();
 }
 
+/**
+ * Handles the submitSlugRename function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function submitSlugRename() {
   slugRenameModalController.submit();
 }
 
+/**
+ * Handles the countSubtasks function logic.
+ * Input: task: any.
+ * Output: number.
+ */
 function countSubtasks(task: any): number {
   if (!task || !Array.isArray(task.children)) {
     return 0;
@@ -2476,6 +3297,11 @@ function countSubtasks(task: any): number {
   return count;
 }
 
+/**
+ * Handles the openTaskDeleteModal function logic.
+ * Input: task: any.
+ * Output: void.
+ */
 function openTaskDeleteModal(task: any): void {
   if (!dom.taskDeleteModal || !task) {
     return;
@@ -2496,6 +3322,11 @@ function openTaskDeleteModal(task: any): void {
   dom.taskDeleteModal.classList.remove("hidden");
 }
 
+/**
+ * Handles the closeTaskDeleteModal function logic.
+ * Input: none.
+ * Output: void.
+ */
 function closeTaskDeleteModal(): void {
   if (!dom.taskDeleteModal) {
     return;
@@ -2505,6 +3336,11 @@ function closeTaskDeleteModal(): void {
   clearTaskDeletePreview();
 }
 
+/**
+ * Handles the animateTaskRemoval function logic.
+ * Input: task: any, onComplete: any.
+ * Output: void.
+ */
 function animateTaskRemoval(task: any, onComplete: any): void {
   if (!task) {
     onComplete();
@@ -2527,6 +3363,11 @@ function animateTaskRemoval(task: any, onComplete: any): void {
   setTimeout(onComplete, 220);
 }
 
+/**
+ * Handles the deleteTask function logic.
+ * Input: task: any.
+ * Output: void.
+ */
 function deleteTask(task: any): void {
   if (!task) {
     return;
@@ -2539,6 +3380,11 @@ function deleteTask(task: any): void {
   });
 }
 
+/**
+ * Handles the deleteTaskKeepSubtasks function logic.
+ * Input: task: any.
+ * Output: void.
+ */
 function deleteTaskKeepSubtasks(task: any): void {
   if (!task) {
     return;
@@ -2551,6 +3397,11 @@ function deleteTaskKeepSubtasks(task: any): void {
   });
 }
 
+/**
+ * Handles the clearTaskDeletePreview function logic.
+ * Input: none.
+ * Output: void.
+ */
 function clearTaskDeletePreview(): void {
   document.querySelectorAll(".task-node.delete-preview").forEach((node) => {
     node.classList.remove("delete-preview");
@@ -2560,6 +3411,11 @@ function clearTaskDeletePreview(): void {
   });
 }
 
+/**
+ * Handles the highlightTaskDeletePreview function logic.
+ * Input: task: any, includeSubtasks: any.
+ * Output: void.
+ */
 function highlightTaskDeletePreview(task: any, includeSubtasks: any): void {
   clearTaskDeletePreview();
   if (!task) {
@@ -2591,6 +3447,11 @@ function highlightTaskDeletePreview(task: any, includeSubtasks: any): void {
   });
 }
 
+/**
+ * Handles the saveTaskEditModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function saveTaskEditModal() {
   if (!dom.taskEditModal) {
     return;
@@ -2631,14 +3492,29 @@ function saveTaskEditModal() {
   closeTaskEditModal();
 }
 
+/**
+ * Handles the moveTaskAsSubtask function logic.
+ * Input: sourceTask: any, targetTask: any.
+ * Output: void.
+ */
 function moveTaskAsSubtask(sourceTask: any, targetTask: any): void {
   taskCommandController.moveTaskAsSubtask(sourceTask, targetTask);
 }
 
+/**
+ * Handles the reorderKanbanTask function logic.
+ * Input: sourceTask: any, targetTask: any, position: any, options: any = {}.
+ * Output: result produced by this function.
+ */
 function reorderKanbanTask(sourceTask: any, targetTask: any, position: any, options: any = {}) {
   return taskCommandController.reorderTask(sourceTask, targetTask, position, options);
 }
 
+/**
+ * Handles the findTaskByName function logic.
+ * Input: name: any.
+ * Output: result produced by this function.
+ */
 function findTaskByName(name: any) {
   const query = typeof name === "string" ? name.trim() : "";
   if (!query) {
@@ -2656,11 +3532,21 @@ function findTaskByName(name: any) {
   );
 }
 
+/**
+ * Handles the syncEditorState function logic.
+ * Input: none.
+ * Output: void.
+ */
 function syncEditorState(): void {
   sync();
   editorController.updateSelectedLine();
 }
 
+/**
+ * Handles the createTaskVisualId function logic.
+ * Input: none.
+ * Output: string.
+ */
 function createTaskVisualId(): string {
   const randomId =
     globalThis.crypto && typeof globalThis.crypto.randomUUID === "function"
@@ -2669,11 +3555,21 @@ function createTaskVisualId(): string {
   return `task/${randomId}`;
 }
 
+/**
+ * Handles the normalizeTaskPathPart function logic.
+ * Input: name: any.
+ * Output: string.
+ */
 function normalizeTaskPathPart(name: any): string {
   const text = typeof name === "string" ? name.trim().replace(/\s+/g, " ").toLowerCase() : "";
   return text || "_";
 }
 
+/**
+ * Handles the buildTaskNamePath function logic.
+ * Input: task: any.
+ * Output: string.
+ */
 function buildTaskNamePath(task: any): string {
   const segments: string[] = [];
   let current = task;
@@ -2684,6 +3580,11 @@ function buildTaskNamePath(task: any): string {
   return segments.reverse().join("/");
 }
 
+/**
+ * Handles the buildTaskPathSuffixes function logic.
+ * Input: path: any.
+ * Output: string[].
+ */
 function buildTaskPathSuffixes(path: any): string[] {
   const segments = String(path || "")
     .split("/")
@@ -2698,6 +3599,11 @@ function buildTaskPathSuffixes(path: any): string[] {
   return suffixes;
 }
 
+/**
+ * Handles the findHeuristicTaskMatch function logic.
+ * Input: previousPath: any, currentEntries: any[].
+ * Output: number.
+ */
 function findHeuristicTaskMatch(previousPath: any, currentEntries: any[]): number {
   if (!previousPath || !Array.isArray(currentEntries) || !currentEntries.length) {
     return -1;
@@ -2716,6 +3622,11 @@ function findHeuristicTaskMatch(previousPath: any, currentEntries: any[]): numbe
   return -1;
 }
 
+/**
+ * Handles the getTaskPathMapKey function logic.
+ * Input: none.
+ * Output: string.
+ */
 function getTaskPathMapKey(): string {
   const spaceRef = (
     typeof collab.spacePath === "string" && collab.spacePath.trim()
@@ -2725,6 +3636,11 @@ function getTaskPathMapKey(): string {
   return spaceRef ? `space:${spaceRef}` : "local";
 }
 
+/**
+ * Handles the applyStableTaskIds function logic.
+ * Input: { allTasks }: { allTasks: any[] }.
+ * Output: void.
+ */
 function applyStableTaskIds({ allTasks }: { allTasks: any[] }): void {
   const mapKey = getTaskPathMapKey();
   const previousMap = state.taskPathMaps.get(mapKey) || new Map();
@@ -2797,15 +3713,30 @@ function applyStableTaskIds({ allTasks }: { allTasks: any[] }): void {
   state.taskPathMaps.set(mapKey, nextMap);
 }
 
+/**
+ * Handles the toggleCheckboxAtLine function logic.
+ * Input: lineIndex: any, checked: any = null.
+ * Output: void.
+ */
 function toggleCheckboxAtLine(lineIndex: any, checked: any = null): void {
   taskCommandController.toggleCheckboxAtLine(lineIndex, checked);
 }
 
+/**
+ * Handles the toSafeFilename function logic.
+ * Input: value: any.
+ * Output: string.
+ */
 function toSafeFilename(value: any): string {
   const cleaned = value.toLowerCase().replace(/[^a-z0-9-_]+/g, "-").replace(/^-+|-+$/g, "");
   return cleaned || "tasks";
 }
 
+/**
+ * Handles the tokenMatchesQuery function logic.
+ * Input: token: any, metaMap: any, query: any.
+ * Output: boolean.
+ */
 function tokenMatchesQuery(token: any, metaMap: any, query: any): boolean {
   if (token.toLowerCase().includes(query)) {
     return true;
@@ -2822,10 +3753,20 @@ function tokenMatchesQuery(token: any, metaMap: any, query: any): boolean {
   return (name && name.includes(query)) || (key && key.includes(query));
 }
 
+/**
+ * Handles the tokensMatchQuery function logic.
+ * Input: tokens: any, metaMap: any, query: any.
+ * Output: boolean.
+ */
 function tokensMatchQuery(tokens: any, metaMap: any, query: any): boolean {
   return tokens.some((token: any) => tokenMatchesQuery(token, metaMap, query));
 }
 
+/**
+ * Handles the matchesSearchTask function logic.
+ * Input: task: any.
+ * Output: boolean.
+ */
 function matchesSearchTask(task: any): boolean {
   if (!state.searchQuery) {
     return false;
@@ -2854,10 +3795,20 @@ function matchesSearchTask(task: any): boolean {
   return false;
 }
 
+/**
+ * Handles the filtersActive function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function filtersActive() {
   return state.selectedTags.size || state.selectedPeople.size;
 }
 
+/**
+ * Handles the updateClearFiltersVisibility function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateClearFiltersVisibility() {
   if (!dom.clearFilters) {
     return;
@@ -2867,6 +3818,11 @@ function updateClearFiltersVisibility() {
   dom.clearFilters.hidden = !(hasFilters || hasSearch);
 }
 
+/**
+ * Handles the loadCollabModules function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function loadCollabModules() {
   if (collab.modules) {
     return collab.modules;
@@ -2884,6 +3840,11 @@ async function loadCollabModules() {
   return collab.modules;
 }
 
+/**
+ * Handles the collabUserAwarenessState function logic.
+ * Input: identity: any.
+ * Output: result produced by this function.
+ */
 function collabUserAwarenessState(identity: any) {
   const rawColor = identity?.color;
   let color = "rgb(45, 80, 237)";
@@ -2916,6 +3877,11 @@ function collabUserAwarenessState(identity: any) {
   };
 }
 
+/**
+ * Handles the publishCollabIdentityAwareness function logic.
+ * Input: none.
+ * Output: void.
+ */
 function publishCollabIdentityAwareness(): void {
   if (!collab.provider?.awareness) {
     return;
@@ -2925,6 +3891,11 @@ function publishCollabIdentityAwareness(): void {
   collab.provider.awareness.setLocalStateField("user", collabUserAwarenessState(identity));
 }
 
+/**
+ * Handles the authHeaders function logic.
+ * Input: { includeBasic = false } = {}.
+ * Output: result produced by this function.
+ */
 function authHeaders({ includeBasic = false } = {}) {
   if (!includeBasic) {
     return {};
@@ -2937,6 +3908,11 @@ function authHeaders({ includeBasic = false } = {}) {
   };
 }
 
+/**
+ * Handles the loginRequest function logic.
+ * Input: username: any, password: any.
+ * Output: result produced by this function.
+ */
 async function loginRequest(username: any, password: any) {
   let response;
   try {
@@ -2959,6 +3935,11 @@ async function loginRequest(username: any, password: any) {
   return response.json();
 }
 
+/**
+ * Handles the verifyCurrentPassword function logic.
+ * Input: password: any.
+ * Output: result produced by this function.
+ */
 async function verifyCurrentPassword(password: any) {
   const username = (collab.username || "").trim();
   if (!username || !password) {
@@ -2974,6 +3955,11 @@ async function verifyCurrentPassword(password: any) {
   }
 }
 
+/**
+ * Handles the logoutRequest function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function logoutRequest() {
   try {
     await fetch(`${REMOTE_BASE}/api/logout`, {
@@ -2984,6 +3970,11 @@ async function logoutRequest() {
   }
 }
 
+/**
+ * Handles the fetchSpaces function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function fetchSpaces() {
   let response;
   try {
@@ -3040,6 +4031,11 @@ async function fetchSpaces() {
   };
 }
 
+/**
+ * Handles the createSpaceFolderRequest function logic.
+ * Input: name: any.
+ * Output: result produced by this function.
+ */
 async function createSpaceFolderRequest(name: any) {
   let response;
   try {
@@ -3060,6 +4056,11 @@ async function createSpaceFolderRequest(name: any) {
   return response.json();
 }
 
+/**
+ * Handles the deleteSpaceFolderRequest function logic.
+ * Input: folderId: any.
+ * Output: result produced by this function.
+ */
 async function deleteSpaceFolderRequest(folderId: any) {
   const trimmed = String(folderId || "").trim();
   if (!trimmed) {
@@ -3092,6 +4093,11 @@ async function deleteSpaceFolderRequest(folderId: any) {
   return response.json();
 }
 
+/**
+ * Handles the moveSpaceToFolderRequest function logic.
+ * Input: spaceId: any, folder: any, spacePath: any = "".
+ * Output: result produced by this function.
+ */
 async function moveSpaceToFolderRequest(spaceId: any, folder: any, spacePath: any = "") {
   const normalizedPath = typeof spacePath === "string" ? spacePath.trim() : "";
   let response;
@@ -3113,6 +4119,11 @@ async function moveSpaceToFolderRequest(spaceId: any, folder: any, spacePath: an
   return response.json();
 }
 
+/**
+ * Handles the fetchJiraConfig function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function fetchJiraConfig() {
   let response;
   try {
@@ -3136,6 +4147,11 @@ async function fetchJiraConfig() {
   };
 }
 
+/**
+ * Handles the saveJiraConfig function logic.
+ * Input: payload: any.
+ * Output: result produced by this function.
+ */
 async function saveJiraConfig(payload: any) {
   let response;
   try {
@@ -3164,6 +4180,11 @@ async function saveJiraConfig(payload: any) {
   };
 }
 
+/**
+ * Handles the fetchMe function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function fetchMe() {
   let response;
   try {
@@ -3182,6 +4203,11 @@ async function fetchMe() {
   return response.json();
 }
 
+/**
+ * Handles the saveMyProfile function logic.
+ * Input: payload: any.
+ * Output: result produced by this function.
+ */
 async function saveMyProfile(payload: any) {
   let response;
   try {
@@ -3212,6 +4238,11 @@ async function saveMyProfile(payload: any) {
   return response.json();
 }
 
+/**
+ * Handles the fetchUsers function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function fetchUsers() {
   let response;
   try {
@@ -3230,6 +4261,11 @@ async function fetchUsers() {
   return response.json();
 }
 
+/**
+ * Handles the createUserRequest function logic.
+ * Input: payload: any.
+ * Output: result produced by this function.
+ */
 async function createUserRequest(payload: any) {
   let response;
   try {
@@ -3250,6 +4286,11 @@ async function createUserRequest(payload: any) {
   return response.json();
 }
 
+/**
+ * Handles the updateUserRequest function logic.
+ * Input: username: any, payload: any.
+ * Output: result produced by this function.
+ */
 async function updateUserRequest(username: any, payload: any) {
   let response;
   try {
@@ -3270,6 +4311,11 @@ async function updateUserRequest(username: any, payload: any) {
   return response.json();
 }
 
+/**
+ * Handles the deleteUserRequest function logic.
+ * Input: username: any.
+ * Output: result produced by this function.
+ */
 async function deleteUserRequest(username: any) {
   let response;
   try {
@@ -3286,6 +4332,11 @@ async function deleteUserRequest(username: any) {
   return response.json();
 }
 
+/**
+ * Handles the sortFolderIds function logic.
+ * Input: folders: any.
+ * Output: result produced by this function.
+ */
 function sortFolderIds(folders: any) {
   const names = Array.from(
     new Set(
@@ -3301,6 +4352,11 @@ function sortFolderIds(folders: any) {
   return hasPersonal ? ["personal", ...filtered] : filtered;
 }
 
+/**
+ * Handles the folderLabel function logic.
+ * Input: folderId: any.
+ * Output: result produced by this function.
+ */
 function folderLabel(folderId: any) {
   if (folderId === "personal") {
     return "Personal";
@@ -3311,6 +4367,11 @@ function folderLabel(folderId: any) {
   return folderId;
 }
 
+/**
+ * Handles the normalizeSpaceFolder function logic.
+ * Input: folder: any.
+ * Output: result produced by this function.
+ */
 function normalizeSpaceFolder(folder: any) {
   if (typeof folder !== "string") {
     return "";
@@ -3318,6 +4379,11 @@ function normalizeSpaceFolder(folder: any) {
   return folder.trim().replace(/^\/+|\/+$/g, "");
 }
 
+/**
+ * Handles the buildSpacePath function logic.
+ * Input: spaceId: any, folder: any = "".
+ * Output: result produced by this function.
+ */
 function buildSpacePath(spaceId: any, folder: any = "") {
   const id = typeof spaceId === "string" ? spaceId.trim() : "";
   if (!id) {
@@ -3327,6 +4393,11 @@ function buildSpacePath(spaceId: any, folder: any = "") {
   return normalizedFolder ? `${normalizedFolder}/${id}` : id;
 }
 
+/**
+ * Handles the resolveSpacePath function logic.
+ * Input: space: any.
+ * Output: result produced by this function.
+ */
 function resolveSpacePath(space: any) {
   if (!space || typeof space !== "object") {
     return "";
@@ -3338,17 +4409,32 @@ function resolveSpacePath(space: any) {
   return buildSpacePath(space.id, space.folder);
 }
 
+/**
+ * Handles the getAssignableSpaces function logic.
+ * Input: none.
+ * Output: string[].
+ */
 function getAssignableSpaces(): string[] {
   const source = Array.isArray(collab.spaceAccessOptions) ? collab.spaceAccessOptions : [];
   const names: string[] = source.filter((item: any): item is string => typeof item === "string");
   return [...new Set<string>(names)].sort((a: string, b: string) => a.localeCompare(b));
 }
 
+/**
+ * Handles the isPersonalFolderPath function logic.
+ * Input: path: any.
+ * Output: result produced by this function.
+ */
 function isPersonalFolderPath(path: any) {
   const normalized = typeof path === "string" ? path.trim() : "";
   return normalized === "personal" || normalized.startsWith("personal/");
 }
 
+/**
+ * Handles the buildAssignableAccessOptions function logic.
+ * Input: spaces: any[] = [], folders: any[] = [].
+ * Output: result produced by this function.
+ */
 function buildAssignableAccessOptions(spaces: any[] = [], folders: any[] = []) {
   const options = new Set<string>();
   (Array.isArray(folders) ? folders : []).forEach((folder: any) => {
@@ -3379,11 +4465,21 @@ function buildAssignableAccessOptions(spaces: any[] = [], folders: any[] = []) {
   return [...options].sort((a: string, b: string) => a.localeCompare(b));
 }
 
+/**
+ * Handles the isPersonalFolderId function logic.
+ * Input: folderId: any.
+ * Output: result produced by this function.
+ */
 function isPersonalFolderId(folderId: any) {
   const normalized = typeof folderId === "string" ? folderId.trim() : "";
   return normalized === "personal" || normalized.startsWith("personal/");
 }
 
+/**
+ * Handles the renderSpaceList function logic.
+ * Input: spaces: any, folders: any[] = [].
+ * Output: result produced by this function.
+ */
 function renderSpaceList(spaces: any, folders: any[] = []) {
   if (!dom.spaceList) {
     return;
@@ -3473,6 +4569,11 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
     collab.openSpaceFolderId = null;
   }
 
+  /**
+   * Handles the isExpandedFolder function logic.
+   * Input: folderId: any.
+   * Output: result produced by this function.
+   */
   const isExpandedFolder = (folderId: any) => {
     if (!collab.openSpaceFolderId) {
       return false;
@@ -3483,6 +4584,11 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
     );
   };
 
+  /**
+   * Handles the renderSpaceRow function logic.
+   * Input: space: any, container: any.
+   * Output: result produced by this function.
+   */
   const renderSpaceRow = (space: any, container: any) => {
     const row = document.createElement("div");
     row.className = "space-item";
@@ -3599,6 +4705,11 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
     save.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i>';
     save.title = "Save";
     save.setAttribute("aria-label", "Save");
+    /**
+     * Handles the commitRename function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     const commitRename = async () => {
       const trimmed = input.value.trim();
       if (!trimmed || trimmed === space.id) {
@@ -3695,6 +4806,11 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
     container.appendChild(row);
   };
 
+  /**
+   * Handles the renderFolder function logic.
+   * Input: folderId: any, parentId: any, container: any.
+   * Output: result produced by this function.
+   */
   const renderFolder = (folderId: any, parentId: any, container: any) => {
     const folderSpaces = grouped.get(folderId) || [];
     const childFolders = childrenByParent.get(folderId) || [];
@@ -3713,6 +4829,11 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
     }
     folderBlock.classList.toggle("collapsed", !isOpen);
 
+    /**
+     * Handles the moveSpaceToFolder function logic.
+     * Input: spaceId: any, sourcePath: any = "".
+     * Output: result produced by this function.
+     */
     const moveSpaceToFolder = async (spaceId: any, sourcePath: any = "") => {
       if (!spaceId) {
         return;
@@ -3729,6 +4850,11 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
       }
     };
 
+    /**
+     * Handles the attachDropTarget function logic.
+     * Input: targetEl: any.
+     * Output: result produced by this function.
+     */
     const attachDropTarget = (targetEl: any) => {
       if (!targetEl || !canManageSpaces || isPersonalFolderId(folderId)) {
         return;
@@ -3878,6 +5004,11 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
   }
 }
 
+/**
+ * Handles the loadSpaceList function logic.
+ * Input: { showLoading = true } = {}.
+ * Output: result produced by this function.
+ */
 async function loadSpaceList({ showLoading = true } = {}) {
   if (!dom.spaceList) {
     return;
@@ -3946,22 +5077,47 @@ async function loadSpaceList({ showLoading = true } = {}) {
   }
 }
 
+/**
+ * Handles the setSpaceError function logic.
+ * Input: message: any.
+ * Output: result produced by this function.
+ */
 function setSpaceError(message: any) {
   setInlineToastError(dom.spaceError, message);
 }
 
+/**
+ * Handles the clearSpaceError function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function clearSpaceError() {
   resetInlineError(dom.spaceError);
 }
 
+/**
+ * Handles the setJiraConfigError function logic.
+ * Input: message: any.
+ * Output: result produced by this function.
+ */
 function setJiraConfigError(message: any) {
   setInlineToastError(dom.jiraConfigError, message);
 }
 
+/**
+ * Handles the clearJiraConfigError function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function clearJiraConfigError() {
   resetInlineError(dom.jiraConfigError);
 }
 
+/**
+ * Handles the fillJiraConfigForm function logic.
+ * Input: config: any.
+ * Output: result produced by this function.
+ */
 function fillJiraConfigForm(config: any) {
   if (dom.jiraConfigBaseUrl) {
     dom.jiraConfigBaseUrl.value = config.baseUrl || "";
@@ -3974,6 +5130,11 @@ function fillJiraConfigForm(config: any) {
   }
 }
 
+/**
+ * Handles the readJiraConfigForm function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function readJiraConfigForm() {
   return {
     base_url: dom.jiraConfigBaseUrl?.value?.trim() || "",
@@ -3982,6 +5143,11 @@ function readJiraConfigForm() {
   };
 }
 
+/**
+ * Handles the openJiraConfigModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function openJiraConfigModal() {
   if (!dom.jiraConfigModal) {
     return;
@@ -4009,6 +5175,11 @@ async function openJiraConfigModal() {
   }
 }
 
+/**
+ * Handles the closeJiraConfigModal function logic.
+ * Input: { reopenSpaces = true } = {}.
+ * Output: result produced by this function.
+ */
 function closeJiraConfigModal({ reopenSpaces = true } = {}) {
   if (!dom.jiraConfigModal) {
     return;
@@ -4019,6 +5190,11 @@ function closeJiraConfigModal({ reopenSpaces = true } = {}) {
   }
 }
 
+/**
+ * Handles the submitJiraConfig function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function submitJiraConfig() {
   clearJiraConfigError();
   try {
@@ -4032,42 +5208,92 @@ async function submitJiraConfig() {
   }
 }
 
+/**
+ * Handles the setUsersError function logic.
+ * Input: message: any.
+ * Output: result produced by this function.
+ */
 function setUsersError(message: any) {
   setInlineToastError(dom.usersError, message);
 }
 
+/**
+ * Handles the clearUsersError function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function clearUsersError() {
   resetInlineError(dom.usersError);
 }
 
+/**
+ * Handles the setProfileError function logic.
+ * Input: message: any.
+ * Output: result produced by this function.
+ */
 function setProfileError(message: any) {
   setInlineToastError(dom.profileError, message);
 }
 
+/**
+ * Handles the clearProfileError function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function clearProfileError() {
   resetInlineError(dom.profileError);
 }
 
+/**
+ * Handles the setUserCreateError function logic.
+ * Input: message: any.
+ * Output: result produced by this function.
+ */
 function setUserCreateError(message: any) {
   setInlineToastError(dom.userCreateError, message);
 }
 
+/**
+ * Handles the clearUserCreateError function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function clearUserCreateError() {
   resetInlineError(dom.userCreateError);
 }
 
+/**
+ * Handles the setUserPasswordError function logic.
+ * Input: message: any.
+ * Output: result produced by this function.
+ */
 function setUserPasswordError(message: any) {
   setInlineToastError(dom.userPasswordError, message);
 }
 
+/**
+ * Handles the clearUserPasswordError function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function clearUserPasswordError() {
   resetInlineError(dom.userPasswordError);
 }
 
+/**
+ * Handles the roleUsesSpaces function logic.
+ * Input: role: any.
+ * Output: result produced by this function.
+ */
 function roleUsesSpaces(role: any) {
   return String(role || "user").toLowerCase() === "user";
 }
 
+/**
+ * Handles the updateCreateUserSpacesVisibility function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateCreateUserSpacesVisibility() {
   const showSpaces = roleUsesSpaces(dom.userNewRole?.value);
   if (dom.userNewSpacesField) {
@@ -4083,6 +5309,11 @@ function updateCreateUserSpacesVisibility() {
   picker.setDisabled(!showSpaces || !collab.permissions.can_assign_space_access);
 }
 
+/**
+ * Handles the openUserDeleteModal function logic.
+ * Input: userEntry: any.
+ * Output: result produced by this function.
+ */
 function openUserDeleteModal(userEntry: any) {
   if (!dom.userDeleteModal || !dom.userDeleteMessage || !userEntry) {
     return;
@@ -4092,6 +5323,11 @@ function openUserDeleteModal(userEntry: any) {
   dom.userDeleteModal.classList.remove("hidden");
 }
 
+/**
+ * Handles the closeUserDeleteModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeUserDeleteModal() {
   if (!dom.userDeleteModal) {
     return;
@@ -4100,6 +5336,11 @@ function closeUserDeleteModal() {
   pendingDeleteUser = null;
 }
 
+/**
+ * Handles the openUserCreateModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function openUserCreateModal() {
   if (!dom.userCreateModal) {
     return;
@@ -4129,6 +5370,11 @@ function openUserCreateModal() {
   dom.userCreateModal.classList.remove("hidden");
 }
 
+/**
+ * Handles the closeUserCreateModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeUserCreateModal() {
   if (!dom.userCreateModal) {
     return;
@@ -4136,6 +5382,11 @@ function closeUserCreateModal() {
   dom.userCreateModal.classList.add("hidden");
 }
 
+/**
+ * Handles the openUserPasswordModal function logic.
+ * Input: userEntry: any.
+ * Output: result produced by this function.
+ */
 function openUserPasswordModal(userEntry: any) {
   if (!dom.userPasswordModal || !userEntry) {
     return;
@@ -4155,6 +5406,11 @@ function openUserPasswordModal(userEntry: any) {
   dom.userPasswordModal.classList.remove("hidden");
 }
 
+/**
+ * Handles the closeUserPasswordModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeUserPasswordModal() {
   if (!dom.userPasswordModal) {
     return;
@@ -4164,6 +5420,11 @@ function closeUserPasswordModal() {
   clearUserPasswordError();
 }
 
+/**
+ * Handles the submitUserPasswordChange function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function submitUserPasswordChange() {
   if (!pendingPasswordUser) {
     closeUserPasswordModal();
@@ -4192,6 +5453,11 @@ async function submitUserPasswordChange() {
   }
 }
 
+/**
+ * Handles the confirmDeleteUser function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function confirmDeleteUser() {
   if (!pendingDeleteUser) {
     closeUserDeleteModal();
@@ -4209,6 +5475,11 @@ async function confirmDeleteUser() {
   }
 }
 
+/**
+ * Handles the normalizeSelectedSpaces function logic.
+ * Input: values: any.
+ * Output: string[].
+ */
 function normalizeSelectedSpaces(values: any): string[] {
   if (!Array.isArray(values)) {
     return [];
@@ -4229,6 +5500,11 @@ function normalizeSelectedSpaces(values: any): string[] {
   return normalized;
 }
 
+/**
+ * Handles the createSpacePicker function logic.
+ * Input: { selected = [], getOptions = (): string[] => [], placeholder = "Search access paths", onChange = null, }: { selected?: string[]; getOptions?: () => string[]; placeholder?: string; onChange?: ((nextValues: string[]) => void) | null; } = {}.
+ * Output: result produced by this function.
+ */
 function createSpacePicker({
   selected = [],
   getOptions = (): string[] => [],
@@ -4255,6 +5531,11 @@ function createSpacePicker({
   let isOpen = false;
   let isDisabled = false;
   let values = normalizeSelectedSpaces(selected);
+  /**
+   * Handles the emitChange function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const emitChange = () => {
     if (typeof onChange === "function") {
       onChange([...values]);
@@ -4275,6 +5556,11 @@ function createSpacePicker({
     );
   };
 
+  /**
+   * Handles the render function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const render = () => {
     tags.innerHTML = "";
       values.forEach((name: string) => {
@@ -4388,14 +5674,29 @@ function createSpacePicker({
   render();
   return {
     root,
+    /**
+     * Handles the getValues function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     getValues() {
       return [...values];
     },
+    /**
+     * Handles the setValues function logic.
+     * Input: nextValues: any.
+     * Output: result produced by this function.
+     */
     setValues(nextValues: any) {
       values = normalizeSelectedSpaces(nextValues);
       render();
       emitChange();
     },
+    /**
+     * Handles the setDisabled function logic.
+     * Input: nextDisabled: any.
+     * Output: result produced by this function.
+     */
     setDisabled(nextDisabled: any) {
       isDisabled = Boolean(nextDisabled);
       if (isDisabled) {
@@ -4403,12 +5704,22 @@ function createSpacePicker({
       }
       render();
     },
+    /**
+     * Handles the refreshOptions function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     refreshOptions() {
       render();
     },
   };
 }
 
+/**
+ * Handles the ensureCreateUserSpacesPicker function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function ensureCreateUserSpacesPicker() {
   if (!dom.userNewSpaces) {
     return null;
@@ -4425,6 +5736,11 @@ function ensureCreateUserSpacesPicker() {
   return createUserSpacesPicker;
 }
 
+/**
+ * Handles the roleOptionsMarkup function logic.
+ * Input: selectedRole: any, allowAdminRoles: boolean = true.
+ * Output: result produced by this function.
+ */
 function roleOptionsMarkup(selectedRole: any, allowAdminRoles: boolean = true) {
   const roles = allowAdminRoles ? ["admin", "manager", "user"] : ["user"];
   return roles
@@ -4432,6 +5748,11 @@ function roleOptionsMarkup(selectedRole: any, allowAdminRoles: boolean = true) {
     .join("");
 }
 
+/**
+ * Handles the renderUsersList function logic.
+ * Input: users: any.
+ * Output: result produced by this function.
+ */
 function renderUsersList(users: any) {
   if (!dom.usersList) {
     return;
@@ -4483,6 +5804,11 @@ function renderUsersList(users: any) {
       selected: initialSpaces,
       getOptions: getAssignableSpaces,
       placeholder: "Add path access",
+      /**
+       * Handles the onChange function logic.
+       * Input: none.
+       * Output: result produced by this function.
+       */
       onChange: () => {
         refreshSaveButtonState();
       },
@@ -4494,10 +5820,20 @@ function renderUsersList(users: any) {
     const allowRoleAndSpaces = editable && !self;
     const normalizePaths = (paths: any): string[] =>
       normalizeSelectedSpaces(paths).sort((a: string, b: string) => a.localeCompare(b));
+    /**
+     * Handles the areEqualPaths function logic.
+     * Input: left: string[], right: string[].
+     * Output: result produced by this function.
+     */
     const areEqualPaths = (left: string[], right: string[]) =>
       left.length === right.length && left.every((item, index) => item === right[index]);
 
     let saveBtn: HTMLButtonElement | null = null;
+    /**
+     * Handles the isUserDirty function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     const isUserDirty = () => {
       const displayDirty = (displayInput.value || "").trim() !== initialDisplayName;
       if (self) {
@@ -4512,6 +5848,11 @@ function renderUsersList(users: any) {
       const spacesDirty = !areEqualPaths(currentSpaces, baselineSpaces);
       return displayDirty || roleDirty || spacesDirty;
     };
+    /**
+     * Handles the refreshSaveButtonState function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     function refreshSaveButtonState() {
       if (!saveBtn) {
         return;
@@ -4523,6 +5864,11 @@ function renderUsersList(users: any) {
 
     displayInput.disabled = !editable;
     roleSelect.disabled = !allowRoleAndSpaces;
+    /**
+     * Handles the updateSpacesVisibility function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     const updateSpacesVisibility = () => {
       const visible = allowRoleAndSpaces && roleUsesSpaces(roleSelect.value);
       spacesField.classList.toggle("hidden", !visible);
@@ -4613,6 +5959,11 @@ function renderUsersList(users: any) {
   });
 }
 
+/**
+ * Handles the loadUsersModalData function logic.
+ * Input: { refreshSpaces = false } = {}.
+ * Output: result produced by this function.
+ */
 async function loadUsersModalData({ refreshSpaces = false } = {}) {
   clearUsersError();
   const me = await fetchMe();
@@ -4662,6 +6013,11 @@ async function loadUsersModalData({ refreshSpaces = false } = {}) {
   }
 }
 
+/**
+ * Handles the openUsersModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function openUsersModal() {
   if (!dom.usersModal) {
     return;
@@ -4687,6 +6043,11 @@ async function openUsersModal() {
   }
 }
 
+/**
+ * Handles the closeUsersModal function logic.
+ * Input: { reopenSpaces = true } = {}.
+ * Output: result produced by this function.
+ */
 function closeUsersModal({ reopenSpaces = true } = {}) {
   if (!dom.usersModal) {
     return;
@@ -4700,6 +6061,11 @@ function closeUsersModal({ reopenSpaces = true } = {}) {
   }
 }
 
+/**
+ * Handles the openProfileLogoutModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function openProfileLogoutModal() {
   if (!dom.profileLogoutModal) {
     return;
@@ -4707,6 +6073,11 @@ function openProfileLogoutModal() {
   dom.profileLogoutModal.classList.remove("hidden");
 }
 
+/**
+ * Handles the closeProfileLogoutModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeProfileLogoutModal() {
   if (!dom.profileLogoutModal) {
     return;
@@ -4714,6 +6085,11 @@ function closeProfileLogoutModal() {
   dom.profileLogoutModal.classList.add("hidden");
 }
 
+/**
+ * Handles the loadProfileModalData function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function loadProfileModalData() {
   clearProfileError();
   const me = await fetchMe();
@@ -4734,6 +6110,11 @@ async function loadProfileModalData() {
   }
 }
 
+/**
+ * Handles the openProfileModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function openProfileModal() {
   if (!dom.profileModal) {
     return;
@@ -4756,6 +6137,11 @@ async function openProfileModal() {
   }
 }
 
+/**
+ * Handles the closeProfileModal function logic.
+ * Input: { reopenSpaces = true } = {}.
+ * Output: result produced by this function.
+ */
 function closeProfileModal({ reopenSpaces = true } = {}) {
   if (!dom.profileModal) {
     return;
@@ -4767,6 +6153,11 @@ function closeProfileModal({ reopenSpaces = true } = {}) {
   }
 }
 
+/**
+ * Handles the submitProfileUpdate function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function submitProfileUpdate() {
   clearProfileError();
   const previousDisplayName = collab.displayName || "";
@@ -4827,6 +6218,11 @@ async function submitProfileUpdate() {
   }
 }
 
+/**
+ * Handles the submitCreateUser function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function submitCreateUser() {
   clearUsersError();
   clearUserCreateError();
@@ -4878,6 +6274,11 @@ async function submitCreateUser() {
   }
 }
 
+/**
+ * Handles the openSpaceCreateModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function openSpaceCreateModal() {
   if (!dom.spaceCreateModal || !collab.permissions.can_manage_spaces) {
     return;
@@ -4891,6 +6292,11 @@ function openSpaceCreateModal() {
   dom.spaceNew?.focus();
 }
 
+/**
+ * Handles the closeSpaceCreateModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeSpaceCreateModal() {
   if (!dom.spaceCreateModal) {
     return;
@@ -4898,6 +6304,11 @@ function closeSpaceCreateModal() {
   dom.spaceCreateModal.classList.add("hidden");
 }
 
+/**
+ * Handles the openSpaceFolderCreateModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function openSpaceFolderCreateModal() {
   if (!dom.spaceFolderCreateModal || !collab.permissions.can_manage_spaces) {
     return;
@@ -4911,6 +6322,11 @@ function openSpaceFolderCreateModal() {
   dom.spaceFolderNew?.focus();
 }
 
+/**
+ * Handles the closeSpaceFolderCreateModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeSpaceFolderCreateModal() {
   if (!dom.spaceFolderCreateModal) {
     return;
@@ -4918,6 +6334,11 @@ function closeSpaceFolderCreateModal() {
   dom.spaceFolderCreateModal.classList.add("hidden");
 }
 
+/**
+ * Handles the updateCreateSpaceButton function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateCreateSpaceButton() {
   if (!dom.spaceCreate || !dom.spaceNew) {
     return;
@@ -4930,6 +6351,11 @@ function updateCreateSpaceButton() {
   dom.spaceCreate.disabled = !hasName;
 }
 
+/**
+ * Handles the updateCreateFolderButton function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateCreateFolderButton() {
   if (!dom.spaceFolderCreate || !dom.spaceFolderNew) {
     return;
@@ -4942,6 +6368,11 @@ function updateCreateFolderButton() {
   dom.spaceFolderCreate.disabled = !hasName;
 }
 
+/**
+ * Handles the getCurrentFolderForCreate function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getCurrentFolderForCreate() {
   const folderId =
     typeof collab.openSpaceFolderId === "string"
@@ -4950,6 +6381,11 @@ function getCurrentFolderForCreate() {
   return folderId || "";
 }
 
+/**
+ * Handles the submitCreateSpace function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function submitCreateSpace() {
   if (!collab.permissions.can_manage_spaces) {
     return;
@@ -4983,6 +6419,11 @@ async function submitCreateSpace() {
   }
 }
 
+/**
+ * Handles the submitCreateFolder function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function submitCreateFolder() {
   if (!collab.permissions.can_manage_spaces) {
     return;
@@ -5015,6 +6456,11 @@ async function submitCreateFolder() {
   }
 }
 
+/**
+ * Handles the confirmDeleteFolder function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function confirmDeleteFolder() {
   if (!pendingDeleteFolder) {
     closeFolderDeleteModal();
@@ -5034,6 +6480,11 @@ async function confirmDeleteFolder() {
   }
 }
 
+/**
+ * Handles the openDeleteModal function logic.
+ * Input: spaceRef: any.
+ * Output: result produced by this function.
+ */
 function openDeleteModal(spaceRef: any) {
   if (!dom.deleteModal || !dom.deleteModalMessage) {
     return;
@@ -5056,6 +6507,11 @@ function openDeleteModal(spaceRef: any) {
   dom.deleteModal.classList.remove("hidden");
 }
 
+/**
+ * Handles the closeDeleteModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeDeleteModal() {
   if (!dom.deleteModal) {
     return;
@@ -5064,6 +6520,11 @@ function closeDeleteModal() {
   pendingDeleteSpace = null;
 }
 
+/**
+ * Handles the openFolderDeleteModal function logic.
+ * Input: folderId: any.
+ * Output: result produced by this function.
+ */
 function openFolderDeleteModal(folderId: any) {
   if (!dom.folderDeleteModal || !dom.folderDeleteMessage) {
     return;
@@ -5073,6 +6534,11 @@ function openFolderDeleteModal(folderId: any) {
   dom.folderDeleteModal.classList.remove("hidden");
 }
 
+/**
+ * Handles the closeFolderDeleteModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeFolderDeleteModal() {
   if (!dom.folderDeleteModal) {
     return;
@@ -5081,6 +6547,11 @@ function closeFolderDeleteModal() {
   pendingDeleteFolder = null;
 }
 
+/**
+ * Handles the formatSpaceError function logic.
+ * Input: error: any, fallback: any.
+ * Output: result produced by this function.
+ */
 function formatSpaceError(error: any, fallback: any) {
   if (error instanceof Error && error.message) {
     if (error.message === "Failed to fetch") {
@@ -5091,6 +6562,11 @@ function formatSpaceError(error: any, fallback: any) {
   return fallback;
 }
 
+/**
+ * Handles the loadSpaceText function logic.
+ * Input: spaceId: any.
+ * Output: result produced by this function.
+ */
 async function loadSpaceText(spaceId: any) {
   const trimmed = spaceId.trim();
   if (!trimmed) {
@@ -5115,6 +6591,11 @@ async function loadSpaceText(spaceId: any) {
   }
 }
 
+/**
+ * Handles the attemptLogin function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function attemptLogin() {
   applyAuthFromInputs({ markDirty: false });
   if (dom.loginError) {
@@ -5162,6 +6643,11 @@ async function attemptLogin() {
   }
 }
 
+/**
+ * Handles the restoreSessionFromCookie function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function restoreSessionFromCookie() {
   try {
     const me = await fetchMe();
@@ -5202,6 +6688,11 @@ async function restoreSessionFromCookie() {
   }
 }
 
+/**
+ * Handles the logout function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 async function logout() {
   disconnectSpace();
   await logoutRequest();
@@ -5228,6 +6719,11 @@ async function logout() {
   showToast("Logged out.");
 }
 
+/**
+ * Handles the spaceResponseError function logic.
+ * Input: response: any, fallback: any.
+ * Output: result produced by this function.
+ */
 function spaceResponseError(response: any, fallback: any) {
   if (!response) {
     return fallback;
@@ -5250,6 +6746,11 @@ function spaceResponseError(response: any, fallback: any) {
   return fallback;
 }
 
+/**
+ * Handles the userResponseError function logic.
+ * Input: response: any, fallback: any.
+ * Output: result produced by this function.
+ */
 function userResponseError(response: any, fallback: any) {
   if (!response) {
     return fallback;
@@ -5272,6 +6773,11 @@ function userResponseError(response: any, fallback: any) {
   return fallback;
 }
 
+/**
+ * Handles the createSpace function logic.
+ * Input: name: any.
+ * Output: result produced by this function.
+ */
 async function createSpace(name: any) {
   const trimmed = name.trim();
   if (!trimmed) {
@@ -5286,6 +6792,11 @@ async function createSpace(name: any) {
   }
 }
 
+/**
+ * Handles the deleteSpace function logic.
+ * Input: name: any, spacePath: any = "".
+ * Output: result produced by this function.
+ */
 async function deleteSpace(name: any, spacePath: any = "") {
   const trimmed = String(name || "").trim();
   const normalizedSpacePath = typeof spacePath === "string" ? spacePath.trim() : "";
@@ -5310,6 +6821,11 @@ async function deleteSpace(name: any, spacePath: any = "") {
   await loadSpaceList({ showLoading: false });
 }
 
+/**
+ * Handles the renameSpace function logic.
+ * Input: oldName: any, newName: any, oldPath: any = "".
+ * Output: result produced by this function.
+ */
 async function renameSpace(oldName: any, newName: any, oldPath: any = "") {
   const source = oldName.trim();
   const target = newName.trim();
@@ -5334,6 +6850,11 @@ async function renameSpace(oldName: any, newName: any, oldPath: any = "") {
   }
 }
 
+/**
+ * Handles the startPresenceHeartbeat function logic.
+ * Input: spaceId: any.
+ * Output: result produced by this function.
+ */
 function startPresenceHeartbeat(spaceId: any) {
   void spaceId;
   if (collab.presenceTimer) {
@@ -5343,6 +6864,11 @@ function startPresenceHeartbeat(spaceId: any) {
   // Space-list presence is derived from Yjs awareness on the backend now.
 }
 
+/**
+ * Handles the stopPresenceHeartbeat function logic.
+ * Input: spaceId: any.
+ * Output: result produced by this function.
+ */
 function stopPresenceHeartbeat(spaceId: any) {
   void spaceId;
   if (collab.presenceTimer) {
@@ -5351,6 +6877,11 @@ function stopPresenceHeartbeat(spaceId: any) {
   }
 }
 
+/**
+ * Handles the openLoginModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function openLoginModal() {
   if (!dom.loginModal) {
     return;
@@ -5363,6 +6894,11 @@ function openLoginModal() {
   dom.loginModal.classList.remove("hidden");
 }
 
+/**
+ * Handles the closeLoginModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeLoginModal() {
   if (!dom.loginModal) {
     return;
@@ -5370,6 +6906,11 @@ function closeLoginModal() {
   dom.loginModal.classList.add("hidden");
 }
 
+/**
+ * Handles the openSpacesModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function openSpacesModal() {
   if (!dom.spacesModal) {
     return;
@@ -5405,6 +6946,11 @@ function openSpacesModal() {
   }, 8000);
 }
 
+/**
+ * Handles the closeSpacesModal function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeSpacesModal() {
   if (!dom.spacesModal) {
     return;
@@ -5420,6 +6966,11 @@ function closeSpacesModal() {
   }
 }
 
+/**
+ * Handles the updateConnectButtonLabel function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateConnectButtonLabel() {
   if (!dom.connectButton) {
     return;
@@ -5450,19 +7001,39 @@ function updateConnectButtonLabel() {
   updateBoardConnectionLabel();
 }
 
+/**
+ * Handles the disconnectSpace function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function disconnectSpace() {
   syncEngine.disconnectSpace();
   updateHistoryButtonState();
 }
 
+/**
+ * Handles the hydrateFromRemote function logic.
+ * Input: spaceId: any, ytext: any.
+ * Output: result produced by this function.
+ */
 async function hydrateFromRemote(spaceId: any, ytext: any) {
   return syncEngine.hydrateFromRemote(spaceId, ytext);
 }
 
+/**
+ * Handles the scheduleCollabSync function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function scheduleCollabSync() {
   syncEngine.scheduleCollabSync();
 }
 
+/**
+ * Handles the connectToSpace function logic.
+ * Input: spaceId: any, spacePath: any = "", { showLoader = true }: { showLoader?: boolean } = {}.
+ * Output: result produced by this function.
+ */
 async function connectToSpace(
   spaceId: any,
   spacePath: any = "",
@@ -5488,6 +7059,11 @@ async function connectToSpace(
   }
 }
 
+/**
+ * Handles the historyCheckpointDisplayLabel function logic.
+ * Input: checkpoint: any.
+ * Output: string.
+ */
 function historyCheckpointDisplayLabel(checkpoint: any): string {
   if (!checkpoint || typeof checkpoint !== "object") {
     return "";
@@ -5515,6 +7091,11 @@ function historyCheckpointDisplayLabel(checkpoint: any): string {
   return customLabel ? `${customLabel} · ${dateLabel}` : dateLabel;
 }
 
+/**
+ * Handles the historyCheckpointTimestamp function logic.
+ * Input: checkpoint: any.
+ * Output: number | null.
+ */
 function historyCheckpointTimestamp(checkpoint: any): number | null {
   if (checkpoint && Number.isFinite(checkpoint.created_at)) {
     return Number(checkpoint.created_at);
@@ -5528,6 +7109,11 @@ function historyCheckpointTimestamp(checkpoint: any): number | null {
   return null;
 }
 
+/**
+ * Handles the getHistoryTimelineBounds function logic.
+ * Input: checkpoints: any[].
+ * Output: result produced by this function.
+ */
 function getHistoryTimelineBounds(checkpoints: any[]): { min: number; max: number } {
   const times = checkpoints
     .map((checkpoint) => historyCheckpointTimestamp(checkpoint))
@@ -5543,6 +7129,11 @@ function getHistoryTimelineBounds(checkpoints: any[]): { min: number; max: numbe
   return { min, max };
 }
 
+/**
+ * Handles the historySliderValueForIndex function logic.
+ * Input: checkpoints: any[], index: number.
+ * Output: number.
+ */
 function historySliderValueForIndex(checkpoints: any[], index: number): number {
   const selected = checkpoints?.[Math.max(0, Math.min((checkpoints?.length || 1) - 1, index))];
   const timestamp = historyCheckpointTimestamp(selected);
@@ -5557,6 +7148,11 @@ function historySliderValueForIndex(checkpoints: any[], index: number): number {
   return Math.round(bounds.min + (bounds.max - bounds.min) * ratio);
 }
 
+/**
+ * Handles the findNearestHistoryCheckpointIndexByTime function logic.
+ * Input: checkpoints: any[], value: number.
+ * Output: number.
+ */
 function findNearestHistoryCheckpointIndexByTime(checkpoints: any[], value: number): number {
   if (!Array.isArray(checkpoints) || !checkpoints.length) {
     return -1;
@@ -5576,6 +7172,11 @@ function findNearestHistoryCheckpointIndexByTime(checkpoints: any[], value: numb
   return bestIndex;
 }
 
+/**
+ * Handles the updateHistoryViewerBanner function logic.
+ * Input: none.
+ * Output: void.
+ */
 function updateHistoryViewerBanner(): void {
   const banner = dom.historyViewerBanner;
   const label = dom.historyViewerBannerLabel;
@@ -5592,6 +7193,11 @@ function updateHistoryViewerBanner(): void {
   banner.classList.remove("hidden");
 }
 
+/**
+ * Handles the setHistoryViewerButtonsDisabled function logic.
+ * Input: disabled: boolean.
+ * Output: void.
+ */
 function setHistoryViewerButtonsDisabled(disabled: boolean): void {
   const buttons = [dom.undoButton, dom.redoButton, dom.loadButton, dom.saveButton, dom.formatButton, dom.graphAddTask]
     .filter((button): button is HTMLButtonElement => Boolean(button));
@@ -5610,6 +7216,11 @@ function setHistoryViewerButtonsDisabled(disabled: boolean): void {
   historyMode.disabledButtons = new Map();
 }
 
+/**
+ * Handles the setHistoryViewerMode function logic.
+ * Input: active: boolean.
+ * Output: void.
+ */
 function setHistoryViewerMode(active: boolean): void {
   const next = Boolean(active);
   if (historyMode.viewerActive === next) {
@@ -5636,6 +7247,11 @@ function setHistoryViewerMode(active: boolean): void {
   renderHistoryPanel();
 }
 
+/**
+ * Handles the updateHistoryButtonState function logic.
+ * Input: none.
+ * Output: void.
+ */
 function updateHistoryButtonState(): void {
   if (!dom.historyButton) {
     return;
@@ -5644,6 +7260,11 @@ function updateHistoryButtonState(): void {
   dom.historyButton.disabled = historyMode.loading || !available;
 }
 
+/**
+ * Handles the fetchSpaceHistoryList function logic.
+ * Input: spaceId: string, spacePath = "".
+ * Output: Promise<any[]>.
+ */
 async function fetchSpaceHistoryList(spaceId: string, spacePath = ""): Promise<any[]> {
   const pathQuery = spacePath ? `?path=${encodeURIComponent(spacePath)}` : "";
   const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/history${pathQuery}`, {
@@ -5656,6 +7277,11 @@ async function fetchSpaceHistoryList(spaceId: string, spacePath = ""): Promise<a
   return Array.isArray(data?.checkpoints) ? data.checkpoints : [];
 }
 
+/**
+ * Handles the fetchSpaceHistoryCheckpointContent function logic.
+ * Input: spaceId: string, checkpointId: string, spacePath = "".
+ * Output: Promise<string>.
+ */
 async function fetchSpaceHistoryCheckpointContent(spaceId: string, checkpointId: string, spacePath = ""): Promise<string> {
   const pathQuery = spacePath ? `?path=${encodeURIComponent(spacePath)}` : "";
   const response = await fetch(
@@ -5668,6 +7294,11 @@ async function fetchSpaceHistoryCheckpointContent(spaceId: string, checkpointId:
   return response.text();
 }
 
+/**
+ * Handles the postSpaceHistoryRevert function logic.
+ * Input: spaceId: string, checkpointId: string, preRevertContent: string, spacePath = "".
+ * Output: Promise<any>.
+ */
 async function postSpaceHistoryRevert(
   spaceId: string,
   checkpointId: string,
@@ -5696,6 +7327,11 @@ async function postSpaceHistoryRevert(
   return response.json();
 }
 
+/**
+ * Handles the postSpaceHistoryTag function logic.
+ * Input: spaceId: string, options: { checkpointId?: string; label: string; content?: string; path?: string }.
+ * Output: Promise<any>.
+ */
 async function postSpaceHistoryTag(
   spaceId: string,
   options: { checkpointId?: string; label: string; content?: string; path?: string }
@@ -5729,8 +7365,14 @@ async function postSpaceHistoryTag(
   return response.json();
 }
 
+// Stores the historyPanelAnimationTimer module constant.
 let historyPanelAnimationTimer: any = null;
 
+/**
+ * Handles the getHistoryPanelAnimationDurationMs function logic.
+ * Input: none.
+ * Output: number.
+ */
 function getHistoryPanelAnimationDurationMs(): number {
   if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
     return 0;
@@ -5738,6 +7380,11 @@ function getHistoryPanelAnimationDurationMs(): number {
   return HISTORY_PANEL_ANIMATION_MS;
 }
 
+/**
+ * Handles the clearHistoryPanelAnimationTimer function logic.
+ * Input: none.
+ * Output: void.
+ */
 function clearHistoryPanelAnimationTimer(): void {
   if (!historyPanelAnimationTimer) {
     return;
@@ -5746,6 +7393,11 @@ function clearHistoryPanelAnimationTimer(): void {
   historyPanelAnimationTimer = null;
 }
 
+/**
+ * Handles the startHistoryPanelOpenAnimation function logic.
+ * Input: none.
+ * Output: void.
+ */
 function startHistoryPanelOpenAnimation(): void {
   clearHistoryPanelAnimationTimer();
   historyMode.panelClosing = false;
@@ -5766,6 +7418,11 @@ function startHistoryPanelOpenAnimation(): void {
   });
 }
 
+/**
+ * Handles the runHistoryPanelCloseAnimation function logic.
+ * Input: none.
+ * Output: Promise<void>.
+ */
 async function runHistoryPanelCloseAnimation(): Promise<void> {
   if (!dom.historyPanel) {
     return;
@@ -5786,6 +7443,11 @@ async function runHistoryPanelCloseAnimation(): Promise<void> {
   });
 }
 
+/**
+ * Handles the renderHistoryMarks function logic.
+ * Input: none.
+ * Output: void.
+ */
 function renderHistoryMarks(): void {
   if (!dom.historyMarks) {
     return;
@@ -5821,6 +7483,11 @@ function renderHistoryMarks(): void {
   });
 }
 
+/**
+ * Handles the renderHistoryPanel function logic.
+ * Input: none.
+ * Output: void.
+ */
 function renderHistoryPanel(): void {
   if (!dom.historyPanel || !dom.historySlider || !dom.historyCurrentLabel) {
     return;
@@ -5886,6 +7553,11 @@ function renderHistoryPanel(): void {
   renderHistoryMarks();
 }
 
+/**
+ * Handles the stepHistorySelection function logic.
+ * Input: delta: number.
+ * Output: Promise<void>.
+ */
 async function stepHistorySelection(delta: number): Promise<void> {
   const checkpoints = Array.isArray(historyMode.checkpoints) ? historyMode.checkpoints : [];
   if (!checkpoints.length) {
@@ -5901,6 +7573,11 @@ async function stepHistorySelection(delta: number): Promise<void> {
   await selectHistoryCheckpoint(nextIndex);
 }
 
+/**
+ * Handles the selectHistoryCheckpoint function logic.
+ * Input: index: number.
+ * Output: Promise<void>.
+ */
 async function selectHistoryCheckpoint(index: number): Promise<void> {
   const checkpoints = historyMode.checkpoints;
   if (!Array.isArray(checkpoints) || !checkpoints.length) {
@@ -5932,6 +7609,11 @@ async function selectHistoryCheckpoint(index: number): Promise<void> {
   }
 }
 
+/**
+ * Handles the closeHistoryPanel function logic.
+ * Input: { restoreOriginal = true }: { restoreOriginal?: boolean } = {}.
+ * Output: Promise<void>.
+ */
 async function closeHistoryPanel({ restoreOriginal = true }: { restoreOriginal?: boolean } = {}): Promise<void> {
   if (!historyMode.panelOpen && !historyMode.panelClosing) {
     return;
@@ -5965,6 +7647,11 @@ async function closeHistoryPanel({ restoreOriginal = true }: { restoreOriginal?:
   updateHistoryButtonState();
 }
 
+/**
+ * Handles the openHistoryPanel function logic.
+ * Input: none.
+ * Output: Promise<void>.
+ */
 async function openHistoryPanel(): Promise<void> {
   if (historyMode.loading) {
     return;
@@ -6005,6 +7692,11 @@ async function openHistoryPanel(): Promise<void> {
   }
 }
 
+/**
+ * Handles the getHistoryRevertSelection function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getHistoryRevertSelection(): { checkpointId: string; targetLabel: string } | null {
   if (!historyMode.panelOpen || !historyMode.spaceId) {
     return null;
@@ -6018,6 +7710,11 @@ function getHistoryRevertSelection(): { checkpointId: string; targetLabel: strin
   return { checkpointId, targetLabel };
 }
 
+/**
+ * Handles the openHistoryRevertModal function logic.
+ * Input: none.
+ * Output: void.
+ */
 function openHistoryRevertModal(): void {
   if (!dom.historyRevertModal) {
     return;
@@ -6038,6 +7735,11 @@ function openHistoryRevertModal(): void {
   });
 }
 
+/**
+ * Handles the closeHistoryRevertModal function logic.
+ * Input: none.
+ * Output: void.
+ */
 function closeHistoryRevertModal(): void {
   if (!dom.historyRevertModal) {
     return;
@@ -6048,6 +7750,11 @@ function closeHistoryRevertModal(): void {
   }
 }
 
+/**
+ * Handles the openHistoryTagModal function logic.
+ * Input: none.
+ * Output: void.
+ */
 function openHistoryTagModal(): void {
   if (!dom.historyTagModal || !dom.historyTagInput) {
     return;
@@ -6061,11 +7768,21 @@ function openHistoryTagModal(): void {
   });
 }
 
+/**
+ * Handles the closeHistoryTagModal function logic.
+ * Input: none.
+ * Output: void.
+ */
 function closeHistoryTagModal(): void {
   dom.historyTagModal?.classList.add("hidden");
   resetInlineError(dom.historyTagError);
 }
 
+/**
+ * Handles the submitHistoryTag function logic.
+ * Input: none.
+ * Output: Promise<void>.
+ */
 async function submitHistoryTag(): Promise<void> {
   if (!historyMode.panelOpen || !historyMode.spaceId) {
     return;
@@ -6110,6 +7827,11 @@ async function submitHistoryTag(): Promise<void> {
   }
 }
 
+/**
+ * Handles the revertFromHistorySelection function logic.
+ * Input: { skipConfirmation = false }: { skipConfirmation?: boolean } = {}.
+ * Output: Promise<void>.
+ */
 async function revertFromHistorySelection(
   { skipConfirmation = false }: { skipConfirmation?: boolean } = {}
 ): Promise<void> {
@@ -6156,6 +7878,11 @@ async function revertFromHistorySelection(
   }
 }
 
+/**
+ * Handles the matchesFilters function logic.
+ * Input: task: any.
+ * Output: result produced by this function.
+ */
 function matchesFilters(task: any) {
   if (!filtersActive()) {
     return true;
@@ -6416,6 +8143,11 @@ if (dom.historyTagInput) {
   });
 }
 
+/**
+ * Handles the setTheme function logic.
+ * Input: theme: any.
+ * Output: result produced by this function.
+ */
 function setTheme(theme: any) {
   const resolved = theme === "dark" ? "dark" : "light";
   document.documentElement.dataset["theme"] = resolved;
@@ -6433,12 +8165,22 @@ function setTheme(theme: any) {
   }
 }
 
+/**
+ * Handles the getSpellcheckToggleButtons function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function getSpellcheckToggleButtons() {
   return [dom.spellcheckToggleMain, dom.spellcheckToggleModal].filter(
     (button): button is HTMLButtonElement => Boolean(button)
   );
 }
 
+/**
+ * Handles the updateSpellcheckToggleButton function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateSpellcheckToggleButton() {
   const buttons = getSpellcheckToggleButtons();
   if (!buttons.length) {
@@ -6456,6 +8198,11 @@ function updateSpellcheckToggleButton() {
   });
 }
 
+/**
+ * Handles the setScopedSpellcheckEnabled function logic.
+ * Input: enabled: any, { persist = true }: { persist?: boolean } = {}.
+ * Output: result produced by this function.
+ */
 function setScopedSpellcheckEnabled(enabled: any, { persist = true }: { persist?: boolean } = {}) {
   const next = Boolean(enabled);
   state.spellcheckEnabled = next;
@@ -6484,6 +8231,7 @@ if (dom.themeButton) {
   });
 }
 
+// Stores the spellcheckToggleButtons module constant.
 const spellcheckToggleButtons = getSpellcheckToggleButtons();
 if (spellcheckToggleButtons.length) {
   updateSpellcheckToggleButton();
@@ -7156,31 +8904,55 @@ if (dom.clearFilters) {
   });
 }
 
+// Stores the resizing module constant.
 let resizing = false;
+// Stores the resizingKanban module constant.
 let resizingKanban = false;
+// Stores the pendingGraphRender module constant.
 let pendingGraphRender: number | null = null;
-let legendHiddenByRightSnap = false;
+// Stores the legendHiddenByDividerSnap module constant.
+let legendHiddenByDividerSnap = false;
+// Stores the legendHasVisibleContent module constant.
 let legendHasVisibleContent = true;
+// Stores the activeTouchDividerPointerId module constant.
 let activeTouchDividerPointerId: number | null = null;
+// Stores the activeTouchKanbanDividerPointerId module constant.
 let activeTouchKanbanDividerPointerId: number | null = null;
+// Stores the activeTouchDividerTouchId module constant.
 let activeTouchDividerTouchId: number | null = null;
+// Stores the activeTouchKanbanDividerTouchId module constant.
 let activeTouchKanbanDividerTouchId: number | null = null;
 
+/**
+ * Handles the applyLegendHiddenState function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function applyLegendHiddenState() {
   if (!dom.legend) {
     return;
   }
-  const shouldHide = legendHiddenByRightSnap || !legendHasVisibleContent;
+  const shouldHide = legendHiddenByDividerSnap || !legendHasVisibleContent;
   dom.legend.hidden = shouldHide;
   document.documentElement.toggleAttribute("data-legend-hidden", shouldHide);
   updateResponsiveLayoutOffsets();
 }
 
+/**
+ * Handles the setLegendHasVisibleContent function logic.
+ * Input: hasVisibleContent: any.
+ * Output: result produced by this function.
+ */
 function setLegendHasVisibleContent(hasVisibleContent: any) {
   legendHasVisibleContent = Boolean(hasVisibleContent);
   applyLegendHiddenState();
 }
 
+/**
+ * Handles the scheduleGraphRender function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function scheduleGraphRender() {
   if (pendingGraphRender) {
     return;
@@ -7192,6 +8964,11 @@ function scheduleGraphRender() {
   });
 }
 
+/**
+ * Handles the findTouchByIdentifier function logic.
+ * Input: touches: TouchList, identifier: number.
+ * Output: Touch | null.
+ */
 function findTouchByIdentifier(touches: TouchList, identifier: number): Touch | null {
   for (let index = 0; index < touches.length; index += 1) {
     const touch = touches.item(index);
@@ -7202,6 +8979,11 @@ function findTouchByIdentifier(touches: TouchList, identifier: number): Touch | 
   return null;
 }
 
+/**
+ * Handles the updateKanbanHeightFromPointer function logic.
+ * Input: clientY: number.
+ * Output: void.
+ */
 function updateKanbanHeightFromPointer(clientY: number): void {
   const panelRect = (dom.graphPanel || dom.graphCanvas).getBoundingClientRect();
   const dividerHeight = dom.kanbanDivider?.offsetHeight || 0;
@@ -7223,6 +9005,11 @@ function updateKanbanHeightFromPointer(clientY: number): void {
   scheduleGraphRender();
 }
 
+/**
+ * Handles the updateMainDividerFromPointer function logic.
+ * Input: clientX: number.
+ * Output: void.
+ */
 function updateMainDividerFromPointer(clientX: number): void {
   const rect = document.body.getBoundingClientRect();
   const dividerWidth = Math.max(1, dom.divider?.offsetWidth || 8);
@@ -7243,6 +9030,11 @@ function updateMainDividerFromPointer(clientX: number): void {
   scheduleGraphRender();
 }
 
+/**
+ * Handles the updateTabletHorizontalDividerFromPointer function logic.
+ * Input: clientY: number.
+ * Output: void.
+ */
 function updateTabletHorizontalDividerFromPointer(clientY: number): void {
   const appRoot = document.querySelector(".app") as HTMLElement | null;
   const rect = (appRoot || document.body).getBoundingClientRect();
@@ -7266,33 +9058,71 @@ function updateTabletHorizontalDividerFromPointer(clientY: number): void {
   if (appRoot) {
     appRoot.style.setProperty("--tablet-horizontal-top-height", value);
   }
+  setLegendHiddenForTabletVerticalSnap(clamped, maxPercent);
   scheduleGraphRender();
 }
 
+/**
+ * Handles the setLegendHiddenForRightSnap function logic.
+ * Input: leftPercent: any, maxPercent: any.
+ * Output: result produced by this function.
+ */
 function setLegendHiddenForRightSnap(leftPercent: any, maxPercent: any) {
-  legendHiddenByRightSnap = Number.isFinite(leftPercent)
-    && Number.isFinite(maxPercent)
-    && leftPercent >= (maxPercent - 0.01);
+  const hasValidNumbers = Number.isFinite(leftPercent) && Number.isFinite(maxPercent);
+  const snappedLeft = hasValidNumbers && leftPercent <= 0.01;
+  const snappedRight = hasValidNumbers && leftPercent >= (maxPercent - 0.01);
+  legendHiddenByDividerSnap = state.viewportMode === "tablet"
+    ? (snappedLeft || snappedRight)
+    : snappedRight;
   applyLegendHiddenState();
 }
 
+/**
+ * Handles the setLegendHiddenForTabletVerticalSnap function logic.
+ * Input: topPercent: any, maxPercent: any.
+ * Output: result produced by this function.
+ */
+function setLegendHiddenForTabletVerticalSnap(topPercent: any, maxPercent: any) {
+  const shouldHide = state.viewportMode === "tablet"
+    && state.tabletPaneLayout === "horizontal"
+    && Number.isFinite(topPercent)
+    && Number.isFinite(maxPercent)
+    && (topPercent <= 0.01 || topPercent >= (maxPercent - 0.01));
+  legendHiddenByDividerSnap = shouldHide;
+  applyLegendHiddenState();
+}
+
+/**
+ * Handles the updateLegendHiddenFromLayout function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function updateLegendHiddenFromLayout() {
-  const rect = document.body.getBoundingClientRect();
-  if (!rect.width) {
+  const appRoot = document.querySelector(".app") as HTMLElement | null;
+  const rect = (appRoot || document.body).getBoundingClientRect();
+  if (!rect.width || !rect.height) {
+    return;
+  }
+  const rootStyle = getComputedStyle(document.documentElement);
+  const rawLeftWidth = rootStyle.getPropertyValue("--left-width").trim();
+  const leftPercent = Number.parseFloat(rawLeftWidth);
+  const safeLeftPercent = Number.isFinite(leftPercent) ? leftPercent : 45;
+  setGraphHiddenForLeftSnap(safeLeftPercent);
+  updateGraphTopHiddenFromLayout({ dom });
+  if (state.viewportMode === "tablet" && state.tabletPaneLayout === "horizontal") {
+    const dividerHeight = Math.max(1, dom.divider?.offsetHeight || 8);
+    const maxTopPercent = Math.max(0, ((rect.height - dividerHeight) / rect.height) * 100);
+    const rawTopHeight = rootStyle.getPropertyValue("--tablet-horizontal-top-height").trim();
+    const topPercent = Number.parseFloat(rawTopHeight);
+    setLegendHiddenForTabletVerticalSnap(
+      Number.isFinite(topPercent) ? topPercent : 50,
+      maxTopPercent
+    );
     return;
   }
   const dividerWidth = Math.max(1, dom.divider?.offsetWidth || 8);
-  const maxPercent = Math.max(0, ((rect.width - dividerWidth) / rect.width) * 100);
-  const rawLeftWidth = getComputedStyle(document.documentElement)
-    .getPropertyValue("--left-width")
-    .trim();
-  const leftPercent = Number.parseFloat(rawLeftWidth);
-  setGraphHiddenForLeftSnap(Number.isFinite(leftPercent) ? leftPercent : 45);
-  updateGraphTopHiddenFromLayout({ dom });
-  setLegendHiddenForRightSnap(
-    Number.isFinite(leftPercent) ? leftPercent : 45,
-    maxPercent
-  );
+  const maxLeftPercent = Math.max(0, ((rect.width - dividerWidth) / rect.width) * 100);
+  setLegendHiddenForRightSnap(safeLeftPercent, maxLeftPercent);
 }
 
 dom.divider.addEventListener("mousedown", () => {
@@ -7539,6 +9369,11 @@ window.addEventListener("resize", () => {
 state.kanbanGroupBy = getStoredKanbanGroup();
 updateKanbanGroupButtons();
 
+/**
+ * Handles the initializeApp function logic.
+ * Input: none.
+ * Output: Promise<void>.
+ */
 async function initializeApp(): Promise<void> {
   setBootLoaderVisible(true, "Preparing workspace...");
   try {

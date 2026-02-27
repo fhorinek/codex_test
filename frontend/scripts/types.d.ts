@@ -1,5 +1,11 @@
+/**
+ * Module: Shared type declarations used across frontend script modules.
+ */
+
+// Defines the SlugKind type structure for this module.
 export type SlugKind = "people" | "states" | "tags";
 
+// Defines the SlugConfigEntry interface structure for this module.
 export interface SlugConfigEntry {
   slug: string;
   name?: string;
@@ -8,11 +14,13 @@ export interface SlugConfigEntry {
   jira?: string;
 }
 
+// Defines the JiraTitleParseResult interface structure for this module.
 export interface JiraTitleParseResult {
   key: string | null;
   title: string;
 }
 
+// Defines the TaskNode interface structure for this module.
 export interface TaskNode {
   id?: string;
   title?: string;
@@ -30,6 +38,7 @@ export interface TaskNode {
   children?: TaskNode[];
 }
 
+// Defines the ParsedTaskDocument interface structure for this module.
 export interface ParsedTaskDocument {
   tasks: TaskNode[];
   tags?: Set<string>;
@@ -47,14 +56,17 @@ export interface ParsedTaskDocument {
   [key: string]: unknown;
 }
 
+// Defines the RenderMarkdownOptions interface structure for this module.
 export interface RenderMarkdownOptions {
   disableLinks?: boolean;
   lineIndexes?: number[];
   baseIndent?: number;
 }
 
+// Defines the CheckboxToggleHandler type structure for this module.
 export type CheckboxToggleHandler = (lineIndex: number) => void;
 
+// Defines the ReorderTaskHandler type structure for this module.
 export type ReorderTaskHandler = (
   taskId: string,
   targetTaskId: string,
@@ -62,6 +74,7 @@ export type ReorderTaskHandler = (
   options?: { allowRootReparent?: boolean }
 ) => boolean | void;
 
+// Defines the MoveTaskAsSubtaskHandler type structure for this module.
 export type MoveTaskAsSubtaskHandler = (
   taskId: string,
   parentTaskId: string

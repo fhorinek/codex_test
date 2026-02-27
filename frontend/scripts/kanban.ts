@@ -1,5 +1,9 @@
 // @ts-check
 
+/**
+ * Module: Kanban board rendering, drag-and-drop behavior, and board interactions.
+ */
+
 import { splitIndent, normalizeContent, prependTokenToLine } from "./formatter.js";
 import { parseJiraTitle } from "./task.js";
 import {
@@ -10,39 +14,83 @@ import {
   wireDescriptionCheckboxes,
 } from "./taskDescription.js";
 
+// Defines the KanbanGroupBy type structure for this module.
 type KanbanGroupBy = "none" | "person" | "tag";
 
+// Defines the BuildKanbanOptions type structure for this module.
 type BuildKanbanOptions = {
   state: any;
   dom: any;
   renderMarkdown?: ((text: string, options?: any) => string) | null;
+  /**
+   * Handles the selectTask function logic.
+   * Input: task: any.
+   * Output: result produced by this function.
+   */
   selectTask: (task: any) => void;
   onEditTask?: ((task: any) => void) | null;
+  /**
+   * Handles the matchesSearchTask function logic.
+   * Input: task: any.
+   * Output: result produced by this function.
+   */
   matchesSearchTask: (task: any) => boolean;
+  /**
+   * Handles the filtersActive function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   filtersActive: () => boolean | number;
+  /**
+   * Handles the matchesFilters function logic.
+   * Input: task: any.
+   * Output: result produced by this function.
+   */
   matchesFilters: (task: any) => boolean;
+  /**
+   * Handles the updateTaskState function logic.
+   * Input: task: any, nextState: string.
+   * Output: result produced by this function.
+   */
   updateTaskState: (task: any, nextState: string) => void;
   onToggleCheckbox?: ((lineIndex: number, checked: boolean) => void) | null;
   groupBy?: string;
 };
 
+// Defines the UpdateTaskStateOptions type structure for this module.
 type UpdateTaskStateOptions = {
   task: any;
   newState: string;
   dom: any;
+  /**
+   * Handles the sync function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   sync: () => void;
   applyEditorValue?: ((value: string) => void) | null;
 };
 
+// Defines the UpdateTaskTokenOptions type structure for this module.
 type UpdateTaskTokenOptions = {
   task: any;
   token: string;
   action: "add" | "remove";
   dom: any;
+  /**
+   * Handles the sync function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   sync: () => void;
   applyEditorValue?: ((value: string) => void) | null;
 };
 
+/**
+ * Handles the lightenColor function logic.
+ * Input: color: string, amount = 0.4.
+ * Output: string.
+ */
 function lightenColor(color: string, amount = 0.4): string {
   const hex = color.replace("#", "");
   if (hex.length !== 6) {
@@ -52,11 +100,26 @@ function lightenColor(color: string, amount = 0.4): string {
   const r = (num >> 16) & 0xff;
   const g = (num >> 8) & 0xff;
   const b = num & 0xff;
+  /**
+   * Handles the mix function logic.
+   * Input: channel: number.
+   * Output: result produced by this function.
+   */
   const mix = (channel: number) => Math.min(255, Math.round(channel + (255 - channel) * amount));
+  /**
+   * Handles the toHex function logic.
+   * Input: channel: number.
+   * Output: result produced by this function.
+   */
   const toHex = (channel: number) => channel.toString(16).padStart(2, "0");
   return `#${toHex(mix(r))}${toHex(mix(g))}${toHex(mix(b))}`;
 }
 
+/**
+ * Handles the formatStoryPointsNumber function logic.
+ * Input: value: any.
+ * Output: string.
+ */
 function formatStoryPointsNumber(value: any): string {
   if (!Number.isFinite(value)) {
     return "0";
@@ -64,6 +127,11 @@ function formatStoryPointsNumber(value: any): string {
   return Number.isInteger(value) ? String(value) : String(value);
 }
 
+/**
+ * Handles the buildTaskStoryPointsLabel function logic.
+ * Input: task: any.
+ * Output: string.
+ */
 function buildTaskStoryPointsLabel(task: any): string {
   if (!task) {
     return "";
@@ -82,10 +150,20 @@ function buildTaskStoryPointsLabel(task: any): string {
   return "";
 }
 
+/**
+ * Handles the escapeRegExp function logic.
+ * Input: value: string.
+ * Output: string.
+ */
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Handles the insertTokenRespectState function logic.
+ * Input: line: string, token: string.
+ * Output: string.
+ */
 function insertTokenRespectState(line: string, token: string): string {
   const { indent, content } = splitIndent(line);
   const trimmed = content.trim();
@@ -104,6 +182,11 @@ function insertTokenRespectState(line: string, token: string): string {
   return `${indent}${normalizeContent(`${token} ${trimmed}`)}`;
 }
 
+/**
+ * Handles the findFirstNonEmptyLine function logic.
+ * Input: lines: string[], start: number, end: number.
+ * Output: number.
+ */
 function findFirstNonEmptyLine(lines: string[], start: number, end: number): number {
   for (let i = start; i < end; i += 1) {
     if ((lines[i] ?? "").trim() !== "") {
@@ -113,6 +196,11 @@ function findFirstNonEmptyLine(lines: string[], start: number, end: number): num
   return -1;
 }
 
+/**
+ * Handles the lineHasTokens function logic.
+ * Input: line: string.
+ * Output: boolean.
+ */
 function lineHasTokens(line: string): boolean {
   const { content } = splitIndent(line);
   const trimmed = content.trim();
@@ -124,14 +212,29 @@ function lineHasTokens(line: string): boolean {
   ));
 }
 
+/**
+ * Handles the isEstimateToken function logic.
+ * Input: token: string.
+ * Output: boolean.
+ */
 function isEstimateToken(token: string): boolean {
   return /^~\d+(?:\.\d+)?$/.test((token || "").trim());
 }
 
+/**
+ * Handles the removeEstimateTokensFromContent function logic.
+ * Input: content: string.
+ * Output: string.
+ */
 function removeEstimateTokensFromContent(content: string): string {
   return normalizeContent(content.replace(/(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g, "$1"));
 }
 
+/**
+ * Handles the appendEstimateTokenToLine function logic.
+ * Input: line: string, token: string.
+ * Output: string.
+ */
 function appendEstimateTokenToLine(line: string, token: string): string {
   const { indent, content } = splitIndent(line);
   const cleaned = removeEstimateTokensFromContent(content);
@@ -141,6 +244,11 @@ function appendEstimateTokenToLine(line: string, token: string): string {
   return `${indent}${normalizeContent(`${cleaned} ${token}`)}`;
 }
 
+/**
+ * Handles the removeLeadingBlankLines function logic.
+ * Input: lines: string[], start: number, end: number.
+ * Output: number.
+ */
 function removeLeadingBlankLines(lines: string[], start: number, end: number): number {
   let currentEnd = end;
   while (start < currentEnd && (lines[start] ?? "").trim() === "") {
@@ -150,15 +258,28 @@ function removeLeadingBlankLines(lines: string[], start: number, end: number): n
   return currentEnd;
 }
 
+// Stores the UNASSIGNED_GROUP module constant.
 const UNASSIGNED_GROUP = "__unassigned__";
+// Stores the lastKanbanClickAt module constant.
 let lastKanbanClickAt = 0;
+// Stores the lastKanbanClickId module constant.
 let lastKanbanClickId = "";
+// Stores the openReferenceDropdown module constant.
 let openReferenceDropdown: HTMLElement | null = null;
+// Stores the referenceDropdownHandlersBound module constant.
 let referenceDropdownHandlersBound = false;
+// Stores the KANBAN_TOUCH_DRAG_THRESHOLD_PX module constant.
 const KANBAN_TOUCH_DRAG_THRESHOLD_PX = 10;
+// Stores the KANBAN_TOUCH_DRAG_SUPPRESS_CLICK_MS module constant.
 const KANBAN_TOUCH_DRAG_SUPPRESS_CLICK_MS = 360;
+// Stores the activeKanbanTouchDrag module constant.
 let activeKanbanTouchDrag: any = null;
 
+/**
+ * Handles the closeReferenceDropdown function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function closeReferenceDropdown() {
   if (!openReferenceDropdown) {
     return;
@@ -167,6 +288,11 @@ function closeReferenceDropdown() {
   openReferenceDropdown = null;
 }
 
+/**
+ * Handles the ensureReferenceDropdownHandlers function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
 function ensureReferenceDropdownHandlers() {
   if (referenceDropdownHandlersBound) {
     return;
@@ -182,10 +308,20 @@ function ensureReferenceDropdownHandlers() {
   });
 }
 
+/**
+ * Handles the normalizeGroupBy function logic.
+ * Input: value: any.
+ * Output: KanbanGroupBy.
+ */
 function normalizeGroupBy(value: any): KanbanGroupBy {
   return value === "person" || value === "tag" ? value : "none";
 }
 
+/**
+ * Handles the isKanbanDragDisabled function logic.
+ * Input: state: any.
+ * Output: boolean.
+ */
 function isKanbanDragDisabled(state: any): boolean {
   if (state?.historyViewerActive) {
     return true;
@@ -206,6 +342,11 @@ function isKanbanDragDisabled(state: any): boolean {
   return false;
 }
 
+/**
+ * Handles the findTouchByIdentifier function logic.
+ * Input: touches: TouchList, identifier: number.
+ * Output: Touch | null.
+ */
 function findTouchByIdentifier(touches: TouchList, identifier: number): Touch | null {
   for (let index = 0; index < touches.length; index += 1) {
     const touch = touches.item(index);
@@ -216,6 +357,11 @@ function findTouchByIdentifier(touches: TouchList, identifier: number): Touch | 
   return null;
 }
 
+/**
+ * Handles the shouldIgnoreKanbanTouchDragStart function logic.
+ * Input: target: EventTarget | null.
+ * Output: boolean.
+ */
 function shouldIgnoreKanbanTouchDragStart(target: EventTarget | null): boolean {
   if (!(target instanceof Element)) {
     return false;
@@ -227,6 +373,11 @@ function shouldIgnoreKanbanTouchDragStart(target: EventTarget | null): boolean {
   );
 }
 
+/**
+ * Handles the clearKanbanTouchDragHoverColumn function logic.
+ * Input: drag: any.
+ * Output: void.
+ */
 function clearKanbanTouchDragHoverColumn(drag: any): void {
   if (!drag?.hoverColumn) {
     return;
@@ -235,6 +386,11 @@ function clearKanbanTouchDragHoverColumn(drag: any): void {
   drag.hoverColumn = null;
 }
 
+/**
+ * Handles the setKanbanTouchDragHoverColumn function logic.
+ * Input: drag: any, column: HTMLElement | null.
+ * Output: void.
+ */
 function setKanbanTouchDragHoverColumn(drag: any, column: HTMLElement | null): void {
   if (drag?.hoverColumn === column) {
     return;
@@ -247,6 +403,11 @@ function setKanbanTouchDragHoverColumn(drag: any, column: HTMLElement | null): v
   drag.hoverColumn = column;
 }
 
+/**
+ * Handles the createKanbanTouchDragGhost function logic.
+ * Input: card: HTMLElement, clientX: number, clientY: number.
+ * Output: any.
+ */
 function createKanbanTouchDragGhost(card: HTMLElement, clientX: number, clientY: number): any {
   const rect = card.getBoundingClientRect();
   const ghost = card.cloneNode(true) as HTMLElement;
@@ -267,6 +428,11 @@ function createKanbanTouchDragGhost(card: HTMLElement, clientX: number, clientY:
   return { ghost, offsetX, offsetY };
 }
 
+/**
+ * Handles the updateKanbanTouchDragGhost function logic.
+ * Input: drag: any.
+ * Output: void.
+ */
 function updateKanbanTouchDragGhost(drag: any): void {
   if (!drag?.ghost) {
     return;
@@ -274,6 +440,11 @@ function updateKanbanTouchDragGhost(drag: any): void {
   drag.ghost.style.transform = `translate(${drag.lastClientX - drag.ghostOffsetX}px, ${drag.lastClientY - drag.ghostOffsetY}px)`;
 }
 
+/**
+ * Handles the clearKanbanTouchDragGhost function logic.
+ * Input: drag: any.
+ * Output: void.
+ */
 function clearKanbanTouchDragGhost(drag: any): void {
   if (!drag?.ghost) {
     return;
@@ -282,6 +453,11 @@ function clearKanbanTouchDragGhost(drag: any): void {
   drag.ghost = null;
 }
 
+/**
+ * Handles the isPointOverTaskTrash function logic.
+ * Input: clientX: number, clientY: number.
+ * Output: boolean.
+ */
 function isPointOverTaskTrash(clientX: number, clientY: number): boolean {
   const taskTrash = document.getElementById("task-trash") as HTMLElement | null;
   if (!taskTrash || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
@@ -296,6 +472,11 @@ function isPointOverTaskTrash(clientX: number, clientY: number): boolean {
   );
 }
 
+/**
+ * Handles the setKanbanTouchTaskTrashHover function logic.
+ * Input: active: boolean.
+ * Output: void.
+ */
 function setKanbanTouchTaskTrashHover(active: boolean): void {
   const taskTrash = document.getElementById("task-trash") as HTMLElement | null;
   if (!taskTrash) {
@@ -305,10 +486,20 @@ function setKanbanTouchTaskTrashHover(active: boolean): void {
   document.body.classList.toggle("task-trash-over", active);
 }
 
+/**
+ * Handles the clearKanbanTouchTaskTrashHover function logic.
+ * Input: none.
+ * Output: void.
+ */
 function clearKanbanTouchTaskTrashHover(): void {
   setKanbanTouchTaskTrashHover(false);
 }
 
+/**
+ * Handles the dispatchKanbanTouchTaskTrashDrop function logic.
+ * Input: taskId: string.
+ * Output: void.
+ */
 function dispatchKanbanTouchTaskTrashDrop(taskId: string): void {
   if (!taskId) {
     return;
@@ -320,10 +511,20 @@ function dispatchKanbanTouchTaskTrashDrop(taskId: string): void {
   );
 }
 
+/**
+ * Handles the uniqueTokens function logic.
+ * Input: tokens: any[].
+ * Output: any[].
+ */
 function uniqueTokens(tokens: any[]): any[] {
   return Array.from(new Set(tokens));
 }
 
+/**
+ * Handles the getGroupTokens function logic.
+ * Input: state: any, groupBy: KanbanGroupBy.
+ * Output: string[].
+ */
 function getGroupTokens(state: any, groupBy: KanbanGroupBy): string[] {
   if (groupBy === "person") {
     const order = state.config?.people?.map((person: any) => `@${person.key}`) || [];
@@ -342,6 +543,11 @@ function getGroupTokens(state: any, groupBy: KanbanGroupBy): string[] {
   return [];
 }
 
+/**
+ * Handles the getGroupMeta function logic.
+ * Input: state: any, groupBy: KanbanGroupBy, token: string.
+ * Output: any.
+ */
 function getGroupMeta(state: any, groupBy: KanbanGroupBy, token: string): any {
   if (groupBy === "person") {
     return state.peopleMeta?.get(token);
@@ -352,6 +558,11 @@ function getGroupMeta(state: any, groupBy: KanbanGroupBy, token: string): any {
   return null;
 }
 
+/**
+ * Handles the getGroupLabel function logic.
+ * Input: groupBy: KanbanGroupBy, token: string, meta: any.
+ * Output: string.
+ */
 function getGroupLabel(groupBy: KanbanGroupBy, token: string, meta: any): string {
   if (token === UNASSIGNED_GROUP) {
     return groupBy === "person" ? "Unassigned" : "No tag";
@@ -366,6 +577,11 @@ function getGroupLabel(groupBy: KanbanGroupBy, token: string, meta: any): string
   return fallback;
 }
 
+/**
+ * Handles the getTaskGroupKeys function logic.
+ * Input: task: any, groupBy: KanbanGroupBy.
+ * Output: string[].
+ */
 function getTaskGroupKeys(task: any, groupBy: KanbanGroupBy): string[] {
   if (groupBy === "person") {
     const people = uniqueTokens(task.people || []);
@@ -378,6 +594,11 @@ function getTaskGroupKeys(task: any, groupBy: KanbanGroupBy): string[] {
   return [UNASSIGNED_GROUP];
 }
 
+/**
+ * Handles the getIncomingReferenceTasks function logic.
+ * Input: task: any.
+ * Output: any[].
+ */
 function getIncomingReferenceTasks(task: any): any[] {
   if (!task || !Array.isArray(task.incomingReferences)) {
     return [];
@@ -396,6 +617,11 @@ function getIncomingReferenceTasks(task: any): any[] {
   return unique;
 }
 
+/**
+ * Handles the renderKanbanDescription function logic.
+ * Input: { task, state, renderMarkdown, onToggleCheckbox }: { task: any; state: any; renderMarkdown?: ((text: string, options?: any) => string) | null; onToggleCheckbox?: ((lineIndex: number, checked: boolean) => void) | null; }.
+ * Output: HTMLElement | null.
+ */
 function renderKanbanDescription(
   { task, state, renderMarkdown, onToggleCheckbox }: {
     task: any;
@@ -423,6 +649,11 @@ function renderKanbanDescription(
   const { node } = renderTaskDescriptionNode(descriptionOptions);
 
   decorateDescriptionReferences(node, {
+    /**
+     * Handles the resolveTaskByName function logic.
+     * Input: name: string.
+     * Output: result produced by this function.
+     */
     resolveTaskByName: (name: string) =>
       state.allTasks?.find((item: any) => (item?.name || "").trim() === name) || null,
   });
@@ -436,6 +667,11 @@ function renderKanbanDescription(
     triggerEvent: "change",
     disableWhenUnavailable: true,
     invalidTabIndex: -1,
+    /**
+     * Handles the onToggle function logic.
+     * Input: { lineIndex, checked }.
+     * Output: result produced by this function.
+     */
     onToggle: ({ lineIndex, checked }) => {
       if (typeof onToggleCheckbox === "function") {
         onToggleCheckbox(lineIndex, checked);
@@ -446,6 +682,11 @@ function renderKanbanDescription(
   return node;
 }
 
+/**
+ * Handles the createReferenceIndicator function logic.
+ * Input: task: any, { selectTask, getTaskById }: { selectTask: (task: any) => void; getTaskById: (taskId: string) => any; }.
+ * Output: HTMLElement | null.
+ */
 function createReferenceIndicator(
   task: any,
   { selectTask, getTaskById }: { selectTask: (task: any) => void; getTaskById: (taskId: string) => any; }
@@ -506,6 +747,11 @@ function createReferenceIndicator(
   return menu;
 }
 
+/**
+ * Handles the renderKanbanCardContent function logic.
+ * Input: { card, task, state, renderMarkdown, onToggleCheckbox, matchesSearchTask, filtersActive, matchesFilters, selectTask, getTaskById, }: any.
+ * Output: void.
+ */
 function renderKanbanCardContent({
   card,
   task,
@@ -637,6 +883,11 @@ function renderKanbanCardContent({
   }
 }
 
+/**
+ * Handles the bindKanbanCard function logic.
+ * Input: { card, state, selectTask, onEditTask, getTaskById, updateTaskState, }: any.
+ * Output: void.
+ */
 function bindKanbanCard({
   card,
   state,
@@ -845,6 +1096,11 @@ function bindKanbanCard({
   });
 }
 
+/**
+ * Handles the createKanbanColumn function logic.
+ * Input: { state, stateTag, tasks, selectTask, onEditTask, matchesSearchTask, filtersActive, matchesFilters, renderMarkdown, onToggleCheckbox, updateTaskState, existingCards, getTaskById, }: any.
+ * Output: HTMLDivElement.
+ */
 function createKanbanColumn({
   state,
   stateTag,
@@ -942,6 +1198,11 @@ function createKanbanColumn({
   return column;
 }
 
+/**
+ * Handles the buildKanban function logic.
+ * Input: { state, dom, renderMarkdown, selectTask, onEditTask, matchesSearchTask, filtersActive, matchesFilters, updateTaskState, onToggleCheckbox, groupBy = "none", }: BuildKanbanOptions.
+ * Output: void.
+ */
 export function buildKanban({
   state,
   dom,
@@ -960,6 +1221,11 @@ export function buildKanban({
   }
   ensureReferenceDropdownHandlers();
   closeReferenceDropdown();
+  /**
+   * Handles the getTaskById function logic.
+   * Input: taskId: string.
+   * Output: result produced by this function.
+   */
   const getTaskById = (taskId: string) =>
     state.allTasks.find((item: any) => item.id === taskId) || null;
   const normalizedGroupBy = normalizeGroupBy(groupBy);
@@ -996,6 +1262,11 @@ export function buildKanban({
   const states = [...stateOrder, ...extraStates];
   const stateSet = new Set(states);
   const filterEnabled = filtersActive();
+  /**
+   * Handles the shouldIncludeTask function logic.
+   * Input: task: any.
+   * Output: result produced by this function.
+   */
   const shouldIncludeTask = (task: any) => !filterEnabled || matchesFilters(task);
   if (normalizedGroupBy === "none") {
     const tasksByState = new Map();
@@ -1141,6 +1412,11 @@ export function buildKanban({
   });
 }
 
+/**
+ * Handles the updateTaskState function logic.
+ * Input: { task, newState, dom, sync, applyEditorValue }: UpdateTaskStateOptions.
+ * Output: void.
+ */
 export function updateTaskState(
   { task, newState, dom, sync, applyEditorValue }: UpdateTaskStateOptions
 ): void {
@@ -1207,6 +1483,11 @@ export function updateTaskState(
   sync();
 }
 
+/**
+ * Handles the updateTaskToken function logic.
+ * Input: { task, token, action, dom, sync, applyEditorValue }: UpdateTaskTokenOptions.
+ * Output: void.
+ */
 export function updateTaskToken(
   { task, token, action, dom, sync, applyEditorValue }: UpdateTaskTokenOptions
 ): void {

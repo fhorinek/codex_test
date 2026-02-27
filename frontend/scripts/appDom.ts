@@ -1,5 +1,10 @@
 // @ts-check
 
+/**
+ * Module: DOM element lookup and typed bindings used by the frontend app module.
+ */
+
+// Defines the AppDomSpecific type structure for this module.
 type AppDomSpecific = {
   editor: HTMLTextAreaElement | null;
   fileInput: HTMLInputElement | null;
@@ -90,6 +95,11 @@ type AppDomSpecific = {
   spellcheckToggleModal: HTMLButtonElement | null;
 };
 
+/**
+ * Handles the createAppDomRaw function logic.
+ * Input: doc: Document = document.
+ * Output: result produced by this function.
+ */
 function createAppDomRaw(doc: Document = document) {
   return {
     editor: doc.getElementById("task-editor"),
@@ -296,8 +306,14 @@ function createAppDomRaw(doc: Document = document) {
   };
 }
 
+// Defines the AppDom type structure for this module.
 export type AppDom = ReturnType<typeof createAppDomRaw> & AppDomSpecific;
 
+/**
+ * Handles the createAppDom function logic.
+ * Input: doc: Document = document.
+ * Output: AppDom.
+ */
 export function createAppDom(doc: Document = document): AppDom {
   return createAppDomRaw(doc) as AppDom;
 }

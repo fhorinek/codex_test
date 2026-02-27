@@ -1,31 +1,131 @@
+/**
+ * Module: Synchronization engine for remote state, connection lifecycle, and retries.
+ */
+
+// Defines the SyncEngineOptions type structure for this module.
 type SyncEngineOptions = {
   collab: any;
   dom: any;
   remoteBase: string;
   wsBase: string;
+  /**
+   * Handles the getEditorController function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   getEditorController: () => any;
+  /**
+   * Handles the applyAuthFromInputs function logic.
+   * Input: options?: any.
+   * Output: result produced by this function.
+   */
   applyAuthFromInputs: (options?: any) => void;
+  /**
+   * Handles the closeSpacesModal function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   closeSpacesModal: () => void;
+  /**
+   * Handles the loadCollabModules function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   loadCollabModules: () => Promise<any>;
+  /**
+   * Handles the stopOfflineDraftTimer function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   stopOfflineDraftTimer: () => void;
+  /**
+   * Handles the startIdleWatch function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   startIdleWatch: () => void;
+  /**
+   * Handles the stopIdleWatch function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   stopIdleWatch: () => void;
+  /**
+   * Handles the setConnectionStatus function logic.
+   * Input: status: string.
+   * Output: result produced by this function.
+   */
   setConnectionStatus: (status: string) => void;
+  /**
+   * Handles the markActivity function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   markActivity: () => void;
+  /**
+   * Handles the publishCollabIdentityAwareness function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   publishCollabIdentityAwareness: () => void;
+  /**
+   * Handles the updateConnectButtonLabel function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   updateConnectButtonLabel: () => void;
+  /**
+   * Handles the updateBoardConnectionLabel function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   updateBoardConnectionLabel: () => void;
+  /**
+   * Handles the startPresenceHeartbeat function logic.
+   * Input: spaceId: any.
+   * Output: result produced by this function.
+   */
   startPresenceHeartbeat: (spaceId: any) => void;
+  /**
+   * Handles the stopPresenceHeartbeat function logic.
+   * Input: spaceId: any.
+   * Output: result produced by this function.
+   */
   stopPresenceHeartbeat: (spaceId: any) => void;
+  /**
+   * Handles the authHeaders function logic.
+   * Input: options?: any.
+   * Output: result produced by this function.
+   */
   authHeaders: (options?: any) => Record<string, string>;
+  /**
+   * Handles the forceEditorRefresh function logic.
+   * Input: value: string.
+   * Output: result produced by this function.
+   */
   forceEditorRefresh: (value: string) => void;
+  /**
+   * Handles the syncEditorState function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   syncEditorState: () => void;
+  /**
+   * Handles the trackOfflineDraftChange function logic.
+   * Input: value: string.
+   * Output: result produced by this function.
+   */
   trackOfflineDraftChange: (value: string) => void;
   fetchImpl?: typeof fetch;
   requestAnimationFrameImpl?: (callback: FrameRequestCallback) => number;
   navigatorRef?: Navigator | null;
 };
 
+/**
+ * Handles the createSyncEngine function logic.
+ * Input: options: SyncEngineOptions.
+ * Output: result produced by this function.
+ */
 export function createSyncEngine(options: SyncEngineOptions) {
   const {
     collab,
@@ -55,11 +155,21 @@ export function createSyncEngine(options: SyncEngineOptions) {
     navigatorRef = typeof navigator !== "undefined" ? navigator : null,
   } = options;
 
+  /**
+   * Handles the getEditorValueFallback function logic.
+   * Input: none.
+   * Output: string.
+   */
   function getEditorValueFallback(): string {
     const editorController = getEditorController();
     return editorController?.getValue?.() || dom?.editor?.value || "";
   }
 
+  /**
+   * Handles the disconnectSpace function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   function disconnectSpace() {
     stopPresenceHeartbeat(collab.spaceId);
     stopIdleWatch();
@@ -94,6 +204,11 @@ export function createSyncEngine(options: SyncEngineOptions) {
     updateBoardConnectionLabel();
   }
 
+  /**
+   * Handles the hydrateFromRemote function logic.
+   * Input: spaceId: any, ytext: any.
+   * Output: result produced by this function.
+   */
   async function hydrateFromRemote(spaceId: any, ytext: any) {
     try {
       const normalizedPath =
@@ -134,6 +249,11 @@ export function createSyncEngine(options: SyncEngineOptions) {
     }
   }
 
+  /**
+   * Handles the scheduleCollabSync function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   function scheduleCollabSync() {
     if (collab.syncScheduled) {
       return;
@@ -156,6 +276,11 @@ export function createSyncEngine(options: SyncEngineOptions) {
     });
   }
 
+  /**
+   * Handles the connectToSpace function logic.
+   * Input: spaceId: any, spacePath: any = "".
+   * Output: result produced by this function.
+   */
   async function connectToSpace(spaceId: any, spacePath: any = "") {
     const editorController = getEditorController();
     if (!spaceId || !dom?.editor) {
@@ -195,6 +320,11 @@ export function createSyncEngine(options: SyncEngineOptions) {
     const collabExtension = yCollab(ytext, provider.awareness);
     editorController?.setCollabExtensions?.([collabExtension]);
     const binding = {
+      /**
+       * Handles the destroy function logic.
+       * Input: none.
+       * Output: result produced by this function.
+       */
       destroy() {
         const currentEditorController = getEditorController();
         currentEditorController?.setCollabExtensions?.([]);

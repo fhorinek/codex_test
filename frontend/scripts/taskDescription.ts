@@ -1,14 +1,21 @@
+/**
+ * Module: Task description rendering and decoration helpers for markdown and tokens.
+ */
+
+// Defines the TaskDescriptionSource type structure for this module.
 type TaskDescriptionSource = {
   description?: unknown[];
   descriptionLineIndexes?: number[];
   indent?: number;
 };
 
+// Defines the TaskDescriptionBuildOptions type structure for this module.
 type TaskDescriptionBuildOptions = {
   showState?: boolean;
   showEstimate?: boolean;
 };
 
+// Defines the TaskDescriptionRenderOptions type structure for this module.
 type TaskDescriptionRenderOptions = {
   task: TaskDescriptionSource | null | undefined;
   renderMarkdown?: ((text: string, options?: any) => string) | null;
@@ -21,6 +28,7 @@ type TaskDescriptionRenderOptions = {
   showEstimate?: boolean;
 };
 
+// Defines the DescriptionReferenceDecorateOptions type structure for this module.
 type DescriptionReferenceDecorateOptions = {
   resolveTaskByName?: ((name: string) => any) | null;
   unresolvedTitle?: string;
@@ -30,6 +38,7 @@ type DescriptionReferenceDecorateOptions = {
   stopPropagationOnClick?: boolean;
 };
 
+// Defines the DescriptionPillDecorateOptions type structure for this module.
 type DescriptionPillDecorateOptions = {
   tagMeta?: Map<string, any>;
   peopleMeta?: Map<string, any>;
@@ -39,6 +48,7 @@ type DescriptionPillDecorateOptions = {
   onPill?: ((params: { pill: HTMLElement; type: string; value: string }) => void) | null;
 };
 
+// Defines the DescriptionCheckboxWireOptions type structure for this module.
 type DescriptionCheckboxWireOptions = {
   selector?: string;
   lineFromClosest?: boolean;
@@ -49,10 +59,13 @@ type DescriptionCheckboxWireOptions = {
   onToggle?: ((params: { checkbox: HTMLInputElement; lineIndex: number; checked: boolean; event: Event }) => void) | null;
 };
 
+// Stores the STATE_TOKEN_RE module constant.
 const STATE_TOKEN_RE = /(^|\s)![^\s#@~]+(?=\s|$)/g;
+// Stores the ESTIMATE_TOKEN_RE module constant.
 const ESTIMATE_TOKEN_RE = /(^|\s)~\d+(?:\.\d+)?(?=\s|$)/g;
 
 /**
+ * Builds a normalized multi-line description string from task description lines.
  * @param {TaskDescriptionSource | null | undefined} task
  * @param {TaskDescriptionBuildOptions} [options]
  * @returns {string}
@@ -81,6 +94,7 @@ export function buildTaskDescriptionText(task: TaskDescriptionSource | null | un
 }
 
 /**
+ * Creates a rendered description node and returns it with the plain description text.
  * @param {TaskDescriptionRenderOptions} options
  * @returns {{ node: HTMLElement, descriptionText: string }}
  */
@@ -120,6 +134,7 @@ export function renderTaskDescriptionNode(options: TaskDescriptionRenderOptions)
 }
 
 /**
+ * Resolves and wires clickable reference elements inside a description node.
  * @param {ParentNode} node
  * @param {DescriptionReferenceDecorateOptions} [options]
  */
@@ -170,6 +185,7 @@ export function decorateDescriptionReferences(node: ParentNode, options: Descrip
 }
 
 /**
+ * Applies metadata, selection state, and handlers to inline tag/person/jira pills.
  * @param {ParentNode} node
  * @param {DescriptionPillDecorateOptions} [options]
  */
@@ -225,6 +241,7 @@ export function decorateDescriptionPills(node: ParentNode, options: DescriptionP
 }
 
 /**
+ * Attaches checkbox toggle handlers for description checklist items.
  * @param {ParentNode} node
  * @param {DescriptionCheckboxWireOptions} [options]
  */

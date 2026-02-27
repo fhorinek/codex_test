@@ -1,10 +1,17 @@
 // @ts-check
 
+/**
+ * Module: Task command parsing and command execution helpers.
+ */
+
 import { normalizeContent } from "./formatter.js";
 import { parseJiraTitle } from "./task.js";
 
+// Defines the TaskBlock type structure for this module.
 type TaskBlock = { start: number; end: number; depth: number; indent: string };
+// Defines the TaskBlockRange type structure for this module.
 type TaskBlockRange = { start: number; end: number };
+// Defines the ParsedTaskBody type structure for this module.
 type ParsedTaskBody = {
   descriptionText: string;
   tags: string[];
@@ -12,11 +19,13 @@ type ParsedTaskBody = {
   state: string | null;
   storyPoints: number | null;
 };
+// Defines the TaskEditDraftTask type structure for this module.
 type TaskEditDraftTask = {
   lineIndex?: number;
   name?: string;
   jiraKey?: string | null;
 };
+// Defines the TaskEditDraft type structure for this module.
 type TaskEditDraft = {
   range: { start: number; end: number };
   indent: string;
@@ -24,16 +33,34 @@ type TaskEditDraft = {
   title: string;
   bodyText: string;
 };
+// Defines the TaskCommandTask type structure for this module.
 type TaskCommandTask = {
   id?: string | null;
   lineIndex?: number;
   parent?: TaskCommandTask | null;
 };
+// Defines the TaskCommandControllerOptions type structure for this module.
 type TaskCommandControllerOptions = {
+  /**
+   * Handles the getEditorValue function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   getEditorValue: () => string;
+  /**
+   * Handles the applyEditorValue function logic.
+   * Input: value: string.
+   * Output: result produced by this function.
+   */
   applyEditorValue: (value: string) => void;
+  /**
+   * Handles the syncEditorState function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   syncEditorState: () => void;
 };
+// Defines the SaveTaskEditParams type structure for this module.
 type SaveTaskEditParams = {
   taskRange: { start: number; end: number } | null | undefined;
   rawTitle: string;
@@ -42,18 +69,34 @@ type SaveTaskEditParams = {
   fallbackJiraKey?: string | null;
   creatingTask?: boolean;
 };
+// Defines the SaveTaskEditResult type structure for this module.
 type SaveTaskEditResult =
   | { ok: true; title: string; lineIndex: number }
   | { ok: false; error: string };
 
+/**
+ * Handles the lineAt function logic.
+ * Input: lines: string[], index: number.
+ * Output: string.
+ */
 function lineAt(lines: string[], index: number): string {
   return lines[index] ?? "";
 }
 
+/**
+ * Handles the escapeRegExp function logic.
+ * Input: value: string.
+ * Output: string.
+ */
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Handles the parseTaskTitleFromLine function logic.
+ * Input: line: string.
+ * Output: string.
+ */
 export function parseTaskTitleFromLine(line: string): string {
   const raw = typeof line === "string" ? line : "";
   const match = raw.match(/^\s*%\s*(.*)$/);
@@ -64,6 +107,11 @@ export function parseTaskTitleFromLine(line: string): string {
   return parsed.title || "";
 }
 
+/**
+ * Handles the renameTaskReferencesInLines function logic.
+ * Input: lines: string[], oldTitle: string, newTitle: string.
+ * Output: boolean.
+ */
 export function renameTaskReferencesInLines(lines: string[], oldTitle: string, newTitle: string): boolean {
   if (!Array.isArray(lines)) {
     return false;
@@ -85,6 +133,11 @@ export function renameTaskReferencesInLines(lines: string[], oldTitle: string, n
   return changed;
 }
 
+/**
+ * Handles the insertTokenIntoBody function logic.
+ * Input: text: string, token: string.
+ * Output: string.
+ */
 export function insertTokenIntoBody(text: string, token: string): string {
   const tokenMatch = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`);
   if (tokenMatch.test(text)) {
@@ -112,6 +165,11 @@ export function insertTokenIntoBody(text: string, token: string): string {
   return lines.join("\n");
 }
 
+/**
+ * Handles the insertStateIntoBody function logic.
+ * Input: text: string, stateToken: string.
+ * Output: string.
+ */
 export function insertStateIntoBody(text: string, stateToken: string): string {
   if (!stateToken) {
     return text;
@@ -133,6 +191,11 @@ export function insertStateIntoBody(text: string, stateToken: string): string {
   return cleaned.join("\n");
 }
 
+/**
+ * Handles the updateCheckboxInBody function logic.
+ * Input: text: string, lineIndex: number, checked: boolean.
+ * Output: string.
+ */
 export function updateCheckboxInBody(text: string, lineIndex: number, checked: boolean): string {
   const lines = text.replace(/\r/g, "").split("\n");
   if (!Number.isFinite(lineIndex) || lineIndex < 0 || lineIndex >= lines.length) {
@@ -147,6 +210,11 @@ export function updateCheckboxInBody(text: string, lineIndex: number, checked: b
   return lines.join("\n");
 }
 
+/**
+ * Handles the removeTokenFromBody function logic.
+ * Input: text: string, token: string.
+ * Output: string.
+ */
 export function removeTokenFromBody(text: string, token: string): string {
   const tokenReplace = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
   const lines = text
@@ -159,6 +227,11 @@ export function removeTokenFromBody(text: string, token: string): string {
   return lines.join("\n");
 }
 
+/**
+ * Handles the removeStateFromBody function logic.
+ * Input: text: string.
+ * Output: string.
+ */
 export function removeStateFromBody(text: string): string {
   const stateReplace = /(^|\s)![^\s#@]+(?=\s|$)/g;
   const lines = text
@@ -171,6 +244,11 @@ export function removeStateFromBody(text: string): string {
   return lines.join("\n");
 }
 
+/**
+ * Handles the adjustIndent function logic.
+ * Input: line: string, deltaSpaces: number.
+ * Output: string.
+ */
 export function adjustIndent(line: string, deltaSpaces: number): string {
   if (!deltaSpaces || !line.trim()) {
     return line;
@@ -183,6 +261,11 @@ export function adjustIndent(line: string, deltaSpaces: number): string {
   return line.slice(removeCount);
 }
 
+/**
+ * Handles the findTaskBlock function logic.
+ * Input: lines: string[], lineIndex: number.
+ * Output: TaskBlock | null.
+ */
 export function findTaskBlock(lines: string[], lineIndex: number): TaskBlock | null {
   const taskLine = lines[lineIndex] || "";
   const match = taskLine.match(/^(\s*)%/);
@@ -206,6 +289,11 @@ export function findTaskBlock(lines: string[], lineIndex: number): TaskBlock | n
   return { start: lineIndex, end, depth, indent };
 }
 
+/**
+ * Handles the getTaskBlockRange function logic.
+ * Input: lines: string[], lineIndex: number.
+ * Output: TaskBlockRange.
+ */
 export function getTaskBlockRange(lines: string[], lineIndex: number): TaskBlockRange {
   let start = lineIndex;
   let end = lineIndex + 1;
@@ -218,6 +306,11 @@ export function getTaskBlockRange(lines: string[], lineIndex: number): TaskBlock
   return { start, end };
 }
 
+/**
+ * Handles the parseTaskBody function logic.
+ * Input: text: string.
+ * Output: ParsedTaskBody.
+ */
 export function parseTaskBody(text: string): ParsedTaskBody {
   const lines = text.replace(/\r/g, "").split("\n");
   const tags = new Set<string>();
@@ -268,6 +361,11 @@ export function parseTaskBody(text: string): ParsedTaskBody {
   };
 }
 
+/**
+ * Handles the buildTaskEditDraft function logic.
+ * Input: lines: string[], task: TaskEditDraftTask | null | undefined.
+ * Output: TaskEditDraft | null.
+ */
 export function buildTaskEditDraft(lines: string[], task: TaskEditDraftTask | null | undefined): TaskEditDraft | null {
   if (!Array.isArray(lines) || !task || !Number.isInteger(task.lineIndex)) {
     return null;
@@ -291,6 +389,11 @@ export function buildTaskEditDraft(lines: string[], task: TaskEditDraftTask | nu
   };
 }
 
+/**
+ * Handles the getTaskCreateRange function logic.
+ * Input: lines: string[].
+ * Output: TaskBlockRange.
+ */
 export function getTaskCreateRange(lines: string[]): TaskBlockRange {
   if (!Array.isArray(lines) || !lines.length) {
     return { start: 0, end: 0 };
@@ -310,6 +413,11 @@ export function getTaskCreateRange(lines: string[]): TaskBlockRange {
   return { start: insertIndex, end: insertIndex };
 }
 
+/**
+ * Handles the buildTaskCreateDraft function logic.
+ * Input: lines: string[].
+ * Output: TaskEditDraft.
+ */
 export function buildTaskCreateDraft(lines: string[]): TaskEditDraft {
   return {
     range: getTaskCreateRange(lines),
@@ -320,12 +428,22 @@ export function buildTaskCreateDraft(lines: string[]): TaskEditDraft {
   };
 }
 
+/**
+ * Handles the normalizeBoardNameInput function logic.
+ * Input: value: string.
+ * Output: string.
+ */
 export function normalizeBoardNameInput(value: string): string {
   const raw = typeof value === "string" ? value : "";
   const trimmed = raw.trim().replace(/:+\s*$/, "").trim();
   return trimmed || "Task Script";
 }
 
+/**
+ * Handles the applyBoardNameToText function logic.
+ * Input: sourceText: string, nextBoardName: string.
+ * Output: string.
+ */
 export function applyBoardNameToText(sourceText: string, nextBoardName: string): string {
   const normalizedBoardName = normalizeBoardNameInput(nextBoardName);
   const headerLine = `${normalizedBoardName}:`;
@@ -343,9 +461,19 @@ export function applyBoardNameToText(sourceText: string, nextBoardName: string):
   return lines.join("\n");
 }
 
+/**
+ * Handles the createTaskCommandController function logic.
+ * Input: options: TaskCommandControllerOptions.
+ * Output: result produced by this function.
+ */
 export function createTaskCommandController(options: TaskCommandControllerOptions) {
   const { getEditorValue, applyEditorValue, syncEditorState } = options;
 
+  /**
+   * Handles the moveTaskAsSubtask function logic.
+   * Input: sourceTask: TaskCommandTask | null | undefined, targetTask: TaskCommandTask | null | undefined.
+   * Output: void.
+   */
   function moveTaskAsSubtask(sourceTask: TaskCommandTask | null | undefined, targetTask: TaskCommandTask | null | undefined): void {
     if (!sourceTask || !targetTask || sourceTask.id === targetTask.id) {
       return;
@@ -481,6 +609,11 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     return true;
   }
 
+  /**
+   * Handles the toggleCheckboxAtLine function logic.
+   * Input: lineIndex: number, checked: boolean | null = null.
+   * Output: void.
+   */
   function toggleCheckboxAtLine(lineIndex: number, checked: boolean | null = null): void {
     const lines = getEditorValue().split("\n");
     const line = lineAt(lines, lineIndex);
@@ -504,6 +637,11 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     syncEditorState();
   }
 
+  /**
+   * Handles the deleteTaskAtLine function logic.
+   * Input: lineIndex: number.
+   * Output: number | null.
+   */
   function deleteTaskAtLine(lineIndex: number): number | null {
     const lines = getEditorValue().split("\n");
     const block = findTaskBlock(lines, lineIndex);
@@ -516,6 +654,11 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     return Math.max(0, block.start - 1);
   }
 
+  /**
+   * Handles the deleteTaskKeepSubtasksAtLine function logic.
+   * Input: lineIndex: number.
+   * Output: number | null.
+   */
   function deleteTaskKeepSubtasksAtLine(lineIndex: number): number | null {
     const lines = getEditorValue().split("\n");
     const block = findTaskBlock(lines, lineIndex);
@@ -563,6 +706,11 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     return Math.max(0, block.start - 1);
   }
 
+  /**
+   * Handles the saveTaskEdit function logic.
+   * Input: params: SaveTaskEditParams.
+   * Output: SaveTaskEditResult.
+   */
   function saveTaskEdit(params: SaveTaskEditParams): SaveTaskEditResult {
     const {
       taskRange,

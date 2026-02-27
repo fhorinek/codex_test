@@ -1,3 +1,5 @@
+# Module: HTTP and websocket backend server with auth, spaces, history, and collaboration APIs.
+
 import asyncio
 import base64
 import json
@@ -38,17 +40,26 @@ from jira.config import (
     save_jira_config,
 )
 
+# Stores the ROOT_DIR module constant.
 ROOT_DIR = Path(__file__).resolve().parents[1]
+# Stores the FRONTEND_DIR module constant.
 FRONTEND_DIR = ROOT_DIR / "frontend"
+# Stores the FRONTEND_DIST_DIR module constant.
 FRONTEND_DIST_DIR = FRONTEND_DIR / "dist"
+# Stores the FRONTEND_NODE_MODULES_DIR module constant.
 FRONTEND_NODE_MODULES_DIR = FRONTEND_DIR / "node_modules"
+# Stores the FRONTEND_STATIC_DIR module constant.
 FRONTEND_STATIC_DIR = FRONTEND_DIST_DIR if FRONTEND_DIST_DIR.exists() else FRONTEND_DIR
+# Stores the SPACES_DIR module constant.
 SPACES_DIR = Path(__file__).resolve().parent / "spaces"
 SPACES_DIR.mkdir(parents=True, exist_ok=True)
+# Stores the YSTORE_DIR module constant.
 YSTORE_DIR = Path(__file__).resolve().parent / "ystore"
 YSTORE_DIR.mkdir(parents=True, exist_ok=True)
+# Stores the HISTORY_DIR module constant.
 HISTORY_DIR = Path(__file__).resolve().parent / "history"
 HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+# Stores the SESSIONS_FILE module constant.
 SESSIONS_FILE = Path(__file__).resolve().parent / "sessions.json"
 
 logging.basicConfig(
@@ -62,27 +73,44 @@ try:
 except NameError:  # pragma: no cover - Python < 3.11
     BASE_EXCEPTION_GROUP_TYPE = None
 
+# Stores the SPACE_ID_RE module constant.
 SPACE_ID_RE = re.compile(r"[a-zA-Z0-9_-]+")
+# Stores the VALID_ROLES module constant.
 VALID_ROLES = {"admin", "manager", "user"}
+# Stores the PASSWORD_SALT_BYTES module constant.
 PASSWORD_SALT_BYTES = 8
+# Stores the DEFAULT_BOOTSTRAP_USERNAME module constant.
 DEFAULT_BOOTSTRAP_USERNAME = "admin"
+# Stores the DEFAULT_BOOTSTRAP_PASSWORD module constant.
 DEFAULT_BOOTSTRAP_PASSWORD = "admin"
+# Stores the SESSION_COOKIE_NAME module constant.
 SESSION_COOKIE_NAME = "task_session"
+# Stores the SESSION_TTL_SECONDS module constant.
 SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
+# Stores the PERSONAL_FOLDER_NAME module constant.
 PERSONAL_FOLDER_NAME = "personal"
+# Stores the JIRA_DAEMON_DISPLAY_NAME module constant.
 JIRA_DAEMON_DISPLAY_NAME = "Jira Daemon"
 
+# Stores the PRESENCE_TTL module constant.
 PRESENCE_TTL = 40
+# Stores the AWARENESS_TTL_MS module constant.
 AWARENESS_TTL_MS = PRESENCE_TTL * 1000
 presence: Dict[str, Dict[str, float]] = {}
 space_save_tasks: Dict[str, asyncio.Task] = {}
+# Stores the SPACE_SAVE_DELAY module constant.
 SPACE_SAVE_DELAY = 0.5
+# Stores the HISTORY_AUTO_MIN_INTERVAL_SECONDS module constant.
 HISTORY_AUTO_MIN_INTERVAL_SECONDS = 5 * 60
+# Stores the SESSIONS_LOCK module constant.
 SESSIONS_LOCK = threading.RLock()
+# Stores the USERS_STORE_LOCK module constant.
 USERS_STORE_LOCK = threading.RLock()
+# Stores the HISTORY_LOCK module constant.
 HISTORY_LOCK = threading.RLock()
 
 
+# Defines the AuthUser structure used by this module.
 @dataclass(frozen=True)
 class AuthUser:
     username: str
@@ -92,12 +120,18 @@ class AuthUser:
     must_change_password: bool = False
 
 
+# Handles the sanitize_space function logic.
+# Input: space_id: str.
+# Output: str.
 def sanitize_space(space_id: str) -> str:
     if not re.fullmatch(SPACE_ID_RE, space_id or ""):
         raise HTTPException(status_code=400, detail="Invalid space id.")
     return space_id
 
 
+# Handles the normalize_username function logic.
+# Input: username: str.
+# Output: str.
 def normalize_username(username: str) -> str:
     cleaned = (username or "").strip()
     if not re.fullmatch(SPACE_ID_RE, cleaned):
@@ -105,11 +139,17 @@ def normalize_username(username: str) -> str:
     return cleaned
 
 
+# Handles the normalize_role function logic.
+# Input: value: Any.
+# Output: str.
 def normalize_role(value: Any) -> str:
     role = value.strip().lower() if isinstance(value, str) else ""
     return role if role in VALID_ROLES else "user"
 
 
+# Handles the normalize_display_name function logic.
+# Input: username: str, value: Any.
+# Output: str.
 def normalize_display_name(username: str, value: Any) -> str:
     if isinstance(value, str):
         cleaned = value.strip()
@@ -118,6 +158,9 @@ def normalize_display_name(username: str, value: Any) -> str:
     return username
 
 
+# Handles the sanitize_folder_name function logic.
+# Input: folder_name: str.
+# Output: str.
 def sanitize_folder_name(folder_name: str) -> str:
     cleaned = (folder_name or "").strip().replace("\\", "/")
     cleaned = re.sub(r"/+", "/", cleaned).strip("/")
@@ -129,6 +172,9 @@ def sanitize_folder_name(folder_name: str) -> str:
     return "/".join(parts)
 
 
+# Handles the normalize_folder_name function logic.
+# Input: value: Any.
+# Output: str.
 def normalize_folder_name(value: Any) -> str:
     if not isinstance(value, str):
         return ""
@@ -142,11 +188,17 @@ def normalize_folder_name(value: Any) -> str:
     return "/".join(parts)
 
 
+# Handles the is_personal_folder_name function logic.
+# Input: folder_name: str.
+# Output: bool.
 def is_personal_folder_name(folder_name: str) -> bool:
     normalized = normalize_folder_name(folder_name)
     return normalized == PERSONAL_FOLDER_NAME or normalized.startswith(f"{PERSONAL_FOLDER_NAME}/")
 
 
+# Handles the normalize_space_list function logic.
+# Input: value: Any.
+# Output: List[str].
 def normalize_space_list(value: Any) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -172,11 +224,17 @@ def normalize_space_list(value: Any) -> List[str]:
     return sorted(normalized)
 
 
+# Handles the md5_digest function logic.
+# Input: password: str, salt: str.
+# Output: str.
 def md5_digest(password: str, salt: str) -> str:
     data = f"{salt}:{password}".encode("utf-8")
     return hashlib.md5(data).hexdigest()
 
 
+# Handles the build_password_record function logic.
+# Input: password: str.
+# Output: Dict[str, str].
 def build_password_record(password: str) -> Dict[str, str]:
     salt = secrets.token_hex(PASSWORD_SALT_BYTES)
     digest = md5_digest(password, salt)
@@ -186,10 +244,16 @@ def build_password_record(password: str) -> Dict[str, str]:
     }
 
 
+# Handles the is_hidden_system_user function logic.
+# Input: username: str.
+# Output: bool.
 def is_hidden_system_user(username: str) -> bool:
     return username == JIRA_DAEMON_USERNAME
 
 
+# Handles the normalize_password_record function logic.
+# Input: raw: Any.
+# Output: Dict[str, str].
 def normalize_password_record(raw: Any) -> Dict[str, str]:
     if isinstance(raw, dict):
         salt = raw.get("password_salt")
@@ -212,6 +276,9 @@ def normalize_password_record(raw: Any) -> Dict[str, str]:
     return build_password_record(DEFAULT_BOOTSTRAP_PASSWORD)
 
 
+# Handles the normalize_user_record function logic.
+# Input: username: str, raw: Any.
+# Output: Dict[str, Any].
 def normalize_user_record(username: str, raw: Any) -> Dict[str, Any]:
     source = raw if isinstance(raw, dict) else {}
     role = normalize_role(source.get("role"))
@@ -229,6 +296,9 @@ def normalize_user_record(username: str, raw: Any) -> Dict[str, Any]:
     }
 
 
+# Handles the verify_password function logic.
+# Input: user_record: Dict[str, Any], password: str.
+# Output: bool.
 def verify_password(user_record: Dict[str, Any], password: str) -> bool:
     if not isinstance(password, str):
         return False
@@ -239,6 +309,9 @@ def verify_password(user_record: Dict[str, Any], password: str) -> bool:
     return md5_digest(password, salt) == digest
 
 
+# Handles the _atomic_write_text function logic.
+# Input: path: Path, content: str.
+# Output: None.
 def _atomic_write_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -256,6 +329,22 @@ def _atomic_write_text(path: Path, content: str) -> None:
     os.replace(temp_name, path)
 
 
+# Handles the run_blocking_io function logic.
+# Input: func, *args: Any, **kwargs: Any.
+# Output: Any.
+async def run_blocking_io(func, *args: Any, **kwargs: Any) -> Any:
+    to_thread = getattr(asyncio, "to_thread", None)
+    if callable(to_thread):
+        return await to_thread(func, *args, **kwargs)
+    loop = asyncio.get_running_loop()
+    if kwargs:
+        return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+    return await loop.run_in_executor(None, func, *args)
+
+
+# Handles the _mask_secret function logic.
+# Input: value: str.
+# Output: str.
 def _mask_secret(value: str) -> str:
     secret = value.strip() if isinstance(value, str) else ""
     if not secret:
@@ -265,6 +354,9 @@ def _mask_secret(value: str) -> str:
     return f"{'*' * max(4, len(secret) - 4)}{secret[-4:]}"
 
 
+# Handles the _load_sessions_data function logic.
+# Input: none.
+# Output: Dict[str, Any].
 def _load_sessions_data() -> Dict[str, Any]:
     with SESSIONS_LOCK:
         if not SESSIONS_FILE.exists():
@@ -287,6 +379,9 @@ def _load_sessions_data() -> Dict[str, Any]:
         return data
 
 
+# Handles the _save_sessions_data function logic.
+# Input: data: Dict[str, Any].
+# Output: None.
 def _save_sessions_data(data: Dict[str, Any]) -> None:
     try:
         with SESSIONS_LOCK:
@@ -298,6 +393,9 @@ def _save_sessions_data(data: Dict[str, Any]) -> None:
         logger.exception("Failed to write sessions to %s", SESSIONS_FILE)
 
 
+# Handles the _cleanup_sessions function logic.
+# Input: data: Dict[str, Any].
+# Output: Tuple[Dict[str, Dict[str, Any]], bool].
 def _cleanup_sessions(data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], bool]:
     changed = False
     now = int(time.time())
@@ -343,6 +441,9 @@ def _cleanup_sessions(data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], 
     return valid, changed
 
 
+# Handles the create_session function logic.
+# Input: username: str.
+# Output: Tuple[str, int].
 def create_session(username: str) -> Tuple[str, int]:
     with SESSIONS_LOCK:
         data = _load_sessions_data()
@@ -361,6 +462,9 @@ def create_session(username: str) -> Tuple[str, int]:
         return token, expires_at
 
 
+# Handles the remove_session function logic.
+# Input: token: Optional[str].
+# Output: None.
 def remove_session(token: Optional[str]) -> None:
     if not token:
         return
@@ -375,6 +479,9 @@ def remove_session(token: Optional[str]) -> None:
             _save_sessions_data(data)
 
 
+# Handles the remove_sessions_for_user function logic.
+# Input: username: str, keep_token: Optional[str] = None.
+# Output: None.
 def remove_sessions_for_user(username: str, keep_token: Optional[str] = None) -> None:
     with SESSIONS_LOCK:
         data = _load_sessions_data()
@@ -393,6 +500,9 @@ def remove_sessions_for_user(username: str, keep_token: Optional[str] = None) ->
             _save_sessions_data(data)
 
 
+# Handles the auth_from_session function logic.
+# Input: token: Optional[str].
+# Output: Optional[AuthUser].
 def auth_from_session(token: Optional[str]) -> Optional[AuthUser]:
     if not token:
         return None
@@ -418,6 +528,9 @@ def auth_from_session(token: Optional[str]) -> Optional[AuthUser]:
         return user_record_to_auth(username, record)
 
 
+# Handles the get_session_last_space function logic.
+# Input: token: Optional[str], auth: AuthUser.
+# Output: str.
 def get_session_last_space(token: Optional[str], auth: AuthUser) -> str:
     if not token:
         return ""
@@ -458,6 +571,9 @@ def get_session_last_space(token: Optional[str], auth: AuthUser) -> str:
         return candidate
 
 
+# Handles the set_session_last_space function logic.
+# Input: token: Optional[str], space_id: str.
+# Output: None.
 def set_session_last_space(token: Optional[str], space_id: str) -> None:
     if not token:
         return
@@ -479,6 +595,9 @@ def set_session_last_space(token: Optional[str], space_id: str) -> None:
             _save_sessions_data(data)
 
 
+# Handles the update_last_space_for_renamed_space function logic.
+# Input: source_id: str, target_id: str.
+# Output: None.
 def update_last_space_for_renamed_space(source_id: str, target_id: str) -> None:
     with SESSIONS_LOCK:
         data = _load_sessions_data()
@@ -494,6 +613,9 @@ def update_last_space_for_renamed_space(source_id: str, target_id: str) -> None:
             _save_sessions_data(data)
 
 
+# Handles the clear_last_space_for_deleted_space function logic.
+# Input: space_id: str.
+# Output: None.
 def clear_last_space_for_deleted_space(space_id: str) -> None:
     with SESSIONS_LOCK:
         data = _load_sessions_data()
@@ -509,6 +631,9 @@ def clear_last_space_for_deleted_space(space_id: str) -> None:
             _save_sessions_data(data)
 
 
+# Handles the _normalize_users_store function logic.
+# Input: raw_users: Any.
+# Output: Tuple[Dict[str, Dict[str, Any]], bool].
 def _normalize_users_store(raw_users: Any) -> Tuple[Dict[str, Dict[str, Any]], bool]:
     users: Dict[str, Dict[str, Any]] = {}
     changed = False
@@ -529,6 +654,9 @@ def _normalize_users_store(raw_users: Any) -> Tuple[Dict[str, Dict[str, Any]], b
     return users, changed
 
 
+# Handles the ensure_personal_space function logic.
+# Input: username: str.
+# Output: None.
 def ensure_personal_space(username: str) -> None:
     ensure_personal_folder()
     target = personal_space_path(username)
@@ -547,11 +675,17 @@ def ensure_personal_space(username: str) -> None:
         target.write_text("", encoding="utf-8")
 
 
+# Handles the ensure_personal_spaces function logic.
+# Input: users: Dict[str, Dict[str, Any]].
+# Output: None.
 def ensure_personal_spaces(users: Dict[str, Dict[str, Any]]) -> None:
     for username in users.keys():
         ensure_personal_space(username)
 
 
+# Handles the load_users_store function logic.
+# Input: none.
+# Output: Dict[str, Dict[str, Any]].
 def load_users_store() -> Dict[str, Dict[str, Any]]:
     with USERS_STORE_LOCK:
         users_data = load_users_config_data()
@@ -579,6 +713,9 @@ def load_users_store() -> Dict[str, Dict[str, Any]]:
         return users
 
 
+# Handles the save_users_store function logic.
+# Input: users: Dict[str, Dict[str, Any]].
+# Output: None.
 def save_users_store(users: Dict[str, Dict[str, Any]]) -> None:
     with USERS_STORE_LOCK:
         users_data = load_users_config_data()
@@ -587,6 +724,9 @@ def save_users_store(users: Dict[str, Dict[str, Any]]) -> None:
         ensure_personal_spaces(users)
 
 
+# Handles the sorted_folder_names function logic.
+# Input: names: Set[str].
+# Output: List[str].
 def sorted_folder_names(names: Set[str]) -> List[str]:
     normalized: Set[str] = set()
     for name in names:
@@ -597,25 +737,40 @@ def sorted_folder_names(names: Set[str]) -> List[str]:
     return [PERSONAL_FOLDER_NAME, *sorted(normalized)]
 
 
+# Handles the personal_folder_path function logic.
+# Input: none.
+# Output: Path.
 def personal_folder_path() -> Path:
     return SPACES_DIR / PERSONAL_FOLDER_NAME
 
 
+# Handles the ensure_personal_folder function logic.
+# Input: none.
+# Output: Path.
 def ensure_personal_folder() -> Path:
     folder = personal_folder_path()
     folder.mkdir(parents=True, exist_ok=True)
     return folder
 
 
+# Handles the folder_path function logic.
+# Input: folder_name: str.
+# Output: Path.
 def folder_path(folder_name: str) -> Path:
     normalized = sanitize_folder_name(folder_name)
     return SPACES_DIR.joinpath(*normalized.split("/"))
 
 
+# Handles the personal_space_path function logic.
+# Input: username: str.
+# Output: Path.
 def personal_space_path(username: str) -> Path:
     return personal_folder_path() / f"{sanitize_space(username)}.txt"
 
 
+# Handles the list_space_folder_names function logic.
+# Input: none.
+# Output: List[str].
 def list_space_folder_names() -> List[str]:
     folders: Set[str] = set()
     ensure_personal_folder()
@@ -632,6 +787,9 @@ def list_space_folder_names() -> List[str]:
     return sorted_folder_names(folders)
 
 
+# Handles the iter_space_files function logic.
+# Input: none.
+# Output: List[Path].
 def iter_space_files() -> List[Path]:
     files: List[Path] = []
     for path in SPACES_DIR.rglob("*.txt"):
@@ -640,6 +798,9 @@ def iter_space_files() -> List[Path]:
     return files
 
 
+# Handles the folder_from_space_path function logic.
+# Input: path: Path.
+# Output: str.
 def folder_from_space_path(path: Path) -> str:
     try:
         rel_parent = path.parent.relative_to(SPACES_DIR)
@@ -651,6 +812,9 @@ def folder_from_space_path(path: Path) -> str:
     return folder_name
 
 
+# Handles the scan_space_files function logic.
+# Input: none.
+# Output: Dict[str, Path].
 def scan_space_files() -> Dict[str, Path]:
     mapping: Dict[str, Path] = {}
     preferred_personal = personal_folder_path()
@@ -673,6 +837,9 @@ def scan_space_files() -> Dict[str, Path]:
     return mapping
 
 
+# Handles the canonical_space_path_for_file function logic.
+# Input: path: Path, users: Optional[Dict[str, Dict[str, Any]]] = None.
+# Output: str.
 def canonical_space_path_for_file(path: Path, users: Optional[Dict[str, Dict[str, Any]]] = None) -> str:
     space_id = normalize_space_id_from_filename(path)
     if not space_id:
@@ -686,6 +853,9 @@ def canonical_space_path_for_file(path: Path, users: Optional[Dict[str, Dict[str
     return f"{folder_name}/{space_id}"
 
 
+# Handles the list_space_entries function logic.
+# Input: users: Optional[Dict[str, Dict[str, Any]]] = None.
+# Output: List[Dict[str, Any]].
 def list_space_entries(users: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     users = users or load_users_store()
     entries: List[Dict[str, Any]] = []
@@ -713,6 +883,9 @@ def list_space_entries(users: Optional[Dict[str, Dict[str, Any]]] = None) -> Lis
     return entries
 
 
+# Handles the find_space_file_by_access_path function logic.
+# Input: space_path_value: str, users: Optional[Dict[str, Dict[str, Any]]] = None,.
+# Output: Optional[Path].
 def find_space_file_by_access_path(
     space_path_value: str,
     users: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -728,6 +901,9 @@ def find_space_file_by_access_path(
     return None
 
 
+# Handles the normalize_space_id_from_filename function logic.
+# Input: path: Path.
+# Output: str.
 def normalize_space_id_from_filename(path: Path) -> str:
     if path.suffix != ".txt":
         return ""
@@ -737,11 +913,17 @@ def normalize_space_id_from_filename(path: Path) -> str:
     return stem
 
 
+# Handles the find_space_file function logic.
+# Input: space_id: str.
+# Output: Optional[Path].
 def find_space_file(space_id: str) -> Optional[Path]:
     safe_id = sanitize_space(space_id)
     return scan_space_files().get(safe_id)
 
 
+# Handles the resolve_space_file function logic.
+# Input: space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None,.
+# Output: Optional[Path].
 def resolve_space_file(
     space_id: str,
     *,
@@ -758,6 +940,9 @@ def resolve_space_file(
     return find_space_file(safe_id)
 
 
+# Handles the folder_for_space function logic.
+# Input: space_id: str, users: Dict[str, Dict[str, Any]], space_path_hint: Optional[str] = None,.
+# Output: str.
 def folder_for_space(
     space_id: str,
     users: Dict[str, Dict[str, Any]],
@@ -774,11 +959,17 @@ def folder_for_space(
     return folder_name
 
 
+# Handles the space_access_path function logic.
+# Input: space_id: str, users: Dict[str, Dict[str, Any]].
+# Output: str.
 def space_access_path(space_id: str, users: Dict[str, Dict[str, Any]]) -> str:
     folder_name = folder_for_space(space_id, users)
     return f"{folder_name}/{space_id}" if folder_name else space_id
 
 
+# Handles the build_space_path_index function logic.
+# Input: users: Dict[str, Dict[str, Any]],.
+# Output: Tuple[Dict[str, str], Set[str]].
 def build_space_path_index(
     users: Dict[str, Dict[str, Any]],
 ) -> Tuple[Dict[str, str], Set[str]]:
@@ -805,6 +996,9 @@ def build_space_path_index(
     return space_by_path, folder_paths
 
 
+# Handles the path_rule_allows_space function logic.
+# Input: rule: str, space_path: str.
+# Output: bool.
 def path_rule_allows_space(rule: str, space_path: str) -> bool:
     if rule.endswith("/*"):
         folder = rule[:-2]
@@ -812,6 +1006,9 @@ def path_rule_allows_space(rule: str, space_path: str) -> bool:
     return rule == space_path
 
 
+# Handles the update_access_paths_for_space_change function logic.
+# Input: old_space_path: str, new_space_path: str,.
+# Output: None.
 def update_access_paths_for_space_change(
     old_space_path: str,
     new_space_path: str,
@@ -855,6 +1052,9 @@ def update_access_paths_for_space_change(
             save_users_store(users)
 
 
+# Handles the user_record_to_auth function logic.
+# Input: username: str, record: Dict[str, Any].
+# Output: AuthUser.
 def user_record_to_auth(username: str, record: Dict[str, Any]) -> AuthUser:
     return AuthUser(
         username=username,
@@ -865,6 +1065,9 @@ def user_record_to_auth(username: str, record: Dict[str, Any]) -> AuthUser:
     )
 
 
+# Handles the authenticate function logic.
+# Input: username: str, password: str.
+# Output: Optional[AuthUser].
 def authenticate(username: str, password: str) -> Optional[AuthUser]:
     users = load_users_store()
     record = users.get(username)
@@ -875,6 +1078,9 @@ def authenticate(username: str, password: str) -> Optional[AuthUser]:
     return user_record_to_auth(username, record)
 
 
+# Handles the parse_basic_auth function logic.
+# Input: authorization: Optional[str].
+# Output: Optional[Tuple[str, str]].
 def parse_basic_auth(authorization: Optional[str]) -> Optional[Tuple[str, str]]:
     if not authorization or not authorization.startswith("Basic "):
         return None
@@ -889,6 +1095,9 @@ def parse_basic_auth(authorization: Optional[str]) -> Optional[Tuple[str, str]]:
     return username.strip(), password
 
 
+# Handles the require_auth function logic.
+# Input: request: Request, authorization: Optional[str] = Header(default=None), user: Optional[str] = Query(default=None), password: Optional[str] = Query(default=None),.
+# Output: AuthUser.
 def require_auth(
     request: Request,
     authorization: Optional[str] = Header(default=None),
@@ -912,22 +1121,37 @@ def require_auth(
     raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+# Handles the can_manage_spaces function logic.
+# Input: auth: AuthUser.
+# Output: bool.
 def can_manage_spaces(auth: AuthUser) -> bool:
     return auth.role == "admin"
 
 
+# Handles the can_manage_jira function logic.
+# Input: auth: AuthUser.
+# Output: bool.
 def can_manage_jira(auth: AuthUser) -> bool:
     return auth.role == "admin"
 
 
+# Handles the can_manage_users function logic.
+# Input: auth: AuthUser.
+# Output: bool.
 def can_manage_users(auth: AuthUser) -> bool:
     return auth.role in {"admin", "manager"}
 
 
+# Handles the can_assign_space_access function logic.
+# Input: auth: AuthUser.
+# Output: bool.
 def can_assign_space_access(auth: AuthUser) -> bool:
     return auth.role in {"admin", "manager"}
 
 
+# Handles the can_access_space function logic.
+# Input: auth: AuthUser, space_id: str, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None,.
+# Output: bool.
 def can_access_space(
     auth: AuthUser,
     space_id: str,
@@ -953,6 +1177,9 @@ def can_access_space(
     return False
 
 
+# Handles the ensure_space_access function logic.
+# Input: auth: AuthUser, space_id: str, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None,.
+# Output: None.
 def ensure_space_access(
     auth: AuthUser,
     space_id: str,
@@ -963,6 +1190,9 @@ def ensure_space_access(
         raise HTTPException(status_code=403, detail="Access denied.")
 
 
+# Handles the serialize_auth function logic.
+# Input: auth: AuthUser.
+# Output: Dict[str, Any].
 def serialize_auth(auth: AuthUser) -> Dict[str, Any]:
     return {
         "username": auth.username,
@@ -973,6 +1203,9 @@ def serialize_auth(auth: AuthUser) -> Dict[str, Any]:
     }
 
 
+# Handles the serialize_permissions function logic.
+# Input: auth: AuthUser.
+# Output: Dict[str, bool].
 def serialize_permissions(auth: AuthUser) -> Dict[str, bool]:
     return {
         "can_manage_spaces": can_manage_spaces(auth),
@@ -982,6 +1215,9 @@ def serialize_permissions(auth: AuthUser) -> Dict[str, bool]:
     }
 
 
+# Handles the is_personal_space function logic.
+# Input: space_id: str, users: Optional[Dict[str, Dict[str, Any]]] = None,.
+# Output: bool.
 def is_personal_space(
     space_id: str,
     users: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -990,6 +1226,9 @@ def is_personal_space(
     return space_id in users
 
 
+# Handles the validate_user_target_permissions function logic.
+# Input: actor: AuthUser, target_username: str, target_record: Optional[Dict[str, Any]], desired_role: Optional[str] = None,.
+# Output: None.
 def validate_user_target_permissions(
     actor: AuthUser,
     target_username: str,
@@ -1009,11 +1248,17 @@ def validate_user_target_permissions(
         raise HTTPException(status_code=403, detail="Managers can only assign the user role.")
 
 
+# Handles the remove_presence_from_all_spaces function logic.
+# Input: username: str.
+# Output: None.
 def remove_presence_from_all_spaces(username: str) -> None:
     for space_id in list(presence.keys()):
         remove_presence(space_id, username)
 
 
+# Handles the user_view function logic.
+# Input: username: str, record: Dict[str, Any], actor: AuthUser,.
+# Output: Dict[str, Any].
 def user_view(
     username: str,
     record: Dict[str, Any],
@@ -1041,12 +1286,18 @@ def user_view(
     }
 
 
+# Handles the list_visible_spaces function logic.
+# Input: auth: AuthUser.
+# Output: List[str].
 def list_visible_spaces(auth: AuthUser) -> List[str]:
     users = load_users_store()
     spaces = sorted(existing_space_ids())
     return [space_id for space_id in spaces if can_access_space(auth, space_id, users)]
 
 
+# Handles the list_visible_space_entries function logic.
+# Input: auth: AuthUser.
+# Output: List[Dict[str, Any]].
 def list_visible_space_entries(auth: AuthUser) -> List[Dict[str, Any]]:
     users = load_users_store()
     visible: List[Dict[str, Any]] = []
@@ -1060,6 +1311,9 @@ def list_visible_space_entries(auth: AuthUser) -> List[Dict[str, Any]]:
     return visible
 
 
+# Handles the filter_history_key_alias_space_entries function logic.
+# Input: entries: List[Dict[str, Any]].
+# Output: List[Dict[str, Any]].
 def filter_history_key_alias_space_entries(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     # Hide legacy/accidental space files named with a history storage key when the real
     # canonical space path is already present in the listing.
@@ -1090,15 +1344,24 @@ def filter_history_key_alias_space_entries(entries: List[Dict[str, Any]]) -> Lis
     return filtered
 
 
+# Handles the existing_space_ids function logic.
+# Input: none.
+# Output: Set[str].
 def existing_space_ids() -> Set[str]:
     return set(scan_space_files().keys())
 
 
+# Handles the ensure_space_exists function logic.
+# Input: space_id: str.
+# Output: None.
 def ensure_space_exists(space_id: str) -> None:
     if space_id not in existing_space_ids():
         raise HTTPException(status_code=404, detail="Space not found.")
 
 
+# Handles the validate_assigned_spaces function logic.
+# Input: spaces: List[str], target_username: str, users: Optional[Dict[str, Dict[str, Any]]] = None,.
+# Output: List[str].
 def validate_assigned_spaces(
     spaces: List[str],
     target_username: str,
@@ -1148,6 +1411,9 @@ def validate_assigned_spaces(
     return sorted(result)
 
 
+# Handles the space_path function logic.
+# Input: space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None,.
+# Output: Path.
 def space_path(
     space_id: str,
     *,
@@ -1161,6 +1427,9 @@ def space_path(
     return SPACES_DIR / f"{safe}.txt"
 
 
+# Handles the ystore_key_for_space function logic.
+# Input: space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None.
+# Output: str.
 def ystore_key_for_space(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None) -> str:
     safe = sanitize_space(space_id)
     normalized_hint = normalize_folder_name(space_path_hint)
@@ -1171,11 +1440,17 @@ def ystore_key_for_space(space_id: str, *, users: Optional[Dict[str, Dict[str, A
     return history_key_from_space_canonical_path(canonical)
 
 
+# Handles the ystore_path function logic.
+# Input: space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None.
+# Output: Path.
 def ystore_path(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None) -> Path:
     key = ystore_key_for_space(space_id, users=users, space_path_hint=space_path_hint)
     return YSTORE_DIR / f"{key}.ystore"
 
 
+# Handles the history_key_from_space_canonical_path function logic.
+# Input: space_path_value: str.
+# Output: str.
 def history_key_from_space_canonical_path(space_path_value: str) -> str:
     canonical = normalize_folder_name(space_path_value)
     if not canonical:
@@ -1186,6 +1461,9 @@ def history_key_from_space_canonical_path(space_path_value: str) -> str:
     return encoded or "root"
 
 
+# Handles the history_key_for_space function logic.
+# Input: space_id: str, users: Optional[Dict[str, Dict[str, Any]]] = None, *, space_path_hint: Optional[str] = None,.
+# Output: str.
 def history_key_for_space(
     space_id: str,
     users: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -1201,6 +1479,9 @@ def history_key_for_space(
     return history_key_from_space_canonical_path(canonical)
 
 
+# Handles the move_history_for_space_path_change function logic.
+# Input: old_space_path: str, new_space_path: str.
+# Output: None.
 def move_history_for_space_path_change(old_space_path: str, new_space_path: str) -> None:
     old_path = normalize_folder_name(old_space_path)
     new_path = normalize_folder_name(new_space_path)
@@ -1257,16 +1538,25 @@ def move_history_for_space_path_change(old_space_path: str, new_space_path: str)
             logger.exception("Failed to clean old history dir %s after merge", source_dir)
 
 
+# Handles the history_space_dir function logic.
+# Input: space_key: str.
+# Output: Path.
 def history_space_dir(space_key: str) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", space_key or ""):
         raise HTTPException(status_code=400, detail="Invalid history key.")
     return HISTORY_DIR / space_key
 
 
+# Handles the history_index_path function logic.
+# Input: space_key: str.
+# Output: Path.
 def history_index_path(space_key: str) -> Path:
     return history_space_dir(space_key) / "index.json"
 
 
+# Handles the history_checkpoint_path function logic.
+# Input: space_key: str, checkpoint_id: str.
+# Output: Path.
 def history_checkpoint_path(space_key: str, checkpoint_id: str) -> Path:
     if not re.fullmatch(r"[a-zA-Z0-9_.-]+", checkpoint_id or ""):
         raise HTTPException(status_code=400, detail="Invalid checkpoint id.")
@@ -1275,14 +1565,23 @@ def history_checkpoint_path(space_key: str, checkpoint_id: str) -> Path:
     return history_space_dir(space_key) / f"{checkpoint_id}.txt"
 
 
+# Handles the history_content_hash function logic.
+# Input: content: str.
+# Output: str.
 def history_content_hash(content: str) -> str:
     return hashlib.sha256((content or "").encode("utf-8")).hexdigest()
 
 
+# Handles the _history_timestamp_iso function logic.
+# Input: epoch_seconds: int.
+# Output: str.
 def _history_timestamp_iso(epoch_seconds: int) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch_seconds))
 
 
+# Handles the _normalize_history_index function logic.
+# Input: raw: Any.
+# Output: List[Dict[str, Any]].
 def _normalize_history_index(raw: Any) -> List[Dict[str, Any]]:
     if not isinstance(raw, dict):
         return []
@@ -1329,6 +1628,9 @@ def _normalize_history_index(raw: Any) -> List[Dict[str, Any]]:
     return normalized
 
 
+# Handles the load_history_index function logic.
+# Input: space_key: str.
+# Output: List[Dict[str, Any]].
 def load_history_index(space_key: str) -> List[Dict[str, Any]]:
     index_path = history_index_path(space_key)
     with HISTORY_LOCK:
@@ -1347,6 +1649,9 @@ def load_history_index(space_key: str) -> List[Dict[str, Any]]:
         return _normalize_history_index(data)
 
 
+# Handles the save_history_index function logic.
+# Input: space_key: str, checkpoints: List[Dict[str, Any]].
+# Output: None.
 def save_history_index(space_key: str, checkpoints: List[Dict[str, Any]]) -> None:
     index_path = history_index_path(space_key)
     payload = json.dumps(
@@ -1360,6 +1665,9 @@ def save_history_index(space_key: str, checkpoints: List[Dict[str, Any]]) -> Non
         _atomic_write_text(index_path, payload)
 
 
+# Handles the read_history_checkpoint function logic.
+# Input: space_key: str, checkpoint_id: str.
+# Output: str.
 def read_history_checkpoint(space_key: str, checkpoint_id: str) -> str:
     path = history_checkpoint_path(space_key, checkpoint_id)
     with HISTORY_LOCK:
@@ -1372,6 +1680,9 @@ def read_history_checkpoint(space_key: str, checkpoint_id: str) -> str:
             raise HTTPException(status_code=500, detail="Failed to read history checkpoint.")
 
 
+# Handles the create_history_checkpoint function logic.
+# Input: space_key: str, content: str, *, kind: str = "auto", label: Optional[str] = None, created_at: Optional[int] = None,.
+# Output: Dict[str, Any].
 def create_history_checkpoint(
     space_key: str,
     content: str,
@@ -1406,11 +1717,17 @@ def create_history_checkpoint(
     return metadata
 
 
+# Handles the latest_history_checkpoint function logic.
+# Input: space_key: str.
+# Output: Optional[Dict[str, Any]].
 def latest_history_checkpoint(space_key: str) -> Optional[Dict[str, Any]]:
     checkpoints = load_history_index(space_key)
     return checkpoints[-1] if checkpoints else None
 
 
+# Handles the maybe_create_auto_history_checkpoint function logic.
+# Input: space_key: str, content: str, *, now_epoch: Optional[int] = None,.
+# Output: Optional[Dict[str, Any]].
 def maybe_create_auto_history_checkpoint(
     space_key: str,
     content: str,
@@ -1435,12 +1752,18 @@ def maybe_create_auto_history_checkpoint(
     )
 
 
+# Handles the write_space_text_and_maybe_checkpoint function logic.
+# Input: space_id: str, content: str, *, space_path_hint: Optional[str] = None.
+# Output: None.
 def write_space_text_and_maybe_checkpoint(space_id: str, content: str, *, space_path_hint: Optional[str] = None) -> None:
     text = content if isinstance(content, str) else str(content or "")
     _atomic_write_text(space_path(space_id, space_path_hint=space_path_hint), text)
     maybe_create_auto_history_checkpoint(history_key_for_space(space_id, space_path_hint=space_path_hint), text)
 
 
+# Handles the room_name function logic.
+# Input: space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None.
+# Output: str.
 def room_name(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None) -> str:
     safe_id = sanitize_space(space_id)
     normalized_hint = normalize_folder_name(space_path_hint)
@@ -1449,6 +1772,9 @@ def room_name(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = Non
     return f"/ws/{safe_id}"
 
 
+# Handles the normalize_space_path_hint_for_id function logic.
+# Input: space_id: str, value: Any.
+# Output: str.
 def normalize_space_path_hint_for_id(space_id: str, value: Any) -> str:
     normalized = normalize_folder_name(value)
     if not normalized:
@@ -1459,6 +1785,9 @@ def normalize_space_path_hint_for_id(space_id: str, value: Any) -> str:
     return normalized
 
 
+# Handles the disconnect_space_clients function logic.
+# Input: space_id: str.
+# Output: int.
 async def disconnect_space_clients(space_id: str) -> int:
     room = websocket_server.rooms.get(room_name(space_id))
     if not room:
@@ -1495,6 +1824,9 @@ async def disconnect_space_clients(space_id: str) -> int:
     return disconnected
 
 
+# Handles the ydoc_to_text function logic.
+# Input: ydoc: Y.YDoc.
+# Output: str.
 def ydoc_to_text(ydoc: Y.YDoc) -> str:
     text = ydoc.get_text("content")
     raw = text.to_json()
@@ -1505,9 +1837,15 @@ def ydoc_to_text(ydoc: Y.YDoc) -> str:
     return str(raw)
 
 
+# Handles the replace_ydoc_text function logic.
+# Input: ydoc: Y.YDoc, content: str.
+# Output: None.
 def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
     text = ydoc.get_text("content")
 
+    # Handles the apply function logic.
+    # Input: txn.
+    # Output: value produced by this function.
     def apply(txn):
         if len(text):
             text.delete_range(txn, 0, len(text))
@@ -1517,6 +1855,9 @@ def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
     ydoc.transact(apply)
 
 
+# Handles the schedule_space_snapshot function logic.
+# Input: space_id: str, room, *, space_path_hint: Optional[str] = None.
+# Output: None.
 def schedule_space_snapshot(space_id: str, room, *, space_path_hint: Optional[str] = None) -> None:
     task_key = room_name(space_id, space_path_hint=space_path_hint)
     mapped_room = websocket_server.rooms.get(task_key)
@@ -1537,11 +1878,19 @@ def schedule_space_snapshot(space_id: str, room, *, space_path_hint: Optional[st
 
     task_ref: Optional[asyncio.Task] = None
 
+    # Handles the _save function logic.
+    # Input: none.
+    # Output: value produced by this function.
     async def _save():
         try:
             await asyncio.sleep(SPACE_SAVE_DELAY)
             content = ydoc_to_text(room.ydoc)
-            await asyncio.to_thread(write_space_text_and_maybe_checkpoint, space_id, content, space_path_hint=space_path_hint)
+            await run_blocking_io(
+                write_space_text_and_maybe_checkpoint,
+                space_id,
+                content,
+                space_path_hint=space_path_hint,
+            )
         except asyncio.CancelledError:
             return
         except Exception:
@@ -1554,6 +1903,9 @@ def schedule_space_snapshot(space_id: str, room, *, space_path_hint: Optional[st
     space_save_tasks[task_key] = task_ref
 
 
+# Handles the hydrate_room_from_storage function logic.
+# Input: space_id: str, room, *, space_path_hint: Optional[str] = None.
+# Output: None.
 async def hydrate_room_from_storage(space_id: str, room, *, space_path_hint: Optional[str] = None) -> None:
     store_path = ystore_path(space_id, space_path_hint=space_path_hint)
     loaded_from_ystore = False
@@ -1591,10 +1943,16 @@ async def hydrate_room_from_storage(space_id: str, room, *, space_path_hint: Opt
     schedule_space_snapshot(space_id, room, space_path_hint=space_path_hint)
 
 
+# Handles the attach_snapshot_hook function logic.
+# Input: space_id: str, room, *, space_path_hint: Optional[str] = None.
+# Output: None.
 def attach_snapshot_hook(space_id: str, room, *, space_path_hint: Optional[str] = None) -> None:
     if getattr(room, "_snapshot_hook", False):
         return
 
+    # Handles the _after_txn function logic.
+    # Input: *_args, **_kwargs.
+    # Output: value produced by this function.
     def _after_txn(*_args, **_kwargs):
         schedule_space_snapshot(space_id, room, space_path_hint=space_path_hint)
 
@@ -1602,12 +1960,18 @@ def attach_snapshot_hook(space_id: str, room, *, space_path_hint: Optional[str] 
     room._snapshot_hook = True
 
 
+# Handles the attach_awareness_hook function logic.
+# Input: room.
+# Output: None.
 def attach_awareness_hook(room) -> None:
     if getattr(room, "_awareness_hook", False):
         return
 
     previous_handler = getattr(room, "on_message", None)
 
+    # Handles the _on_message function logic.
+    # Input: message: bytes.
+    # Output: bool.
     def _on_message(message: bytes) -> bool:
         try:
             if message and message[0] == int(YMessageType.AWARENESS):
@@ -1623,6 +1987,9 @@ def attach_awareness_hook(room) -> None:
     room._awareness_hook = True
 
 
+# Handles the _cleanup_room_awareness function logic.
+# Input: room.
+# Output: None.
 def _cleanup_room_awareness(room) -> None:
     awareness = getattr(room, "awareness", None)
     if awareness is None:
@@ -1640,6 +2007,9 @@ def _cleanup_room_awareness(room) -> None:
         awareness.states.pop(client_id, None)
 
 
+# Handles the sync_snapshots_from_ystore_on_startup function logic.
+# Input: none.
+# Output: None.
 async def sync_snapshots_from_ystore_on_startup() -> None:
     if not YSTORE_DIR.exists():
         return
@@ -1706,6 +2076,9 @@ app.add_middleware(
 )
 
 
+# Handles the login function logic.
+# Input: response: ApiResponse, payload: Dict[str, Any] = Body(default={}),.
+# Output: Dict[str, Any].
 @app.post("/api/login")
 def login(
     response: ApiResponse,
@@ -1738,6 +2111,9 @@ def login(
     }
 
 
+# Handles the logout function logic.
+# Input: request: Request, response: ApiResponse.
+# Output: Dict[str, Any].
 @app.post("/api/logout")
 def logout(request: Request, response: ApiResponse) -> Dict[str, Any]:
     remove_session(request.cookies.get(SESSION_COOKIE_NAME))
@@ -1745,6 +2121,9 @@ def logout(request: Request, response: ApiResponse) -> Dict[str, Any]:
     return {"ok": True}
 
 
+# Handles the read_me function logic.
+# Input: request: Request, user: AuthUser = Depends(require_auth).
+# Output: Dict[str, Any].
 @app.get("/api/me")
 def read_me(request: Request, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     last_space = get_session_last_space(
@@ -1760,6 +2139,9 @@ def read_me(request: Request, user: AuthUser = Depends(require_auth)) -> Dict[st
     }
 
 
+# Handles the update_me function logic.
+# Input: request: Request = None, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.put("/api/me")
 def update_me(
     request: Request = None,
@@ -1805,6 +2187,9 @@ def update_me(
     }
 
 
+# Handles the list_users function logic.
+# Input: user: AuthUser = Depends(require_auth).
+# Output: Dict[str, Any].
 @app.get("/api/users")
 def list_users(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     if not can_manage_users(user):
@@ -1821,6 +2206,9 @@ def list_users(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     }
 
 
+# Handles the create_user function logic.
+# Input: payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.post("/api/users")
 def create_user(
     payload: Dict[str, Any] = Body(default={}),
@@ -1863,6 +2251,9 @@ def create_user(
     return {"ok": True, "user": user_view(username, users[username], user)}
 
 
+# Handles the update_user function logic.
+# Input: username: str, request: Request = None, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.put("/api/users/{username}")
 def update_user(
     username: str,
@@ -1944,6 +2335,9 @@ def update_user(
     return {"ok": True, "user": user_view(target_username, users[target_username], user)}
 
 
+# Handles the delete_user function logic.
+# Input: username: str, user: AuthUser = Depends(require_auth).
+# Output: Dict[str, Any].
 @app.delete("/api/users/{username}")
 def delete_user(username: str, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     target_username = normalize_username(username)
@@ -1971,6 +2365,9 @@ def delete_user(username: str, user: AuthUser = Depends(require_auth)) -> Dict[s
     return {"ok": True}
 
 
+# Handles the list_spaces function logic.
+# Input: user: AuthUser = Depends(require_auth).
+# Output: Dict[str, Any].
 @app.get("/api/spaces")
 def list_spaces(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     visible_entries = filter_history_key_alias_space_entries(list_visible_space_entries(user))
@@ -1997,6 +2394,9 @@ def list_spaces(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     }
 
 
+# Handles the create_space_folder function logic.
+# Input: payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.post("/api/space-folders")
 def create_space_folder(
     payload: Dict[str, Any] = Body(default={}),
@@ -2019,6 +2419,9 @@ def create_space_folder(
     return {"ok": True, "name": folder_name}
 
 
+# Handles the delete_space_folder function logic.
+# Input: folder_id: str, user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.delete("/api/space-folders/{folder_id:path}")
 def delete_space_folder(
     folder_id: str,
@@ -2041,6 +2444,9 @@ def delete_space_folder(
     return {"ok": True}
 
 
+# Handles the set_space_folder function logic.
+# Input: space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.put("/api/spaces/{space_id}/folder")
 def set_space_folder(
     space_id: str,
@@ -2131,6 +2537,9 @@ def set_space_folder(
     return {"ok": True, "folder": folder_name}
 
 
+# Handles the read_space_history function logic.
+# Input: space_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.get("/api/spaces/{space_id}/history")
 def read_space_history(
     space_id: str,
@@ -2145,6 +2554,9 @@ def read_space_history(
     return {"checkpoints": load_history_index(history_key_for_space(safe_id, space_path_hint=space_path_hint))}
 
 
+# Handles the read_space_history_checkpoint function logic.
+# Input: space_id: str, checkpoint_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
+# Output: Response.
 @app.get("/api/spaces/{space_id}/history/{checkpoint_id}")
 def read_space_history_checkpoint(
     space_id: str,
@@ -2164,6 +2576,9 @@ def read_space_history_checkpoint(
     )
 
 
+# Handles the revert_space_history_checkpoint function logic.
+# Input: space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.post("/api/spaces/{space_id}/history/revert")
 async def revert_space_history_checkpoint(
     space_id: str,
@@ -2217,6 +2632,9 @@ async def revert_space_history_checkpoint(
     }
 
 
+# Handles the tag_space_history_checkpoint function logic.
+# Input: space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.post("/api/spaces/{space_id}/history/tag")
 def tag_space_history_checkpoint(
     space_id: str,
@@ -2251,6 +2669,9 @@ def tag_space_history_checkpoint(
     return {"ok": True, "checkpoint": checkpoint}
 
 
+# Handles the read_jira_config function logic.
+# Input: user: AuthUser = Depends(require_auth).
+# Output: Dict[str, Any].
 @app.get("/api/jira-config")
 def read_jira_config(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     if not can_manage_jira(user):
@@ -2263,6 +2684,9 @@ def read_jira_config(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     }
 
 
+# Handles the write_jira_config function logic.
+# Input: payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.put("/api/jira-config")
 def write_jira_config(
     payload: Dict[str, Any] = Body(default={}),
@@ -2282,6 +2706,9 @@ def write_jira_config(
     }
 
 
+# Handles the read_space function logic.
+# Input: space_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
+# Output: Response.
 @app.get("/api/spaces/{space_id}")
 def read_space(
     space_id: str,
@@ -2297,6 +2724,9 @@ def read_space(
     return Response(target_path.read_text(encoding="utf-8"), media_type="text/plain")
 
 
+# Handles the write_space function logic.
+# Input: space_id: str, content: str = Body(default="", media_type="text/plain"), path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.put("/api/spaces/{space_id}")
 async def write_space(
     space_id: str,
@@ -2310,7 +2740,12 @@ async def write_space(
     target_path = space_path(safe_id, space_path_hint=space_path_hint)
     if not target_path.exists():
         raise HTTPException(status_code=404, detail="Space not found.")
-    await asyncio.to_thread(write_space_text_and_maybe_checkpoint, safe_id, content, space_path_hint=space_path_hint)
+    await run_blocking_io(
+        write_space_text_and_maybe_checkpoint,
+        safe_id,
+        content,
+        space_path_hint=space_path_hint,
+    )
     room = websocket_server.rooms.get(room_name(safe_id, space_path_hint=space_path_hint))
     if room:
         replace_ydoc_text(room.ydoc, content)
@@ -2322,6 +2757,9 @@ async def write_space(
     return {"ok": True}
 
 
+# Handles the create_space function logic.
+# Input: space_id: str, user: AuthUser = Depends(require_auth).
+# Output: Dict[str, Any].
 @app.post("/api/spaces/{space_id}")
 def create_space(space_id: str, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     if not can_manage_spaces(user):
@@ -2334,6 +2772,9 @@ def create_space(space_id: str, user: AuthUser = Depends(require_auth)) -> Dict[
     return {"ok": True}
 
 
+# Handles the delete_space function logic.
+# Input: space_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.delete("/api/spaces/{space_id}")
 async def delete_space(
     space_id: str,
@@ -2376,6 +2817,9 @@ async def delete_space(
     return {"ok": True}
 
 
+# Handles the rename_space function logic.
+# Input: space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.post("/api/spaces/{space_id}/rename")
 def rename_space(
     space_id: str,
@@ -2429,6 +2873,9 @@ def rename_space(
     return {"ok": True, "id": target_id}
 
 
+# Handles the update_presence function logic.
+# Input: space_id: str, request: Request, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.post("/api/spaces/{space_id}/presence")
 def update_presence(
     space_id: str,
@@ -2446,6 +2893,9 @@ def update_presence(
     return {"ok": True}
 
 
+# Handles the clear_presence function logic.
+# Input: space_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
+# Output: Dict[str, Any].
 @app.delete("/api/spaces/{space_id}/presence")
 def clear_presence(
     space_id: str,
@@ -2461,6 +2911,9 @@ def clear_presence(
     return {"ok": True}
 
 
+# Handles the cleanup_presence function logic.
+# Input: none.
+# Output: None.
 def cleanup_presence() -> None:
     now = time.time()
     for space_id in list(presence.keys()):
@@ -2472,6 +2925,9 @@ def cleanup_presence() -> None:
             presence.pop(space_id, None)
 
 
+# Handles the _presence_key function logic.
+# Input: space_id: str, *, space_path_hint: Optional[str] = None.
+# Output: str.
 def _presence_key(space_id: str, *, space_path_hint: Optional[str] = None) -> str:
     normalized_hint = normalize_folder_name(space_path_hint)
     if normalized_hint:
@@ -2479,11 +2935,17 @@ def _presence_key(space_id: str, *, space_path_hint: Optional[str] = None) -> st
     return sanitize_space(space_id)
 
 
+# Handles the mark_presence function logic.
+# Input: space_id: str, username: str, *, space_path_hint: Optional[str] = None.
+# Output: None.
 def mark_presence(space_id: str, username: str, *, space_path_hint: Optional[str] = None) -> None:
     cleanup_presence()
     presence.setdefault(_presence_key(space_id, space_path_hint=space_path_hint), {})[username] = time.time()
 
 
+# Handles the remove_presence function logic.
+# Input: space_id: str, username: str, *, space_path_hint: Optional[str] = None.
+# Output: None.
 def remove_presence(space_id: str, username: str, *, space_path_hint: Optional[str] = None) -> None:
     users = presence.get(_presence_key(space_id, space_path_hint=space_path_hint))
     if not users:
@@ -2493,6 +2955,9 @@ def remove_presence(space_id: str, username: str, *, space_path_hint: Optional[s
         presence.pop(_presence_key(space_id, space_path_hint=space_path_hint), None)
 
 
+# Handles the users_for_space function logic.
+# Input: space_id: str, *, space_path_hint: Optional[str] = None.
+# Output: List[str].
 def users_for_space(space_id: str, *, space_path_hint: Optional[str] = None) -> List[str]:
     room = websocket_server.rooms.get(room_name(space_id, space_path_hint=space_path_hint))
     if room is not None and getattr(room, "awareness", None) is not None:
@@ -2521,6 +2986,9 @@ def users_for_space(space_id: str, *, space_path_hint: Optional[str] = None) -> 
     return sorted(users.keys())
 
 
+# Handles the ensure_jira_daemon_credentials function logic.
+# Input: none.
+# Output: None.
 def ensure_jira_daemon_credentials() -> None:
     jira_data = load_jira_config_data()
     username = JIRA_DAEMON_USERNAME
@@ -2556,6 +3024,9 @@ def ensure_jira_daemon_credentials() -> None:
         save_jira_config_data(jira_data)
 
 
+# Handles the space_ref_from_ws_path function logic.
+# Input: path: str.
+# Output: Optional[Tuple[str, str]].
 def space_ref_from_ws_path(path: str) -> Optional[Tuple[str, str]]:
     if "/ws/" not in path:
         return None
@@ -2572,11 +3043,17 @@ def space_ref_from_ws_path(path: str) -> Optional[Tuple[str, str]]:
         return None
 
 
+# Handles the space_from_path function logic.
+# Input: path: str.
+# Output: Optional[str].
 def space_from_path(path: str) -> Optional[str]:
     ref = space_ref_from_ws_path(path)
     return ref[0] if ref else None
 
 
+# Handles the ws_credentials function logic.
+# Input: scope: Dict[str, Any].
+# Output: Tuple[Optional[str], Optional[str]].
 def ws_credentials(scope: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
     query = parse_qs(scope.get("query_string", b"").decode())
     user = query.get("user", [None])[0] or query.get("username", [None])[0]
@@ -2584,6 +3061,9 @@ def ws_credentials(scope: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]
     return user, password
 
 
+# Handles the ws_session_token function logic.
+# Input: scope: Dict[str, Any].
+# Output: Optional[str].
 def ws_session_token(scope: Dict[str, Any]) -> Optional[str]:
     headers = scope.get("headers") or []
     cookie_header = None
@@ -2608,6 +3088,9 @@ def ws_session_token(scope: Dict[str, Any]) -> Optional[str]:
     return token or None
 
 
+# Handles the on_connect function logic.
+# Input: _message: Dict[str, Any], scope: Dict[str, Any].
+# Output: bool.
 async def on_connect(_message: Dict[str, Any], scope: Dict[str, Any]) -> bool:
     ref = space_ref_from_ws_path(scope.get("path", ""))
     if not ref:
@@ -2638,7 +3121,11 @@ async def on_connect(_message: Dict[str, Any], scope: Dict[str, Any]) -> bool:
     return False
 
 
+# Defines the PersistentWebsocketServer structure used by this module.
 class PersistentWebsocketServer(WebsocketServer):
+    # Handles the get_room function logic.
+    # Input: self, name: str.
+    # Output: value produced by this function.
     async def get_room(self, name: str):
         if name not in self.rooms.keys():
             ref = space_ref_from_ws_path(name)
@@ -2660,6 +3147,9 @@ class PersistentWebsocketServer(WebsocketServer):
 
 
 websocket_server = PersistentWebsocketServer()
+# Handles the _is_benign_shutdown_error function logic.
+# Input: exc: BaseException.
+# Output: bool.
 def _is_benign_shutdown_error(exc: BaseException) -> bool:
     if isinstance(exc, RuntimeError):
         message = str(exc)
@@ -2673,14 +3163,24 @@ def _is_benign_shutdown_error(exc: BaseException) -> bool:
     )
 
 
+# Defines the _SuppressBenignShutdownASGI structure used by this module.
 class _SuppressBenignShutdownASGI:
+    # Handles the __init__ function logic.
+    # Input: self, app: Any.
+    # Output: None.
     def __init__(self, app: Any) -> None:
         self._app = app
 
+    # Handles the __call__ function logic.
+    # Input: self, scope: Dict[str, Any], receive: Any, send: Any.
+    # Output: Any.
     async def __call__(self, scope: Dict[str, Any], receive: Any, send: Any) -> Any:
         response_started = False
         response_completed = False
 
+        # Handles the tracked_send function logic.
+        # Input: message: Dict[str, Any].
+        # Output: Any.
         async def tracked_send(message: Dict[str, Any]) -> Any:
             nonlocal response_started, response_completed
             message_type = message.get("type")
@@ -2726,6 +3226,9 @@ class _SuppressBenignShutdownASGI:
                 return None
             raise
 
+    # Handles the _finish_cancelled_http_response function logic.
+    # Input: self, send: Any, *, response_started: bool, response_completed: bool,.
+    # Output: None.
     async def _finish_cancelled_http_response(
         self,
         send: Any,
@@ -2765,6 +3268,9 @@ if FRONTEND_NODE_MODULES_DIR.exists():
 app.mount("/", StaticFiles(directory=FRONTEND_STATIC_DIR, html=True), name="static")
 
 
+# Handles the main function logic.
+# Input: none.
+# Output: None.
 async def main() -> None:
     load_users_store()
     await sync_snapshots_from_ystore_on_startup()

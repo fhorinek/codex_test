@@ -1,7 +1,12 @@
 // @ts-check
 
+/**
+ * Module: UI helpers for rendering and updating slug rename controls.
+ */
+
 import type { AppDom } from "./appDom.js";
 
+// Stores the SLUG_RENAME_SWATCH_COLORS module constant.
 const SLUG_RENAME_SWATCH_COLORS = [
   "#e85d75",
   "#f28a2e",
@@ -50,6 +55,11 @@ export function normalizeHexColorValue(value: string) {
   return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
 }
 
+/**
+ * Handles the createSlugRenameUi function logic.
+ * Input: dom: AppDom, doc: Document = document.
+ * Output: result produced by this function.
+ */
 export function createSlugRenameUi(dom: AppDom, doc: Document = document) {
   let colorControlsBound = false;
   const domAny: any = dom;
@@ -97,6 +107,11 @@ export function createSlugRenameUi(dom: AppDom, doc: Document = document) {
     updateColorPreview(raw);
   }
 
+  /**
+   * Handles the ensureColorControls function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   function ensureColorControls() {
     if (colorControlsBound) {
       return;

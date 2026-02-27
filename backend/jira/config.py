@@ -1,3 +1,5 @@
+# Module: Jira worker configuration loading, validation, and credential persistence utilities.
+
 import json
 import logging
 import os
@@ -8,38 +10,58 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger("jira-worker")
+# Stores the _JSON_IO_LOCK module constant.
 _JSON_IO_LOCK = threading.RLock()
 
+# Stores the JIRA_DIR module constant.
 JIRA_DIR = Path(__file__).resolve().parent
+# Stores the BACKEND_DIR module constant.
 BACKEND_DIR = JIRA_DIR.parent
+# Stores the JIRA_CONFIG_PATH module constant.
 JIRA_CONFIG_PATH = JIRA_DIR / "jira_config.json"
+# Stores the USERS_CONFIG_PATH module constant.
 USERS_CONFIG_PATH = BACKEND_DIR / "users_config.json"
+# Stores the LEGACY_USERS_CONFIG_PATH module constant.
 LEGACY_USERS_CONFIG_PATH = JIRA_DIR / "users_config.json"
+# Stores the JIRA_DAEMON_USERNAME module constant.
 JIRA_DAEMON_USERNAME = "jira-daemon"
 
 
+# Defines the JiraConfig structure used by this module.
 @dataclass(frozen=True)
 class JiraConfig:
     base_url: str = ""
     email: str = ""
     token: str = ""
 
+    # Handles the enabled function logic.
+    # Input: self.
+    # Output: bool.
     @property
     def enabled(self) -> bool:
         return bool(self.base_url and self.email and self.token)
 
 
+# Handles the _normalize_value function logic.
+# Input: value: Optional[Any].
+# Output: str.
 def _normalize_value(value: Optional[Any]) -> str:
     if not isinstance(value, str):
         return ""
     return value.strip()
 
 
+# Handles the _normalize_base_url function logic.
+# Input: value: Optional[Any].
+# Output: str.
 def _normalize_base_url(value: Optional[Any]) -> str:
     base_url = _normalize_value(value)
     return base_url.rstrip("/")
 
 
+# Handles the _read_json_dict function logic.
+# Input: path: Path, label: str.
+# Output: Dict[str, Any].
 def _read_json_dict(path: Path, label: str) -> Dict[str, Any]:
     if not path.exists():
         return {}
@@ -57,6 +79,9 @@ def _read_json_dict(path: Path, label: str) -> Dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+# Handles the _write_json_dict function logic.
+# Input: path: Path, data: Dict[str, Any], label: str.
+# Output: None.
 def _write_json_dict(path: Path, data: Dict[str, Any], label: str) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,6 +104,9 @@ def _write_json_dict(path: Path, data: Dict[str, Any], label: str) -> None:
         logger.exception("Failed to write %s to %s", label, path)
 
 
+# Handles the _mask_secret function logic.
+# Input: value: str.
+# Output: str.
 def _mask_secret(value: str) -> str:
     secret = _normalize_value(value)
     if not secret:
@@ -88,14 +116,23 @@ def _mask_secret(value: str) -> str:
     return f"{'*' * max(4, len(secret) - 4)}{secret[-4:]}"
 
 
+# Handles the load_jira_config_data function logic.
+# Input: none.
+# Output: Dict[str, Any].
 def load_jira_config_data() -> Dict[str, Any]:
     return _read_json_dict(JIRA_CONFIG_PATH, "jira config")
 
 
+# Handles the save_jira_config_data function logic.
+# Input: data: Dict[str, Any].
+# Output: None.
 def save_jira_config_data(data: Dict[str, Any]) -> None:
     _write_json_dict(JIRA_CONFIG_PATH, data, "jira config")
 
 
+# Handles the load_users_config_data function logic.
+# Input: none.
+# Output: Dict[str, Any].
 def load_users_config_data() -> Dict[str, Any]:
     data = _read_json_dict(USERS_CONFIG_PATH, "users config")
     if data:
@@ -107,10 +144,16 @@ def load_users_config_data() -> Dict[str, Any]:
     return {}
 
 
+# Handles the save_users_config_data function logic.
+# Input: data: Dict[str, Any].
+# Output: None.
 def save_users_config_data(data: Dict[str, Any]) -> None:
     _write_json_dict(USERS_CONFIG_PATH, data, "users config")
 
 
+# Handles the load_jira_config function logic.
+# Input: none.
+# Output: JiraConfig.
 def load_jira_config() -> JiraConfig:
     data = load_jira_config_data()
     return JiraConfig(
@@ -120,6 +163,9 @@ def load_jira_config() -> JiraConfig:
     )
 
 
+# Handles the save_jira_config function logic.
+# Input: payload: Dict[str, Any], existing: Optional[JiraConfig] = None.
+# Output: JiraConfig.
 def save_jira_config(
     payload: Dict[str, Any], existing: Optional[JiraConfig] = None
 ) -> JiraConfig:
@@ -148,6 +194,9 @@ def save_jira_config(
     return config
 
 
+# Handles the load_jira_worker_credentials function logic.
+# Input: none.
+# Output: Tuple[str, str].
 def load_jira_worker_credentials() -> Tuple[str, str]:
     data = load_jira_config_data()
     username = _normalize_value(data.get("worker_username")) or JIRA_DAEMON_USERNAME

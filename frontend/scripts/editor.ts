@@ -1,3 +1,7 @@
+/**
+ * Module: Editor integration, parsing support, and text interaction behaviors.
+ */
+
 import { Compartment, EditorState, RangeSetBuilder } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers, } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentLess, indentMore, redo, undo, } from "@codemirror/commands";
@@ -5,38 +9,63 @@ import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap } from "@codemirror/search";
 import { foldGutter, foldKeymap, foldService, indentUnit } from "@codemirror/language";
 import { indentationMarkers } from "@replit/codemirror-indentation-markers";
+// Stores the taskLineDecoration module constant.
 const taskLineDecoration = Decoration.line({ class: "cm-task-line" });
+// Stores the subtaskLineDecoration module constant.
 const subtaskLineDecoration = Decoration.line({ class: "cm-subtask-line" });
+// Stores the configLineDecoration module constant.
 const configLineDecoration = Decoration.line({ class: "cm-config-line" });
+// Stores the errorLineDecoration module constant.
 const errorLineDecoration = Decoration.line({ class: "cm-error-line" });
+// Stores the noSpellAttributes module constant.
 const noSpellAttributes = { spellcheck: "false" };
+// Stores the tagDecoration module constant.
 const tagDecoration = Decoration.mark({ class: "cm-tag-token", attributes: noSpellAttributes });
+// Stores the personDecoration module constant.
 const personDecoration = Decoration.mark({ class: "cm-person-token", attributes: noSpellAttributes });
+// Stores the stateDecoration module constant.
 const stateDecoration = Decoration.mark({ class: "cm-state-token", attributes: noSpellAttributes });
+// Stores the invalidStateDecoration module constant.
 const invalidStateDecoration = Decoration.mark({
     class: "cm-state-token cm-error-token",
     attributes: noSpellAttributes,
 });
+// Stores the referenceDecoration module constant.
 const referenceDecoration = Decoration.mark({ class: "cm-reference-token", attributes: noSpellAttributes });
+// Stores the invalidReferenceDecoration module constant.
 const invalidReferenceDecoration = Decoration.mark({
     class: "cm-reference-token cm-reference-token-invalid",
     attributes: noSpellAttributes,
 });
+// Stores the jiraDecoration module constant.
 const jiraDecoration = Decoration.mark({ class: "cm-jira-token", attributes: noSpellAttributes });
+// Stores the selectedSpaceDecoration module constant.
 const selectedSpaceDecoration = Decoration.mark({ class: "cm-highlightSpace" });
+// Stores the selectedTabDecoration module constant.
 const selectedTabDecoration = Decoration.mark({ class: "cm-highlightTab" });
+// Stores the spellcheckDisabledDecoration module constant.
 const spellcheckDisabledDecoration = Decoration.mark({ attributes: noSpellAttributes });
+// Stores the spellcheckEnabledDecoration module constant.
 const spellcheckEnabledDecoration = Decoration.mark({ class: "cm-spellcheck-enabled", attributes: { spellcheck: "true" } });
+// Defines the SlugSection type structure for this module.
 type SlugSection = "tags" | "people" | "states";
+// Defines the VisibleRect type structure for this module.
 type VisibleRect = { x: number; y: number; width: number; height: number };
+// Defines the TaskReferenceBadgeItem type structure for this module.
 type TaskReferenceBadgeItem = {
     lineIndex: number;
     name: string;
 };
+// Defines the TaskReferenceBadgeWidget class used by this module.
 class TaskReferenceBadgeWidget extends WidgetType {
     referenceTasks: TaskReferenceBadgeItem[];
     count: number;
     signature: string;
+    /**
+     * Handles the onOpenTaskLine function logic.
+     * Input: (lineIndex: number) => void.
+     * Output: result produced by this function.
+     */
     onOpenTaskLine: ((lineIndex: number) => void) | null | undefined;
     constructor(referenceTasks: any, onOpenTaskLine: ((lineIndex: number) => void) | null | undefined) {
         super();
@@ -53,9 +82,19 @@ class TaskReferenceBadgeWidget extends WidgetType {
         this.signature = normalized.map((item) => `${item.lineIndex}:${item.name}`).join("|");
         this.onOpenTaskLine = onOpenTaskLine;
     }
+    /**
+     * Handles the eq function logic.
+     * Input: other: any.
+     * Output: result produced by this function.
+     */
     eq(other: any) {
         return other.signature === this.signature;
     }
+    /**
+     * Handles the toDOM function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     toDOM() {
         const menu = document.createElement("span");
         menu.className = "task-reference-menu cm-task-reference-menu";
@@ -113,10 +152,20 @@ class TaskReferenceBadgeWidget extends WidgetType {
         menu.append(indicator, dropdown);
         return menu;
     }
+    /**
+     * Handles the ignoreEvent function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     ignoreEvent() {
         return false;
     }
 }
+/**
+ * Handles the taskReferenceBadgeDecoration function logic.
+ * Input: referenceTasks: any, onOpenTaskLine: any.
+ * Output: result produced by this function.
+ */
 function taskReferenceBadgeDecoration(referenceTasks: any, onOpenTaskLine: any) {
     if (!Array.isArray(referenceTasks) || !referenceTasks.length) {
         return null;
@@ -126,9 +175,19 @@ function taskReferenceBadgeDecoration(referenceTasks: any, onOpenTaskLine: any) 
         side: 1,
     });
 }
+/**
+ * Handles the getIndent function logic.
+ * Input: text: string.
+ * Output: result produced by this function.
+ */
 function getIndent(text: string) {
     return text.match(/^\s*/)?.[0].length || 0;
 }
+/**
+ * Handles the foldTaskBlock function logic.
+ * Input: state: any, line: any.
+ * Output: result produced by this function.
+ */
 function foldTaskBlock(state: any, line: any) {
     const baseIndent = getIndent(line.text);
     let endLine = line.number;
@@ -149,6 +208,11 @@ function foldTaskBlock(state: any, line: any) {
     }
     return { from: line.to, to: state.doc.line(endLine).to };
 }
+/**
+ * Handles the foldConfigBlock function logic.
+ * Input: state: any, line: any.
+ * Output: result produced by this function.
+ */
 function foldConfigBlock(state: any, line: any) {
     const baseIndent = getIndent(line.text);
     let endLine = line.number;
@@ -184,6 +248,11 @@ const taskScriptFoldService = foldService.of((state, lineStart) => {
     }
     return null;
 });
+/**
+ * Handles the parseTaskTitleFromLine function logic.
+ * Input: text: any.
+ * Output: result produced by this function.
+ */
 function parseTaskTitleFromLine(text: any) {
     if (typeof text !== "string") {
         return "";
@@ -197,6 +266,11 @@ function parseTaskTitleFromLine(text: any) {
         .replace(/\s{2,}/g, " ")
         .trim();
 }
+/**
+ * Handles the taskTitleRangeFromLine function logic.
+ * Input: line: any.
+ * Output: result produced by this function.
+ */
 function taskTitleRangeFromLine(line: any) {
     if (!line || typeof line.text !== "string") {
         return null;
@@ -227,6 +301,11 @@ function taskTitleRangeFromLine(line: any) {
         to: line.from + titleEnd,
     };
 }
+/**
+ * Handles the collectIncomingReferenceData function logic.
+ * Input: doc: any.
+ * Output: result produced by this function.
+ */
 function collectIncomingReferenceData(doc: any) {
     const tasks = [];
     let currentTask = null;
@@ -272,6 +351,11 @@ function collectIncomingReferenceData(doc: any) {
     });
     return incomingReferenceSources;
 }
+/**
+ * Handles the collectTaskTitleLookup function logic.
+ * Input: doc: any.
+ * Output: result produced by this function.
+ */
 function collectTaskTitleLookup(doc: any) {
     const exact = new Set();
     const lowercase = new Set();
@@ -289,6 +373,11 @@ function collectTaskTitleLookup(doc: any) {
     }
     return { exact, lowercase };
 }
+/**
+ * Handles the collectDescriptionLineIndexes function logic.
+ * Input: doc: any.
+ * Output: result produced by this function.
+ */
 function collectDescriptionLineIndexes(doc: any) {
     const descriptionLines = new Set();
     let inTaskBlock = false;
@@ -474,17 +563,32 @@ function buildDecorations(view: any, appState: any, incomingReferenceSources = n
     }
     return /** @type {import("@codemirror/view").DecorationSet} */ (builder.finish());
 }
+/**
+ * Handles the createTaskScriptHighlight function logic.
+ * Input: appState: any, onOpenTaskLine: any.
+ * Output: result produced by this function.
+ */
 function createTaskScriptHighlight(appState: any, onOpenTaskLine: any) {
     return ViewPlugin.fromClass(class {
         incomingReferenceSources: ReturnType<typeof collectIncomingReferenceData>;
         taskTitleLookup: ReturnType<typeof collectTaskTitleLookup>;
         decorations: import("@codemirror/view").DecorationSet;
+        /**
+         * Handles the constructor function logic.
+         * Input: view: any.
+         * Output: result produced by this function.
+         */
         constructor(view: any) {
             this.incomingReferenceSources = collectIncomingReferenceData(view.state.doc);
             this.taskTitleLookup = collectTaskTitleLookup(view.state.doc);
             /** @type {import("@codemirror/view").DecorationSet} */
             this.decorations = buildDecorations(view, appState, this.incomingReferenceSources, this.taskTitleLookup, onOpenTaskLine);
         }
+        /**
+         * Handles the update function logic.
+         * Input: update: any.
+         * Output: result produced by this function.
+         */
         update(update: any) {
             if (update.docChanged) {
                 this.incomingReferenceSources = collectIncomingReferenceData(update.state.doc);
@@ -495,9 +599,19 @@ function createTaskScriptHighlight(appState: any, onOpenTaskLine: any) {
             }
         }
     }, {
+        /**
+         * Handles the decorations function logic.
+         * Input: value.
+         * Output: result produced by this function.
+         */
         decorations: (value) => value.decorations,
     });
 }
+/**
+ * Handles the addSelectedWhitespaceDecorations function logic.
+ * Input: doc: any, builder: any, start: number, end: number.
+ * Output: result produced by this function.
+ */
 function addSelectedWhitespaceDecorations(doc: any, builder: any, start: number, end: number) {
     let pos = start;
     while (pos < end) {
@@ -538,23 +652,49 @@ function buildSelectedWhitespaceDecorations(view: any) {
     }
     return /** @type {import("@codemirror/view").DecorationSet} */ (builder.finish());
 }
+// Stores the selectedWhitespaceHighlighter module constant.
 const selectedWhitespaceHighlighter = ViewPlugin.fromClass(class {
     decorations: import("@codemirror/view").DecorationSet;
+    /**
+     * Handles the constructor function logic.
+     * Input: view: any.
+     * Output: result produced by this function.
+     */
     constructor(view: any) {
         /** @type {import("@codemirror/view").DecorationSet} */
         this.decorations = buildSelectedWhitespaceDecorations(view);
     }
+    /**
+     * Handles the update function logic.
+     * Input: update: any.
+     * Output: result produced by this function.
+     */
     update(update: any) {
         if (update.docChanged || update.selectionSet || update.viewportChanged) {
             this.decorations = buildSelectedWhitespaceDecorations(update.view);
         }
     }
 }, {
+    /**
+     * Handles the decorations function logic.
+     * Input: value.
+     * Output: result produced by this function.
+     */
     decorations: (value) => value.decorations,
 });
+/**
+ * Handles the themeExtension function logic.
+ * Input: isDark: any.
+ * Output: result produced by this function.
+ */
 function themeExtension(isDark: any) {
     return EditorView.theme({}, { dark: isDark });
 }
+/**
+ * Handles the findFirstTaskLineNumber function logic.
+ * Input: doc: any.
+ * Output: result produced by this function.
+ */
 function findFirstTaskLineNumber(doc: any) {
     for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
         if (/^\s*%/.test(doc.line(lineNumber).text)) {
@@ -563,6 +703,11 @@ function findFirstTaskLineNumber(doc: any) {
     }
     return doc.lines + 1;
 }
+/**
+ * Handles the currentHeaderSectionForLine function logic.
+ * Input: doc: any, lineNumber: number, firstTaskLineNumber: number.
+ * Output: SlugSection | "".
+ */
 function currentHeaderSectionForLine(doc: any, lineNumber: number, firstTaskLineNumber: number): SlugSection | "" {
     const maxLine = Math.min(lineNumber, firstTaskLineNumber - 1);
     let section: SlugSection | "" = "";
@@ -580,9 +725,19 @@ function currentHeaderSectionForLine(doc: any, lineNumber: number, firstTaskLine
     }
     return section;
 }
+/**
+ * Handles the sortedSlugValues function logic.
+ * Input: values: Iterable<string>.
+ * Output: result produced by this function.
+ */
 function sortedSlugValues(values: Iterable<string>) {
     return Array.from(values).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
+/**
+ * Handles the collectConfigSlugValues function logic.
+ * Input: section: SlugSection, state: any.
+ * Output: result produced by this function.
+ */
 function collectConfigSlugValues(section: SlugSection, state: any) {
     const values = new Set<string>();
     const prefixBySection: Record<SlugSection, string> = {
@@ -622,6 +777,11 @@ function collectConfigSlugValues(section: SlugSection, state: any) {
     }
     return sortedSlugValues(values);
 }
+/**
+ * Handles the buildTokenCompletions function logic.
+ * Input: context: any, state: any.
+ * Output: result produced by this function.
+ */
 function buildTokenCompletions(context: any, state: any) {
     const before = context.matchBefore(/(?:^|\s)([#@!{])([^\s}]*)$/);
     if (!before) {
@@ -667,6 +827,11 @@ function buildTokenCompletions(context: any, state: any) {
         validFor: /[^\s}]*/,
     };
 }
+/**
+ * Handles the buildHeaderConfigCompletions function logic.
+ * Input: context: any, state: any.
+ * Output: result produced by this function.
+ */
 function buildHeaderConfigCompletions(context: any, state: any) {
     const doc = context.state.doc;
     const line = doc.lineAt(context.pos);
@@ -748,6 +913,11 @@ function buildHeaderConfigCompletions(context: any, state: any) {
     }
     return null;
 }
+/**
+ * Handles the taskScriptCompletionSource function logic.
+ * Input: state: any.
+ * Output: result produced by this function.
+ */
 function taskScriptCompletionSource(state: any) {
     return (context: any) => {
         const tokenCompletions = buildTokenCompletions(context, state);
@@ -757,6 +927,11 @@ function taskScriptCompletionSource(state: any) {
         return buildHeaderConfigCompletions(context, state);
     };
 }
+/**
+ * Handles the listMarkerRange function logic.
+ * Input: text: any.
+ * Output: result produced by this function.
+ */
 function listMarkerRange(text: any) {
     if (typeof text !== "string" || !text.length) {
         return null;
@@ -769,6 +944,11 @@ function listMarkerRange(text: any) {
         indentLength: (match[1] ?? "").length,
     };
 }
+/**
+ * Handles the parseOrderedListLine function logic.
+ * Input: text: any.
+ * Output: result produced by this function.
+ */
 function parseOrderedListLine(text: any) {
     if (typeof text !== "string" || !text.length) {
         return null;
@@ -786,6 +966,11 @@ function parseOrderedListLine(text: any) {
         numberText: match[2] ?? "",
     };
 }
+/**
+ * Handles the getTaskContextForLine function logic.
+ * Input: doc: any, lineNumber: number.
+ * Output: result produced by this function.
+ */
 function getTaskContextForLine(doc: any, lineNumber: number) {
     const safeLine = Math.max(1, Math.min(lineNumber, doc.lines));
     for (let current = safeLine; current >= 1; current -= 1) {
@@ -803,10 +988,20 @@ function getTaskContextForLine(doc: any, lineNumber: number) {
         taskIndent: 0,
     };
 }
+/**
+ * Handles the listLevelFromIndent function logic.
+ * Input: indentLength: number, taskIndent: number.
+ * Output: result produced by this function.
+ */
 function listLevelFromIndent(indentLength: number, taskIndent: number) {
     const relativeIndent = Math.max(0, indentLength - taskIndent);
     return Math.floor(relativeIndent / 4);
 }
+/**
+ * Handles the listLineType function logic.
+ * Input: text: any.
+ * Output: result produced by this function.
+ */
 function listLineType(text: any) {
     if (typeof text !== "string") {
         return "other";
@@ -825,10 +1020,20 @@ function listLineType(text: any) {
     }
     return "other";
 }
+/**
+ * Handles the isListBlockLine function logic.
+ * Input: text: any.
+ * Output: result produced by this function.
+ */
 function isListBlockLine(text: any) {
     const type = listLineType(text);
     return type !== "other";
 }
+/**
+ * Handles the findTaskBodyEndLine function logic.
+ * Input: doc: any, taskLineNumber: number.
+ * Output: result produced by this function.
+ */
 function findTaskBodyEndLine(doc: any, taskLineNumber: number) {
     if (!Number.isFinite(taskLineNumber) || taskLineNumber <= 0) {
         return doc.lines;
@@ -840,6 +1045,11 @@ function findTaskBodyEndLine(doc: any, taskLineNumber: number) {
     }
     return doc.lines;
 }
+/**
+ * Handles the findOrderedListBlock function logic.
+ * Input: doc: any, lineNumber: number.
+ * Output: result produced by this function.
+ */
 function findOrderedListBlock(doc: any, lineNumber: number) {
     const safeLine = Math.max(1, Math.min(lineNumber, doc.lines));
     const context = getTaskContextForLine(doc, safeLine);
@@ -863,6 +1073,11 @@ function findOrderedListBlock(doc: any, lineNumber: number) {
         taskIndent: context.taskIndent,
     };
 }
+/**
+ * Handles the buildOrderedRenumberChanges function logic.
+ * Input: doc: any, block: any.
+ * Output: result produced by this function.
+ */
 function buildOrderedRenumberChanges(doc: any, block: any) {
     if (!block) {
         return [];
@@ -889,6 +1104,11 @@ function buildOrderedRenumberChanges(doc: any, block: any) {
     }
     return changes;
 }
+/**
+ * Handles the renumberOrderedListBlock function logic.
+ * Input: view: any, lineNumber: number.
+ * Output: result produced by this function.
+ */
 function renumberOrderedListBlock(view: any, lineNumber: number) {
     const block = findOrderedListBlock(view.state.doc, lineNumber);
     const changes = buildOrderedRenumberChanges(view.state.doc, block);
@@ -898,6 +1118,11 @@ function renumberOrderedListBlock(view: any, lineNumber: number) {
     view.dispatch({ changes });
     return true;
 }
+/**
+ * Handles the insertTabAtCursor function logic.
+ * Input: view: any.
+ * Output: result produced by this function.
+ */
 function insertTabAtCursor(view: any) {
     const range = view.state.selection.main;
     if (!range.empty) {
@@ -927,6 +1152,11 @@ function insertTabAtCursor(view: any) {
     });
     return true;
 }
+/**
+ * Handles the outdentAtCursor function logic.
+ * Input: view: any.
+ * Output: result produced by this function.
+ */
 function outdentAtCursor(view: any) {
     const range = view.state.selection.main;
     if (!range.empty) {
@@ -969,6 +1199,11 @@ function outdentAtCursor(view: any) {
     });
     return true;
 }
+/**
+ * Handles the handleEnter function logic.
+ * Input: view: any.
+ * Output: result produced by this function.
+ */
 function handleEnter(view: any) {
     const range = view.state.selection.main;
     const line = view.state.doc.lineAt(range.from);
@@ -1028,6 +1263,11 @@ function handleEnter(view: any) {
     }
     return true;
 }
+/**
+ * Handles the checkboxTokenAtPosition function logic.
+ * Input: doc: any, pos: any.
+ * Output: result produced by this function.
+ */
 function checkboxTokenAtPosition(doc: any, pos: any) {
     if (!doc || typeof pos !== "number" || pos < 0) {
         return null;
@@ -1056,6 +1296,11 @@ function checkboxTokenAtPosition(doc: any, pos: any) {
         cursor: line.from + tokenStart + 1,
     };
 }
+/**
+ * Handles the taskTitleAtPosition function logic.
+ * Input: doc: any, pos: any.
+ * Output: result produced by this function.
+ */
 function taskTitleAtPosition(doc: any, pos: any) {
     if (!doc || typeof pos !== "number" || pos < 0) {
         return null;
@@ -1103,6 +1348,11 @@ function taskTitleAtPosition(doc: any, pos: any) {
         title: text.slice(titleStart, titleEnd),
     };
 }
+/**
+ * Handles the referenceTokenAtPosition function logic.
+ * Input: doc: any, pos: any.
+ * Output: result produced by this function.
+ */
 function referenceTokenAtPosition(doc: any, pos: any) {
     if (!doc || typeof pos !== "number" || pos < 0) {
         return null;
@@ -1134,6 +1384,11 @@ function referenceTokenAtPosition(doc: any, pos: any) {
     }
     return null;
 }
+/**
+ * Handles the findTaskLineByTitle function logic.
+ * Input: doc: any, title: any.
+ * Output: result produced by this function.
+ */
 function findTaskLineByTitle(doc: any, title: any) {
     if (!doc || typeof title !== "string") {
         return null;
@@ -1162,6 +1417,11 @@ function findTaskLineByTitle(doc: any, title: any) {
     }
     return fuzzyMatch;
 }
+/**
+ * Handles the findConfigLineForToken function logic.
+ * Input: doc: any, token: any.
+ * Output: result produced by this function.
+ */
 function findConfigLineForToken(doc: any, token: any) {
     if (!doc || !token || typeof token.type !== "string") {
         return null;
@@ -1217,6 +1477,11 @@ function findConfigLineForToken(doc: any, token: any) {
     }
     return sectionHeaderLine;
 }
+/**
+ * Handles the slugTokenAtPosition function logic.
+ * Input: doc: any, pos: any.
+ * Output: result produced by this function.
+ */
 function slugTokenAtPosition(doc: any, pos: any) {
     if (!doc || typeof pos !== "number" || pos < 0) {
         return null;
@@ -1307,9 +1572,15 @@ function slugTokenAtPosition(doc: any, pos: any) {
         to: line.from + slugEnd,
     };
 }
+// Defines the CreateEditorOptions type structure for this module.
 type CreateEditorOptions = {
     state: any;
     dom: any;
+    /**
+     * Handles the onSync function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     onSync: () => void;
     onSelectTask?: ((task: any) => void) | null;
     onLocalChange?: ((value?: string) => boolean | void) | null;
@@ -1320,31 +1591,131 @@ type CreateEditorOptions = {
     spellcheck?: boolean;
     scopedSpellcheck?: boolean;
 };
+/**
+ * Handles the createEditor function logic.
+ * Input: { state, dom, onSync, onSelectTask, onLocalChange, onSelectionChange, onFocusChange, onTaskTitleDoubleClick, onTokenDoubleClick, spellcheck = false, scopedSpellcheck = false, }: CreateEditorOptions.
+ * Output: result produced by this function.
+ */
 export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, onSelectionChange, onFocusChange, onTaskTitleDoubleClick, onTokenDoubleClick, spellcheck = false, scopedSpellcheck = false, }: CreateEditorOptions) {
     const textarea = dom.editor;
     const host = dom.editorHost;
     if (!textarea || !host) {
         return {
+            /**
+             * Handles the getValue function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             getValue: () => "",
+            /**
+             * Handles the setValue function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             setValue: () => { },
+            /**
+             * Handles the setValueFromRemote function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             setValueFromRemote: () => { },
+            /**
+             * Handles the replaceRange function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             replaceRange: () => { },
+            /**
+             * Handles the focus function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             focus: () => { },
+            /**
+             * Handles the setSelectionRange function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             setSelectionRange: () => { },
+            /**
+             * Handles the getSelectionRange function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             getSelectionRange: () => ({ start: 0, end: 0 }),
+            /**
+             * Handles the getScroll function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             getScroll: () => ({ top: 0, left: 0 }),
+            /**
+             * Handles the setScroll function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             setScroll: () => { },
+            /**
+             * Handles the dispatchInput function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             dispatchInput: () => { },
+            /**
+             * Handles the updateSelectedLine function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             updateSelectedLine: () => { },
+            /**
+             * Handles the highlightText function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             highlightText: () => { },
+            /**
+             * Handles the updateSuggestions function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             updateSuggestions: () => { },
+            /**
+             * Handles the setSpellcheckEnabled function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             setSpellcheckEnabled: () => { },
+            /**
+             * Handles the undo function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             undo: () => { },
+            /**
+             * Handles the redo function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             redo: () => { },
             getDisplaySelectionRects: (): VisibleRect[] => [],
             getDisplayCursorRects: (): VisibleRect[] => [],
+            /**
+             * Handles the syncOverlayMetrics function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             syncOverlayMetrics: () => { },
+            /**
+             * Handles the setCollabExtensions function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             setCollabExtensions: () => { },
+            /**
+             * Handles the setReadOnly function logic.
+             * Input: none.
+             * Output: result produced by this function.
+             */
             setReadOnly: () => { },
         };
     }
@@ -1367,6 +1738,11 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
         state.spellcheckEnabled = spellcheckEnabled;
         state.scopedSpellcheck = scopedSpellcheckEnabled;
     }
+    /**
+     * Handles the contentAttributesExtension function logic.
+     * Input: none.
+     * Output: "off", });.
+     */
     const contentAttributesExtension = () => EditorView.contentAttributes.of({
         "aria-label": "Task script editor",
         spellcheck: spellcheckEnabled ? "true" : "false",
@@ -1375,6 +1751,11 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
             : "off",
     });
     const completionSource = taskScriptCompletionSource(state);
+    /**
+     * Handles the syncTextareaOverlayMetrics function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     const syncTextareaOverlayMetrics = () => {
         if (!textarea || !view?.scrollDOM || !view?.contentDOM) {
             return;
@@ -1542,10 +1923,20 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
                 keymap.of([
                     {
                         key: "Tab",
+                        /**
+                         * Handles the run function logic.
+                         * Input: viewInstance.
+                         * Output: result produced by this function.
+                         */
                         run: (viewInstance) => insertTabAtCursor(viewInstance) || indentMore(viewInstance),
                     },
                     {
                         key: "Shift-Tab",
+                        /**
+                         * Handles the run function logic.
+                         * Input: viewInstance.
+                         * Output: result produced by this function.
+                         */
                         run: (viewInstance) => outdentAtCursor(viewInstance) || indentLess(viewInstance),
                     },
                     { key: "Enter", run: handleEnter },
@@ -1598,6 +1989,11 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
         if (typeof onFocusChange !== "function") {
             return;
         }
+        /**
+         * Handles the emitFocusedSelection function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         const emitFocusedSelection = () => {
             if (!view.hasFocus) {
                 return;
@@ -1687,6 +2083,11 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
         event.stopPropagation();
         openReferenceTaskLine(targetLine);
     });
+    /**
+     * Handles the updateSelectedLine function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
     const updateSelectedLine = () => {
         const line = view.state.doc.lineAt(view.state.selection.main.head).number - 1;
         state.selectedLine = line;
@@ -1711,7 +2112,17 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
     })
         .filter((item: VisibleRect | null): item is VisibleRect => Boolean(item));
     return {
+        /**
+         * Handles the getValue function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         getValue: () => view.state.doc.toString(),
+        /**
+         * Handles the setValue function logic.
+         * Input: nextValue: string.
+         * Output: result produced by this function.
+         */
         setValue: (nextValue: string) => {
             if (nextValue === view.state.doc.toString()) {
                 return;
@@ -1720,6 +2131,11 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
                 changes: { from: 0, to: view.state.doc.length, insert: nextValue },
             });
         },
+        /**
+         * Handles the setValueFromRemote function logic.
+         * Input: nextValue: string.
+         * Output: result produced by this function.
+         */
         setValueFromRemote: (nextValue: string) => {
             if (nextValue === view.state.doc.toString()) {
                 return;
@@ -1746,6 +2162,11 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
             const oldReplaceEnd = currentValue.length - suffix;
             const newReplace = nextValue.slice(prefix, nextValue.length - suffix);
             const delta = nextValue.length - currentValue.length;
+            /**
+             * Handles the adjustOffset function logic.
+             * Input: pos: number.
+             * Output: result produced by this function.
+             */
             const adjustOffset = (pos: number) => {
                 if (pos <= oldReplaceStart) {
                     return pos;
@@ -1771,26 +2192,56 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
             }
             syncTextareaOverlayMetrics();
         },
+        /**
+         * Handles the replaceRange function logic.
+         * Input: from: number, to: number, insert: string.
+         * Output: result produced by this function.
+         */
         replaceRange: (from: number, to: number, insert: string) => {
             view.dispatch({
                 changes: { from, to, insert },
             });
         },
+        /**
+         * Handles the focus function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         focus: () => view.focus(),
+        /**
+         * Handles the setSelectionRange function logic.
+         * Input: start: number, end: number.
+         * Output: result produced by this function.
+         */
         setSelectionRange: (start: number, end: number) => {
             view.dispatch({
                 selection: { anchor: start, head: end },
                 scrollIntoView: true,
             });
         },
+        /**
+         * Handles the getSelectionRange function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         getSelectionRange: () => ({
             start: view.state.selection.main.from,
             end: view.state.selection.main.to,
         }),
+        /**
+         * Handles the getScroll function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         getScroll: () => ({
             top: view.scrollDOM.scrollTop,
             left: view.scrollDOM.scrollLeft,
         }),
+        /**
+         * Handles the setScroll function logic.
+         * Input: { top, left }: { top?: number; left?: number }.
+         * Output: result produced by this function.
+         */
         setScroll: ({ top, left }: { top?: number; left?: number }) => {
             if (typeof top === "number") {
                 view.scrollDOM.scrollTop = top;
@@ -1799,15 +2250,30 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
                 view.scrollDOM.scrollLeft = left;
             }
         },
+        /**
+         * Handles the dispatchInput function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         dispatchInput: () => {
             textarea.dispatchEvent(new Event("input", { bubbles: true }));
         },
+        /**
+         * Handles the setTheme function logic.
+         * Input: theme: any.
+         * Output: result produced by this function.
+         */
         setTheme: (theme: any) => {
             const isDark = theme === "dark";
             view.dispatch({
                 effects: themeCompartment.reconfigure(themeExtension(isDark)),
             });
         },
+        /**
+         * Handles the setSpellcheckEnabled function logic.
+         * Input: enabled: any.
+         * Output: result produced by this function.
+         */
         setSpellcheckEnabled: (enabled: any) => {
             spellcheckEnabled = Boolean(enabled);
             if (state && typeof state === "object") {
@@ -1818,17 +2284,52 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
             });
         },
         updateSelectedLine,
+        /**
+         * Handles the highlightText function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         highlightText: () => { },
+        /**
+         * Handles the updateSuggestions function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         updateSuggestions: () => { },
+        /**
+         * Handles the undo function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         undo: () => {
             undo(view);
         },
+        /**
+         * Handles the redo function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         redo: () => {
             redo(view);
         },
+        /**
+         * Handles the getDisplaySelectionRects function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         getDisplaySelectionRects: () => getVisibleRects(".cm-selectionLayer .cm-selectionBackground"),
+        /**
+         * Handles the getDisplayCursorRects function logic.
+         * Input: none.
+         * Output: result produced by this function.
+         */
         getDisplayCursorRects: () => getVisibleRects(".cm-cursorLayer .cm-cursor"),
         syncOverlayMetrics: syncTextareaOverlayMetrics,
+        /**
+         * Handles the setCollabExtensions function logic.
+         * Input: extensions: any[] | any = [].
+         * Output: result produced by this function.
+         */
         setCollabExtensions: (extensions: any[] | any = []) => {
             const normalized = Array.isArray(extensions) ? extensions : [extensions];
             view.dispatch({
@@ -1836,6 +2337,11 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
             });
             syncTextareaOverlayMetrics();
         },
+        /**
+         * Handles the setReadOnly function logic.
+         * Input: enabled: any.
+         * Output: result produced by this function.
+         */
         setReadOnly: (enabled: any) => {
             const readOnly = Boolean(enabled);
             view.dispatch({

@@ -5147,9 +5147,9 @@ html[data-viewport="mobile"] .modal {
 }
 
 html[data-viewport="tablet"] .modal {
-  padding: 0;
-  align-items: stretch;
-  justify-content: stretch;
+  padding: 16px;
+  align-items: center;
+  justify-content: center;
 }
 
 html[data-viewport="mobile"] .modal-card,
@@ -5175,13 +5175,21 @@ html[data-viewport="mobile"] .modal-card.task-edit-card {
 html[data-viewport="tablet"] .modal-card,
 html[data-viewport="tablet"] #spaces-modal .modal-card,
 html[data-viewport="tablet"] .modal-card.task-edit-card {
-  width: 100vw;
-  max-width: 100vw;
-  min-height: 100vh;
-  max-height: 100vh;
-  height: 100vh;
-  border-radius: 0;
+  width: min(960px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  min-height: 0;
+  max-height: min(90vh, 900px);
+  height: auto;
+  border-radius: 16px;
   margin: 0;
+}
+
+@supports (height: 100dvh) {
+  html[data-viewport="tablet"] .modal-card,
+  html[data-viewport="tablet"] #spaces-modal .modal-card,
+  html[data-viewport="tablet"] .modal-card.task-edit-card {
+    max-height: min(90dvh, 900px);
+  }
 }
 
 html[data-viewport="tablet"] #task-delete-modal {

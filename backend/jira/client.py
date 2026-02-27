@@ -1,3 +1,5 @@
+# Module: Jira API client and conversion helpers between task text and Jira document formats.
+
 import base64
 import json
 import logging
@@ -12,19 +14,32 @@ import uuid
 
 logger = logging.getLogger("server")
 
+# Stores the LOG_BORDER_WIDTH module constant.
 LOG_BORDER_WIDTH = 60
+# Stores the JIRA_ESTIMATE_UNSET module constant.
 JIRA_ESTIMATE_UNSET = object()
 
+# Stores the _BOLD_RE module constant.
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+# Stores the _UNDERLINE_RE module constant.
 _UNDERLINE_RE = re.compile(r"__([^_]+)__")
+# Stores the _HIGHLIGHT_RE module constant.
 _HIGHLIGHT_RE = re.compile(r"==([^=]+)==")
+# Stores the _ITALIC_RE module constant.
 _ITALIC_RE = re.compile(r"(?<!\*)\*([^*]+)\*(?!\*)")
+# Stores the _REFERENCE_RE module constant.
 _REFERENCE_RE = re.compile(r"\{([^}]+)\}")
+# Stores the _REFERENCE_PREFIX module constant.
 _REFERENCE_PREFIX = "https://task.local/"
+# Stores the _HIGHLIGHT_COLOR module constant.
 _HIGHLIGHT_COLOR = "#FFAB00"
+# Stores the _JIRA_KEY_RE module constant.
 _JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 
 
+# Handles the _parse_inline function logic.
+# Input: text: str.
+# Output: List[Dict[str, Any]].
 def _parse_inline(text: str) -> List[Dict[str, Any]]:
     nodes: List[Dict[str, Any]] = []
     index = 0
@@ -76,12 +91,18 @@ def _parse_inline(text: str) -> List[Dict[str, Any]]:
     return nodes
 
 
+# Handles the _paragraph function logic.
+# Input: text: str.
+# Output: Dict[str, Any].
 def _paragraph(text: str) -> Dict[str, Any]:
     if text == "":
         return {"type": "paragraph", "content": []}
     return {"type": "paragraph", "content": _parse_inline(text)}
 
 
+# Handles the _build_list_items function logic.
+# Input: values: Iterable[str].
+# Output: List[Dict[str, Any]].
 def _build_list_items(values: Iterable[str]) -> List[Dict[str, Any]]:
     return [
         {
@@ -92,6 +113,9 @@ def _build_list_items(values: Iterable[str]) -> List[Dict[str, Any]]:
     ]
 
 
+# Handles the _build_task_items function logic.
+# Input: values: Iterable[Tuple[bool, str]].
+# Output: List[Dict[str, Any]].
 def _build_task_items(values: Iterable[Tuple[bool, str]]) -> List[Dict[str, Any]]:
     items = []
     for checked, text in values:
@@ -108,6 +132,9 @@ def _build_task_items(values: Iterable[Tuple[bool, str]]) -> List[Dict[str, Any]
     return items
 
 
+# Handles the to_adf function logic.
+# Input: text: str.
+# Output: Dict[str, Any].
 def to_adf(text: str) -> Dict[str, Any]:
     lines = text.split("\n")
     content: List[Dict[str, Any]] = []
@@ -116,6 +143,9 @@ def to_adf(text: str) -> Dict[str, Any]:
     checkbox_re = re.compile(r"^\[([ xX])\](?:\s+(.*))?$")
     bullet_re = re.compile(r"^[-*]\s+(.*)$")
 
+    # Handles the flush_list function logic.
+    # Input: none.
+    # Output: None.
     def flush_list() -> None:
         nonlocal list_mode, list_items
         if not list_mode:
@@ -161,6 +191,9 @@ def to_adf(text: str) -> Dict[str, Any]:
     return {"type": "doc", "version": 1, "content": content}
 
 
+# Handles the _collect_text function logic.
+# Input: node: Any.
+# Output: str.
 def _collect_text(node: Any) -> str:
     if not isinstance(node, dict):
         return ""
@@ -179,6 +212,9 @@ def _collect_text(node: Any) -> str:
     return ""
 
 
+# Handles the _apply_marks function logic.
+# Input: text: str, marks: List[Dict[str, Any]].
+# Output: str.
 def _apply_marks(text: str, marks: List[Dict[str, Any]]) -> str:
     if not marks:
         return text
@@ -205,6 +241,9 @@ def _apply_marks(text: str, marks: List[Dict[str, Any]]) -> str:
     return text
 
 
+# Handles the _collect_references function logic.
+# Input: node: Any, refs: List[str].
+# Output: None.
 def _collect_references(node: Any, refs: List[str]) -> None:
     if not isinstance(node, dict):
         return
@@ -224,6 +263,9 @@ def _collect_references(node: Any, refs: List[str]) -> None:
         _collect_references(child, refs)
 
 
+# Handles the extract_references_from_adf function logic.
+# Input: doc: Any.
+# Output: List[str].
 def extract_references_from_adf(doc: Any) -> List[str]:
     if not isinstance(doc, dict):
         return []
@@ -239,6 +281,9 @@ def extract_references_from_adf(doc: Any) -> List[str]:
     return unique
 
 
+# Handles the _extract_list_item_text function logic.
+# Input: item: Dict[str, Any].
+# Output: str.
 def _extract_list_item_text(item: Dict[str, Any]) -> str:
     parts: List[str] = []
     for child in item.get("content", []) or []:
@@ -255,6 +300,9 @@ def _extract_list_item_text(item: Dict[str, Any]) -> str:
     return text
 
 
+# Handles the _collect_lines function logic.
+# Input: node: Any.
+# Output: List[str].
 def _collect_lines(node: Any) -> List[str]:
     if not isinstance(node, dict):
         return []
@@ -291,6 +339,9 @@ def _collect_lines(node: Any) -> List[str]:
     return []
 
 
+# Handles the from_adf function logic.
+# Input: doc: Any.
+# Output: str.
 def from_adf(doc: Any) -> str:
     if isinstance(doc, str):
         return doc
@@ -300,7 +351,11 @@ def from_adf(doc: Any) -> str:
     return "\n".join(lines).strip()
 
 
+# Defines the JiraClient structure used by this module.
 class JiraClient:
+    # Handles the __init__ function logic.
+    # Input: self, base_url: str, email: str, token: str.
+    # Output: None.
     def __init__(self, base_url: str, email: str, token: str) -> None:
         self.base_url = base_url.rstrip("/")
         auth = base64.b64encode(f"{email}:{token}".encode("utf-8")).decode("ascii")
@@ -310,6 +365,9 @@ class JiraClient:
             "Content-Type": "application/json",
         }
 
+    # Handles the _summarize_payload function logic.
+    # Input: self, payload: Optional[Dict[str, Any]].
+    # Output: str.
     def _summarize_payload(self, payload: Optional[Dict[str, Any]]) -> str:
         if payload is None:
             return "(none)"
@@ -321,6 +379,9 @@ class JiraClient:
             rendered = rendered[:1997] + "..."
         return rendered
 
+    # Handles the _format_payload function logic.
+    # Input: self, payload: Any.
+    # Output: str.
     def _format_payload(self, payload: Any) -> str:
         if payload is None:
             return "(none)"
@@ -331,6 +392,9 @@ class JiraClient:
         except Exception:
             return str(payload)
 
+    # Handles the _format_block function logic.
+    # Input: self, title: str, body: str.
+    # Output: str.
     def _format_block(self, title: str, body: str) -> str:
         prefix = f"=== {title} "
         width = max(LOG_BORDER_WIDTH, len(prefix) + 1)
@@ -338,6 +402,9 @@ class JiraClient:
         border = "=" * len(line)
         return f"{line}\n{body}\n{border}"
 
+    # Handles the _request function logic.
+    # Input: self, method: str, path: str, payload: Optional[Dict[str, Any]] = None.
+    # Output: Tuple[Any, int].
     def _request(
         self, method: str, path: str, payload: Optional[Dict[str, Any]] = None
     ) -> Tuple[Any, int]:
@@ -394,6 +461,9 @@ class JiraClient:
             return None, status
         return json.loads(raw), status
 
+    # Handles the get_issue function logic.
+    # Input: self, key: str.
+    # Output: Tuple[Optional[Dict[str, Any]], Optional[int]].
     def get_issue(self, key: str) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
         try:
             data, status = self._request(
@@ -405,6 +475,9 @@ class JiraClient:
             logger.exception("Failed to fetch Jira issue %s", key)
             return None, None
 
+    # Handles the create_issue function logic.
+    # Input: self, project_key: str, summary: str, description: str, labels: Optional[List[str]] = None, issue_type: str = "Task", parent_key: Optional[str] = None, assignee_id: Optional[str] = None, original_estimate_minutes: Any = JIRA_ESTIMATE_UNSET,.
+    # Output: Tuple[Optional[str], Optional[int], Optional[Dict[str, Any]]].
     def create_issue(
         self,
         project_key: str,
@@ -458,6 +531,9 @@ class JiraClient:
             logger.exception("Failed to create Jira issue in %s", project_key)
             return None, None, None
 
+    # Handles the update_issue function logic.
+    # Input: self, key: str, summary: Optional[str] = None, description: Optional[str] = None, labels: Optional[List[str]] = None, assignee_id: Optional[str] = None, clear_assignee: bool = False, original_estimate_minutes: Any = JIRA_ESTIMATE_UNSET,.
+    # Output: Tuple[Optional[int], Optional[Dict[str, Any]]].
     def update_issue(
         self,
         key: str,
@@ -507,6 +583,9 @@ class JiraClient:
             logger.exception("Failed to update Jira issue %s", key)
             return None, None
 
+    # Handles the get_project_statuses function logic.
+    # Input: self, project_key: str.
+    # Output: Tuple[Optional[List[str]], Optional[int]].
     def get_project_statuses(
         self, project_key: str
     ) -> Tuple[Optional[List[str]], Optional[int]]:
@@ -531,6 +610,9 @@ class JiraClient:
             logger.exception("Failed to fetch Jira statuses for %s", project_key)
             return None, None
 
+    # Handles the search_users function logic.
+    # Input: self, query: str, max_results: int = 50.
+    # Output: Tuple[Optional[List[Dict[str, Any]]], Optional[int]].
     def search_users(
         self, query: str, max_results: int = 50
     ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[int]]:
@@ -547,6 +629,9 @@ class JiraClient:
             logger.exception("Failed to search Jira users for %s", query)
             return None, None
 
+    # Handles the transition_issue function logic.
+    # Input: self, key: str, status_name: str.
+    # Output: Tuple[Optional[int], Optional[Dict[str, Any]]].
     def transition_issue(
         self, key: str, status_name: str
     ) -> Tuple[Optional[int], Optional[Dict[str, Any]]]:

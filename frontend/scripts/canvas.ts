@@ -1,5 +1,9 @@
 // @ts-check
 
+/**
+ * Module: Graph and canvas rendering plus interaction handlers for task visualization.
+ */
+
 import { colorFromString } from "./task.js";
 import {
   decorateDescriptionPills,
@@ -8,12 +12,23 @@ import {
   wireDescriptionCheckboxes,
 } from "./taskDescription.js";
 
+// Defines the CreateCanvasOptions type structure for this module.
 type CreateCanvasOptions = {
   state: any;
   dom: any;
   renderMarkdown?: ((text: string, options?: any) => string) | null;
+  /**
+   * Handles the onSelectTask function logic.
+   * Input: task: any.
+   * Output: result produced by this function.
+   */
   onSelectTask: (task: any) => void;
   onEditTask?: ((task: any) => void) | null;
+  /**
+   * Handles the findTaskByName function logic.
+   * Input: name: string.
+   * Output: result produced by this function.
+   */
   findTaskByName: (name: string) => any;
   onUpdateTaskToken?: ((task: any, token: string, action: string) => void) | null;
   onUpdateTaskState?: ((task: any, stateTag: string | null) => void) | null;
@@ -23,6 +38,11 @@ type CreateCanvasOptions = {
   onFiltersChange?: (() => void) | null;
 };
 
+/**
+ * Handles the createCanvas function logic.
+ * Input: { state, dom, renderMarkdown, onSelectTask, onEditTask, findTaskByName, onUpdateTaskToken, onUpdateTaskState, onMakeSubtask, onReorderTask, onToggleCheckbox, onFiltersChange, }: CreateCanvasOptions.
+ * Output: result produced by this function.
+ */
 export function createCanvas({
   state,
   dom,
@@ -132,6 +152,11 @@ export function createCanvas({
     document.body.removeChild(textarea);
   };
 
+  /**
+   * Handles the getTaskById function logic.
+   * Input: taskId: string.
+   * Output: result produced by this function.
+   */
   const getTaskById = (taskId: string) =>
     state.allTasks.find((item: any) => item.id === taskId) || null;
 
@@ -309,6 +334,11 @@ export function createCanvas({
     onMakeSubtask(sourceTask, targetTask);
   };
 
+  /**
+   * Handles the closeReferenceDropdown function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const closeReferenceDropdown = () => {
     if (!openReferenceDropdown) {
       return;
@@ -403,6 +433,11 @@ export function createCanvas({
 
   let tokenDragGhost: HTMLElement | null = null;
 
+  /**
+   * Handles the clearTokenDragGhost function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const clearTokenDragGhost = () => {
     if (!tokenDragGhost) {
       return;
@@ -492,12 +527,22 @@ export function createCanvas({
     return text || null;
   };
 
+  /**
+   * Handles the clearGraphParentTargets function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const clearGraphParentTargets = () => {
     graphNodes?.querySelectorAll?.(".task-node.drag-parent-target").forEach((node: any) => {
       node.classList.remove("drag-parent-target");
     });
   };
 
+  /**
+   * Handles the clearGraphReorderIndicators function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const clearGraphReorderIndicators = () => {
     graphNodes?.querySelectorAll?.(".task-node").forEach((node: any) => {
       node.classList.remove("drop-before", "drop-after", "drop-gap-prev", "drop-gap-next");
@@ -508,6 +553,11 @@ export function createCanvas({
     activeGraphReorder = null;
   };
 
+  /**
+   * Handles the clearGraphDropIndicators function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const clearGraphDropIndicators = () => {
     clearGraphParentTargets();
     clearGraphReorderIndicators();
@@ -1266,9 +1316,24 @@ export function createCanvas({
     }
     if (task.description.length) {
       decorateDescriptionReferences(desc, {
+        /**
+         * Handles the resolveTaskByName function logic.
+         * Input: name: string.
+         * Output: result produced by this function.
+         */
         resolveTaskByName: (name: string) => findTaskByName(name),
+        /**
+         * Handles the getResolvedTitle function logic.
+         * Input: target: any.
+         * Output: result produced by this function.
+         */
         getResolvedTitle: (target: any) => `Open task: ${target.name}`,
         stopPropagationOnClick: true,
+        /**
+         * Handles the onReferenceClick function logic.
+         * Input: { name }: any.
+         * Output: result produced by this function.
+         */
         onReferenceClick: ({ name }: any) => {
           const target = findTaskByName(name);
           if (target) {
@@ -1281,6 +1346,11 @@ export function createCanvas({
         peopleMeta: state.peopleMeta,
         selectedTags: state.selectedTags,
         selectedPeople: state.selectedPeople,
+        /**
+         * Handles the onPill function logic.
+         * Input: { pill, type, value }: any.
+         * Output: result produced by this function.
+         */
         onPill: ({ pill, type, value }: any) => {
           if (type === "jira") {
             pill.title = `Copy ${value}`;
@@ -1324,6 +1394,11 @@ export function createCanvas({
         stopPropagationEvents: ["mousedown", "click"],
         triggerEvent: "click",
         disableWhenUnavailable: true,
+        /**
+         * Handles the onToggle function logic.
+         * Input: { lineIndex, checked }: any.
+         * Output: result produced by this function.
+         */
         onToggle: ({ lineIndex, checked }: any) => {
           if (onToggleCheckbox) {
             onToggleCheckbox(lineIndex, checked);
@@ -1346,6 +1421,11 @@ export function createCanvas({
     }
   };
 
+  /**
+   * Handles the renderGraph function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   function renderGraph() {
     if (!isResponsiveGraphVisible()) {
       return;
@@ -1486,6 +1566,11 @@ export function createCanvas({
     state.animateTransform = false;
   }
 
+  /**
+   * Handles the gatherVisible function logic.
+   * Input: tasks: any[], result: any[] = [].
+   * Output: any[].
+   */
   function gatherVisible(tasks: any[], result: any[] = []): any[] {
     tasks.forEach((task: any) => {
       result.push(task);
@@ -1496,6 +1581,11 @@ export function createCanvas({
     return result;
   }
 
+  /**
+   * Handles the buildPill function logic.
+   * Input: text: string, active: boolean, onClick: any, meta: any = null.
+   * Output: result produced by this function.
+   */
   function buildPill(text: string, active: boolean, onClick: any, meta: any = null) {
     const pill = document.createElement("button");
     pill.type = "button";
@@ -1534,6 +1624,11 @@ export function createCanvas({
     return pill;
   }
 
+  /**
+   * Handles the toggleTag function logic.
+   * Input: tag: string.
+   * Output: void.
+   */
   function toggleTag(tag: string): void {
     if (state.selectedTags.has(tag)) {
       state.selectedTags.delete(tag);
@@ -1547,6 +1642,11 @@ export function createCanvas({
     }
   }
 
+  /**
+   * Handles the togglePerson function logic.
+   * Input: person: string.
+   * Output: void.
+   */
   function togglePerson(person: string): void {
     if (state.selectedPeople.has(person)) {
       state.selectedPeople.delete(person);
@@ -1560,6 +1660,11 @@ export function createCanvas({
     }
   }
 
+  /**
+   * Handles the expandForFilters function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   function expandForFilters() {
     if (!state.selectedTags.size && !state.selectedPeople.size) {
       return;
@@ -1578,6 +1683,11 @@ export function createCanvas({
     state.tasks.forEach((task: any) => ensureExpanded(task, []));
   }
 
+  /**
+   * Handles the matchesFiltersTask function logic.
+   * Input: task: any.
+   * Output: boolean.
+   */
   function matchesFiltersTask(task: any): boolean {
     if (!state.selectedTags.size && !state.selectedPeople.size) {
       return true;
@@ -1588,6 +1698,11 @@ export function createCanvas({
     );
   }
 
+  /**
+   * Handles the tokenMatchesQuery function logic.
+   * Input: token: string, metaMap: any, query: string.
+   * Output: boolean.
+   */
   function tokenMatchesQuery(token: string, metaMap: any, query: string): boolean {
     if (token.toLowerCase().includes(query)) {
       return true;
@@ -1604,10 +1719,20 @@ export function createCanvas({
     return (name && name.includes(query)) || (key && key.includes(query));
   }
 
+  /**
+   * Handles the tokensMatchQuery function logic.
+   * Input: tokens: any[], metaMap: any, query: string.
+   * Output: boolean.
+   */
   function tokensMatchQuery(tokens: any[], metaMap: any, query: string): boolean {
     return tokens.some((token: any) => tokenMatchesQuery(token, metaMap, query));
   }
 
+  /**
+   * Handles the matchesSearch function logic.
+   * Input: task: any.
+   * Output: boolean.
+   */
   function matchesSearch(task: any): boolean {
     if (!state.searchQuery) {
       return false;
@@ -1631,6 +1756,11 @@ export function createCanvas({
     return false;
   }
 
+  /**
+   * Handles the focusOnTask function logic.
+   * Input: task: any.
+   * Output: void.
+   */
   function focusOnTask(task: any): void {
     const pos = state.positions.get(task.id);
     if (!pos) {
@@ -1645,6 +1775,11 @@ export function createCanvas({
     applyTransform(true);
   }
 
+  /**
+   * Handles the applyTransform function logic.
+   * Input: animate = false.
+   * Output: result produced by this function.
+   */
   function applyTransform(animate = false) {
     const { x, y, scale } = state.transform;
     const transitionValue = animate ? "transform 0.5s ease" : "none";
@@ -1655,6 +1790,11 @@ export function createCanvas({
     updateMinimapViewport();
   }
 
+  /**
+   * Handles the scheduleZoomRedraw function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   const scheduleZoomRedraw = () => {
     if (zoomRedrawTimeout) {
       clearTimeout(zoomRedrawTimeout);
@@ -1977,6 +2117,11 @@ export function createCanvas({
     buildPill,
   };
 
+  /**
+   * Handles the updateMinimap function logic.
+   * Input: { visibleTasks, positions, nodeWidthFor, nodeHeightFor, viewWidth, viewHeight, canvasRect, }: any.
+   * Output: void.
+   */
   function updateMinimap({
     visibleTasks,
     positions,
@@ -2031,6 +2176,11 @@ export function createCanvas({
     minimapSvg.innerHTML = `<g>${nodes.join("")}</g><g>${lines.join("")}</g><rect class="minimap-viewport" x="${viewportX}" y="${viewportY}" width="${viewportWidth}" height="${viewportHeight}" />`;
   }
 
+  /**
+   * Handles the updateMinimapViewport function logic.
+   * Input: none.
+   * Output: result produced by this function.
+   */
   function updateMinimapViewport() {
     if (!minimapSvg || !state.graphBounds) {
       return;
@@ -2051,6 +2201,11 @@ export function createCanvas({
     viewport.setAttribute("height", `${viewportHeight}`);
   }
 
+  /**
+   * Handles the getViewportRect function logic.
+   * Input: canvasRect: DOMRect, boundsWidth: number, boundsHeight: number.
+   * Output: result produced by this function.
+   */
   function getViewportRect(canvasRect: DOMRect, boundsWidth: number, boundsHeight: number) {
     const scale = state.transform.scale || 1;
     const rawWidth = canvasRect.width / scale;

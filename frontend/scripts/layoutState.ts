@@ -1,11 +1,21 @@
 // @ts-check
 
+/**
+ * Module: Responsive layout state persistence and layout configuration helpers.
+ */
+
+// Defines the GraphTopHiddenLayoutParams type structure for this module.
 type GraphTopHiddenLayoutParams = {
   dom: Record<string, any>;
   defaultKanbanHeight?: number;
   doc?: Document;
 };
 
+/**
+ * Handles the setGraphHiddenForLeftSnap function logic.
+ * Input: leftPercent: number, doc: Document = document.
+ * Output: result produced by this function.
+ */
 export function setGraphHiddenForLeftSnap(leftPercent: number, doc: Document = document) {
   const graphHidden = Number.isFinite(leftPercent) && leftPercent <= 0.01;
   if (graphHidden) {
@@ -15,6 +25,11 @@ export function setGraphHiddenForLeftSnap(leftPercent: number, doc: Document = d
   }
 }
 
+/**
+ * Handles the setGraphTopHiddenForKanbanHeight function logic.
+ * Input: kanbanHeightPx: number, maxHeightPx: number, doc: Document = document.
+ * Output: result produced by this function.
+ */
 export function setGraphTopHiddenForKanbanHeight(
   kanbanHeightPx: number,
   maxHeightPx: number,
@@ -32,6 +47,11 @@ export function setGraphTopHiddenForKanbanHeight(
   }
 }
 
+/**
+ * Handles the updateGraphTopHiddenFromLayout function logic.
+ * Input: { dom, defaultKanbanHeight = 180, doc = document, }: GraphTopHiddenLayoutParams.
+ * Output: result produced by this function.
+ */
 export function updateGraphTopHiddenFromLayout({
   dom,
   defaultKanbanHeight = 180,

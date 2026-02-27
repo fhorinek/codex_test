@@ -1,4 +1,8 @@
 // @ts-check
+/**
+ * Module: Task parsing and task model helper utilities.
+ */
+
 import type { JiraTitleParseResult, ParsedTaskDocument, RenderMarkdownOptions } from "./types";
 import {
   JIRA_MARKER_GLOBAL_RE,
@@ -11,15 +15,20 @@ import {
   normalizeConfiguredColorValue,
 } from "./taskTokens.js";
 
+// Defines the InlineMarkdownOptions type structure for this module.
 type InlineMarkdownOptions = { disableLinks?: boolean };
+// Defines the MarkdownListType type structure for this module.
 type MarkdownListType = "ol" | "ul";
+// Defines the MarkdownListStackItem type structure for this module.
 type MarkdownListStackItem = { type: MarkdownListType; liOpen: boolean };
+// Defines the MarkdownListItemRenderArgs type structure for this module.
 type MarkdownListItemRenderArgs = {
   type: MarkdownListType;
   level: number | string;
   content: string;
   startNumber: number;
 };
+// Defines the ParsedConfigEntry type structure for this module.
 type ParsedConfigEntry = {
   key: string;
   name: string;
@@ -27,12 +36,14 @@ type ParsedConfigEntry = {
   email?: string;
   jiraState?: string;
 };
+// Defines the ParsedConfigShape type structure for this module.
 type ParsedConfigShape = {
   boardName: string;
   states: ParsedConfigEntry[];
   people: ParsedConfigEntry[];
   tags: ParsedConfigEntry[];
 };
+// Defines the ParsedTaskRecord type structure for this module.
 type ParsedTaskRecord = {
   id: string;
   name: string;
@@ -404,6 +415,11 @@ export function renderMarkdown(text: string, options: RenderMarkdownOptions = {}
   return html;
 }
 
+/**
+ * Handles the parseConfig function logic.
+ * Input: lines: string[].
+ * Output: result produced by this function.
+ */
 function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: number } {
   const config: ParsedConfigShape = {
     boardName: "Task Script",
@@ -495,6 +511,11 @@ function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: 
   return { config, startIndex: index };
 }
 
+/**
+ * Handles the parseTasks function logic.
+ * Input: text: string.
+ * Output: ParsedTaskDocument.
+ */
 export function parseTasks(text: string): ParsedTaskDocument {
   const lines = text.split("\n");
   const { config, startIndex } = parseConfig(lines);

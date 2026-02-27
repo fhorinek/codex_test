@@ -1,3 +1,5 @@
+# Module: Jira space synchronization helpers and websocket space session integration.
+
 import asyncio
 import difflib
 import logging
@@ -15,20 +17,33 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger("jira-worker")
 
+# Stores the WS_BASE_URL module constant.
 WS_BASE_URL = "ws://localhost:5000/ws"
 
+# Stores the REFERENCE_RE module constant.
 REFERENCE_RE = re.compile(r"\{([^}]+)\}")
+# Stores the STATE_TOKEN_RE module constant.
 STATE_TOKEN_RE = re.compile(r"(^|\s)!([^\s#@]+)")
+# Stores the TAG_TOKEN_RE module constant.
 TAG_TOKEN_RE = re.compile(r"(^|\s)#([^\s#@]+)")
+# Stores the PERSON_TOKEN_RE module constant.
 PERSON_TOKEN_RE = re.compile(r"(^|\s)@([^\s#@]+)")
+# Stores the STORY_POINTS_RE module constant.
 STORY_POINTS_RE = re.compile(r"(^|\s)~(\d+(?:\.\d+)?)(?=\s|$)")
+# Stores the TOKEN_SPLIT_RE module constant.
 TOKEN_SPLIT_RE = re.compile(r"(\s+)")
 
 
+# Handles the _normalize_list function logic.
+# Input: values.
+# Output: value produced by this function.
 def _normalize_list(values):
     return sorted({value.strip() for value in values if value and value.strip()})
 
 
+# Handles the format_token_line function logic.
+# Input: state, tags, people.
+# Output: str.
 def format_token_line(state, tags, people) -> str:
     tokens = []
     if state:
@@ -40,22 +55,37 @@ def format_token_line(state, tags, people) -> str:
     return " ".join(tokens).strip()
 
 
+# Handles the add_tags_to_line function logic.
+# Input: line: str, tags.
+# Output: str.
 def add_tags_to_line(line: str, tags) -> str:
     return _add_tokens_to_line(line, tags, "#", TAG_TOKEN_RE)
 
 
+# Handles the remove_tags_from_line function logic.
+# Input: line: str, tags.
+# Output: str.
 def remove_tags_from_line(line: str, tags) -> str:
     return _remove_tokens_from_line(line, tags, TAG_TOKEN_RE)
 
 
+# Handles the add_people_to_line function logic.
+# Input: line: str, people.
+# Output: str.
 def add_people_to_line(line: str, people) -> str:
     return _add_tokens_to_line(line, people, "@", PERSON_TOKEN_RE)
 
 
+# Handles the remove_people_from_line function logic.
+# Input: line: str, people.
+# Output: str.
 def remove_people_from_line(line: str, people) -> str:
     return _remove_tokens_from_line(line, people, PERSON_TOKEN_RE)
 
 
+# Handles the set_state_in_line function logic.
+# Input: line: str, state.
+# Output: str.
 def set_state_in_line(line: str, state) -> str:
     if state:
         line = remove_state_from_line(line)
@@ -64,10 +94,16 @@ def set_state_in_line(line: str, state) -> str:
     return remove_state_from_line(line)
 
 
+# Handles the remove_state_from_line function logic.
+# Input: line: str.
+# Output: str.
 def remove_state_from_line(line: str) -> str:
     return _remove_tokens_from_line(line, ["*"], STATE_TOKEN_RE, match_all=True)
 
 
+# Handles the extract_references function logic.
+# Input: text: str.
+# Output: value produced by this function.
 def extract_references(text: str):
     refs = []
     for match in REFERENCE_RE.finditer(text or ""):
@@ -77,6 +113,9 @@ def extract_references(text: str):
     return refs
 
 
+# Handles the normalize_reference_to_key function logic.
+# Input: ref: str, title_to_key.
+# Output: value produced by this function.
 def normalize_reference_to_key(ref: str, title_to_key):
     cleaned = ref.strip()
     if not cleaned:
@@ -86,6 +125,9 @@ def normalize_reference_to_key(ref: str, title_to_key):
     return title_to_key.get(cleaned.lower()) if title_to_key else None
 
 
+# Handles the extract_linked_keys function logic.
+# Input: description: str, title_to_key.
+# Output: value produced by this function.
 def extract_linked_keys(description: str, title_to_key):
     refs = extract_references(description)
     keys = []
@@ -96,6 +138,9 @@ def extract_linked_keys(description: str, title_to_key):
     return _normalize_list(keys)
 
 
+# Handles the append_missing_references function logic.
+# Input: description: str, refs.
+# Output: str.
 def append_missing_references(description: str, refs) -> str:
     if not refs:
         return description
@@ -112,6 +157,9 @@ def append_missing_references(description: str, refs) -> str:
     return "\n".join(lines).rstrip()
 
 
+# Handles the apply_linked_references function logic.
+# Input: description: str, linked_keys, key_to_title, title_to_key,.
+# Output: str.
 def apply_linked_references(
     description: str,
     linked_keys,
@@ -125,6 +173,9 @@ def apply_linked_references(
     lines = description.split("\n") if description else []
     new_lines = []
 
+    # Handles the repl function logic.
+    # Input: match: re.Match.
+    # Output: str.
     def repl(match: re.Match) -> str:
         ref = match.group(1).strip()
         key = normalize_reference_to_key(ref, title_to_key)
@@ -146,10 +197,16 @@ def apply_linked_references(
     return appended.rstrip()
 
 
+# Handles the add_reference_to_description function logic.
+# Input: description: str, ref: str.
+# Output: str.
 def add_reference_to_description(description: str, ref: str) -> str:
     return append_missing_references(description, [ref])
 
 
+# Handles the remove_reference_from_description function logic.
+# Input: description: str, ref: str.
+# Output: str.
 def remove_reference_from_description(description: str, ref: str) -> str:
     if not description:
         return ""
@@ -170,6 +227,9 @@ def remove_reference_from_description(description: str, ref: str) -> str:
     return "\n".join(lines).rstrip()
 
 
+# Handles the scrub_body_tokens function logic.
+# Input: description: str, desired_state, desired_tags, desired_people,.
+# Output: str.
 def scrub_body_tokens(
     description: str,
     desired_state,
@@ -197,6 +257,9 @@ def scrub_body_tokens(
     return "\n".join(cleaned_lines).rstrip()
 
 
+# Handles the _append_token function logic.
+# Input: line: str, token: str.
+# Output: str.
 def _append_token(line: str, token: str) -> str:
     token = token.strip()
     if not token:
@@ -206,6 +269,9 @@ def _append_token(line: str, token: str) -> str:
     return f"{line} {token}".rstrip()
 
 
+# Handles the _add_tokens_to_line function logic.
+# Input: line: str, tokens, prefix: str, token_re.
+# Output: str.
 def _add_tokens_to_line(line: str, tokens, prefix: str, token_re) -> str:
     tokens = _normalize_list(tokens or [])
     if not tokens:
@@ -217,6 +283,9 @@ def _add_tokens_to_line(line: str, tokens, prefix: str, token_re) -> str:
     return line.rstrip()
 
 
+# Handles the _remove_tokens_from_line function logic.
+# Input: line: str, tokens, token_re, invert: bool = False, match_all: bool = False,.
+# Output: str.
 def _remove_tokens_from_line(
     line: str,
     tokens,
@@ -253,6 +322,9 @@ def _remove_tokens_from_line(
     return re.sub(r"\s+", " ", "".join(kept)).strip()
 
 
+# Handles the _remove_state_token_from_line function logic.
+# Input: line: str, desired_state.
+# Output: str.
 def _remove_state_token_from_line(line: str, desired_state) -> str:
     if not line:
         return ""
@@ -274,27 +346,46 @@ def _remove_state_token_from_line(line: str, desired_state) -> str:
     return "".join(kept).strip()
 
 
+# Defines the WebsocketAdapter structure used by this module.
 class WebsocketAdapter:
+    # Handles the __init__ function logic.
+    # Input: self, websocket, path: str.
+    # Output: None.
     def __init__(self, websocket, path: str) -> None:
         self._websocket = websocket
         self._path = path
 
+    # Handles the path function logic.
+    # Input: self.
+    # Output: str.
     @property
     def path(self) -> str:
         return self._path
 
+    # Handles the __aiter__ function logic.
+    # Input: self.
+    # Output: value produced by this function.
     def __aiter__(self):
         return self
 
+    # Handles the __anext__ function logic.
+    # Input: self.
+    # Output: bytes.
     async def __anext__(self) -> bytes:
         try:
             return await self.recv()
         except Exception:
             raise StopAsyncIteration()
 
+    # Handles the send function logic.
+    # Input: self, message: bytes.
+    # Output: None.
     async def send(self, message: bytes) -> None:
         await self._websocket.send(message)
 
+    # Handles the recv function logic.
+    # Input: self.
+    # Output: bytes.
     async def recv(self) -> bytes:
         message = await self._websocket.recv()
         if isinstance(message, bytes):
@@ -302,6 +393,7 @@ class WebsocketAdapter:
         return message.encode("utf-8")
 
 
+# Defines the SpaceSession structure used by this module.
 @dataclass
 class SpaceSession:
     space_id: str
@@ -315,6 +407,9 @@ class SpaceSession:
     pending_change: bool = False
     last_content: str = ""
 
+    # Handles the close function logic.
+    # Input: self.
+    # Output: None.
     async def close(self) -> None:
         try:
             await self.provider.stop()
@@ -330,6 +425,9 @@ class SpaceSession:
             logger.debug("Failed closing websocket for %s", self.space_id)
 
 
+# Handles the open_space_session function logic.
+# Input: space_id: str.
+# Output: SpaceSession.
 async def open_space_session(space_id: str) -> SpaceSession:
     server_user, server_password = load_jira_worker_credentials()
     if not server_user or not server_password:
@@ -378,6 +476,9 @@ async def open_space_session(space_id: str) -> SpaceSession:
         provider_task=provider_task,
     )
 
+    # Handles the _after_txn function logic.
+    # Input: *_args, **_kwargs.
+    # Output: value produced by this function.
     def _after_txn(*_args, **_kwargs):
         session.pending_change = True
 
@@ -386,6 +487,9 @@ async def open_space_session(space_id: str) -> SpaceSession:
     return session
 
 
+# Handles the ydoc_to_text function logic.
+# Input: ydoc: Y.YDoc.
+# Output: str.
 def ydoc_to_text(ydoc: Y.YDoc) -> str:
     text = ydoc.get_text("content")
     raw = text.to_json()
@@ -396,6 +500,9 @@ def ydoc_to_text(ydoc: Y.YDoc) -> str:
     return str(raw)
 
 
+# Handles the replace_ydoc_text function logic.
+# Input: ydoc: Y.YDoc, content: str.
+# Output: None.
 def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
     text = ydoc.get_text("content")
     current = ydoc_to_text(ydoc)
@@ -404,6 +511,9 @@ def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
     matcher = difflib.SequenceMatcher(a=current, b=content)
     opcodes = matcher.get_opcodes()
 
+    # Handles the apply function logic.
+    # Input: txn.
+    # Output: value produced by this function.
     def apply(txn):
         for tag, i1, i2, j1, j2 in reversed(opcodes):
             if tag == "equal":
@@ -418,6 +528,9 @@ def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
     ydoc.transact(apply)
 
 
+# Handles the read_ydoc_text function logic.
+# Input: ydoc: Y.YDoc, retries: int = 5.
+# Output: str.
 async def read_ydoc_text(ydoc: Y.YDoc, retries: int = 5) -> str:
     for attempt in range(retries):
         try:

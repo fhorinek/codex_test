@@ -1,3 +1,5 @@
+# Module: Jira sync worker logic for parsing tasks and reconciling Jira and space state.
+
 import asyncio
 import argparse
 import difflib
@@ -15,6 +17,7 @@ from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger("jira-worker")
 
+# Stores the BACKEND_DIR module constant.
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if __package__ in (None, ""):
     sys.path.append(str(BACKEND_DIR))
@@ -55,54 +58,98 @@ else:
         replace_ydoc_text,
         scrub_body_tokens,
     )
+# Stores the SPACES_DIR module constant.
 SPACES_DIR = BACKEND_DIR / "spaces"
 
+# Stores the JIRA_PROJECTS module constant.
 JIRA_PROJECTS: Dict[str, str] = {
     "jira_test": "KAN",
 }
+# Stores the JIRA_SYNC_INTERVAL module constant.
 JIRA_SYNC_INTERVAL = 10
+# Stores the JIRA_PULL_IDLE_SECONDS module constant.
 JIRA_PULL_IDLE_SECONDS = 5
+# Stores the JIRA_SPACE_STABLE_SECONDS module constant.
 JIRA_SPACE_STABLE_SECONDS = 15
+# Stores the JIRA_ISSUE_TYPE module constant.
 JIRA_ISSUE_TYPE = "Task"
+# Stores the JIRA_SUBTASK_ISSUE_TYPE module constant.
 JIRA_SUBTASK_ISSUE_TYPE = "Sub-task"
+# Stores the JIRA_DEFAULT_STATE module constant.
 JIRA_DEFAULT_STATE = "Backlog"
+# Stores the JIRA_STATE_MAP module constant.
 JIRA_STATE_MAP = {
     "todo": "To Do",
     "inprogress": "In Progress",
     "done": "Done",
 }
+# Stores the JIRA_STATE_MAP_BY_PROJECT module constant.
 JIRA_STATE_MAP_BY_PROJECT: Dict[str, Dict[str, str]] = {}
+# Stores the JIRA_USER_MAP module constant.
 JIRA_USER_MAP: Dict[str, str] = {
     # Space assignee -> Jira accountId
     # "maya": "5b10a2844c20165700ede21g",
 }
+# Stores the JIRA_MARKER_RE module constant.
 JIRA_MARKER_RE = re.compile(r"\[JIRA:([A-Z][A-Z0-9]+(?:-\d+)?)\]")
 
 space_entity_cache: Dict[str, Dict[str, Any]] = {}
 jira_entity_cache: Dict[str, Dict[str, Any]] = {}
+# Stores the JIRA_ACCOUNT_ID_BY_EMAIL module constant.
 JIRA_ACCOUNT_ID_BY_EMAIL: Dict[str, str] = {}
+# Stores the LOG_BORDER_WIDTH module constant.
 LOG_BORDER_WIDTH = 60
 
+# Handles the run_blocking_io function logic.
+# Input: func, *args: Any, **kwargs: Any.
+# Output: Any.
+async def run_blocking_io(func, *args: Any, **kwargs: Any) -> Any:
+    to_thread = getattr(asyncio, "to_thread", None)
+    if callable(to_thread):
+        return await to_thread(func, *args, **kwargs)
+    loop = asyncio.get_running_loop()
+    if kwargs:
+        return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
+    return await loop.run_in_executor(None, func, *args)
+
+
+# Stores the TASK_LINE_RE module constant.
 TASK_LINE_RE = re.compile(r"^(\s*)%\s+(.*)$")
+# Stores the TOKEN_LINE_RE module constant.
 TOKEN_LINE_RE = re.compile(r"(^|\s)[#!@~]")
+# Stores the STATE_TOKEN_RE module constant.
 STATE_TOKEN_RE = re.compile(r"(^|\s)!([^\s#@]+)")
+# Stores the TAG_TOKEN_RE module constant.
 TAG_TOKEN_RE = re.compile(r"(^|\s)#([^\s#@]+)")
+# Stores the PERSON_TOKEN_RE module constant.
 PERSON_TOKEN_RE = re.compile(r"(^|\s)@([^\s#@]+)")
+# Stores the REFERENCE_RE module constant.
 REFERENCE_RE = re.compile(r"\{([^}]+)\}")
+# Stores the STORY_POINTS_RE module constant.
 STORY_POINTS_RE = re.compile(r"(^|\s)~(\d+(?:\.\d+)?)(?=\s|$)")
 
+# Stores the TASK_MODIFY_ADD module constant.
 TASK_MODIFY_ADD = "add"
+# Stores the TASK_MODIFY_REMOVE module constant.
 TASK_MODIFY_REMOVE = "remove"
 
+# Stores the TASK_FIELD_TAG module constant.
 TASK_FIELD_TAG = "tag"
+# Stores the TASK_FIELD_DESCRIPTION module constant.
 TASK_FIELD_DESCRIPTION = "description"
+# Stores the TASK_FIELD_REFERENCE module constant.
 TASK_FIELD_REFERENCE = "reference"
+# Stores the TASK_FIELD_PEOPLE module constant.
 TASK_FIELD_PEOPLE = "people"
+# Stores the TASK_FIELD_NAME module constant.
 TASK_FIELD_NAME = "name"
+# Stores the TASK_FIELD_STATE module constant.
 TASK_FIELD_STATE = "state"
+# Stores the TASK_FIELD_JIRAKEY module constant.
 TASK_FIELD_JIRAKEY = "jirakey"
 
 
+# Defines the PersonConfig structure used by this module.
 @dataclass
 class PersonConfig:
     slug: str
@@ -110,6 +157,7 @@ class PersonConfig:
     mail: str
 
 
+# Defines the StateConfig structure used by this module.
 @dataclass
 class StateConfig:
     slug: str
@@ -117,6 +165,7 @@ class StateConfig:
     jira: List[str]
 
 
+# Defines the ParsedTask structure used by this module.
 @dataclass
 class ParsedTask:
     line_index: int
@@ -133,6 +182,7 @@ class ParsedTask:
     parent_index: Optional[int] = None
 
 
+# Defines the SyncEntity structure used by this module.
 @dataclass
 class SyncEntity:
     key: str
@@ -147,6 +197,7 @@ class SyncEntity:
     field_timestamps: Dict[str, float] = field(default_factory=dict)
 
 
+# Defines the SpaceTask structure used by this module.
 @dataclass
 class SpaceTask:
     line_index: int
@@ -165,10 +216,16 @@ class SpaceTask:
     parent_index: Optional[int] = None
 
 
+# Handles the jira_enabled function logic.
+# Input: config: JiraConfig.
+# Output: bool.
 def jira_enabled(config: JiraConfig) -> bool:
     return config.enabled
 
 
+# Handles the get_jira_project function logic.
+# Input: space_id: str.
+# Output: Optional[str].
 def get_jira_project(space_id: str) -> Optional[str]:
     return (
         JIRA_PROJECTS.get(space_id)
@@ -176,6 +233,9 @@ def get_jira_project(space_id: str) -> Optional[str]:
     )
 
 
+# Handles the extract_jira_key function logic.
+# Input: text: str.
+# Output: Optional[str].
 def extract_jira_key(text: str) -> Optional[str]:
     match = JIRA_MARKER_RE.search(text)
     if not match:
@@ -186,6 +246,9 @@ def extract_jira_key(text: str) -> Optional[str]:
     return None
 
 
+# Handles the extract_jira_project_hint function logic.
+# Input: text: str.
+# Output: Optional[str].
 def extract_jira_project_hint(text: str) -> Optional[str]:
     match = JIRA_MARKER_RE.search(text)
     if not match:
@@ -196,10 +259,16 @@ def extract_jira_project_hint(text: str) -> Optional[str]:
     return value
 
 
+# Handles the strip_jira_marker function logic.
+# Input: text: str.
+# Output: str.
 def strip_jira_marker(text: str) -> str:
     return JIRA_MARKER_RE.sub("", text).strip()
 
 
+# Handles the build_task_line function logic.
+# Input: indent: str, name: str, jira_key: Optional[str].
+# Output: str.
 def build_task_line(indent: str, name: str, jira_key: Optional[str]) -> str:
     base = name.strip()
     line = f"{indent}%"
@@ -210,10 +279,16 @@ def build_task_line(indent: str, name: str, jira_key: Optional[str]) -> str:
     return line.rstrip()
 
 
+# Handles the _normalize_list function logic.
+# Input: values: List[str].
+# Output: List[str].
 def _normalize_list(values: List[str]) -> List[str]:
     return sorted({value.strip() for value in values if value and value.strip()})
 
 
+# Handles the task_snapshot function logic.
+# Input: task: ParsedTask.
+# Output: Dict[str, Any].
 def task_snapshot(task: ParsedTask) -> Dict[str, Any]:
     return {
         "name": task.name,
@@ -224,6 +299,9 @@ def task_snapshot(task: ParsedTask) -> Dict[str, Any]:
     }
 
 
+# Handles the diff_snapshot function logic.
+# Input: previous: Optional[Dict[str, Any]], current: Dict[str, Any],.
+# Output: Dict[str, Tuple[Any, Any]].
 def diff_snapshot(
     previous: Optional[Dict[str, Any]],
     current: Dict[str, Any],
@@ -238,6 +316,9 @@ def diff_snapshot(
     return changes
 
 
+# Handles the parse_people_config function logic.
+# Input: lines: List[str],.
+# Output: Tuple[Dict[str, PersonConfig], List[str], Optional[Tuple[int, int, str]]].
 def parse_people_config(
     lines: List[str],
 ) -> Tuple[Dict[str, PersonConfig], List[str], Optional[Tuple[int, int, str]]]:
@@ -292,6 +373,9 @@ def parse_people_config(
     return {}, [], None
 
 
+# Handles the parse_states_config function logic.
+# Input: lines: List[str],.
+# Output: Tuple[Dict[str, StateConfig], List[str], Optional[Tuple[int, int, str]]].
 def parse_states_config(
     lines: List[str],
 ) -> Tuple[Dict[str, StateConfig], List[str], Optional[Tuple[int, int, str]]]:
@@ -350,6 +434,9 @@ def parse_states_config(
     return {}, [], None
 
 
+# Handles the render_states_config function logic.
+# Input: indent: str, states: Dict[str, StateConfig], order: List[str].
+# Output: List[str].
 def render_states_config(
     indent: str, states: Dict[str, StateConfig], order: List[str]
 ) -> List[str]:
@@ -368,6 +455,9 @@ def render_states_config(
     return lines
 
 
+# Handles the apply_states_config function logic.
+# Input: lines: List[str], states: Dict[str, StateConfig], order: List[str], block: Optional[Tuple[int, int, str]],.
+# Output: Tuple[List[str], Tuple[int, int, str]].
 def apply_states_config(
     lines: List[str],
     states: Dict[str, StateConfig],
@@ -399,6 +489,9 @@ def apply_states_config(
     return lines, (start, start + len(new_block), indent)
 
 
+# Handles the render_people_config function logic.
+# Input: indent: str, people: Dict[str, PersonConfig], order: List[str].
+# Output: List[str].
 def render_people_config(
     indent: str, people: Dict[str, PersonConfig], order: List[str]
 ) -> List[str]:
@@ -417,6 +510,9 @@ def render_people_config(
     return lines
 
 
+# Handles the slugify_person function logic.
+# Input: name: str.
+# Output: str.
 def slugify_person(name: str) -> str:
     normalized = unicodedata.normalize("NFKD", name)
     ascii_text = normalized.encode("ascii", "ignore").decode("ascii")
@@ -425,6 +521,9 @@ def slugify_person(name: str) -> str:
     return slug or "person"
 
 
+# Handles the ensure_unique_slug function logic.
+# Input: base: str, existing: List[str].
+# Output: str.
 def ensure_unique_slug(base: str, existing: List[str]) -> str:
     candidate = base or "person"
     existing_set = {item.lower() for item in existing}
@@ -438,6 +537,9 @@ def ensure_unique_slug(base: str, existing: List[str]) -> str:
         counter += 1
 
 
+# Handles the apply_people_config function logic.
+# Input: lines: List[str], people: Dict[str, PersonConfig], order: List[str], block: Optional[Tuple[int, int, str]],.
+# Output: Tuple[List[str], Tuple[int, int, str]].
 def apply_people_config(
     lines: List[str],
     people: Dict[str, PersonConfig],
@@ -468,6 +570,9 @@ def apply_people_config(
     return lines, (start, start + len(new_block), indent)
 
 
+# Handles the find_config_bounds function logic.
+# Input: lines: List[str].
+# Output: Tuple[Optional[int], int, str].
 def find_config_bounds(lines: List[str]) -> Tuple[Optional[int], int, str]:
     first_non_empty = None
     for idx, line in enumerate(lines):
@@ -497,6 +602,9 @@ def find_config_bounds(lines: List[str]) -> Tuple[Optional[int], int, str]:
     return None, config_end, ""
 
 
+# Handles the is_token_line function logic.
+# Input: text: str.
+# Output: bool.
 def is_token_line(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
@@ -509,6 +617,9 @@ def is_token_line(text: str) -> bool:
     return True
 
 
+# Handles the parse_space_tasks function logic.
+# Input: lines: List[str].
+# Output: List[SpaceTask].
 def parse_space_tasks(lines: List[str]) -> List[SpaceTask]:
     tasks: List[SpaceTask] = []
     for index, line in enumerate(lines):
@@ -577,6 +688,9 @@ def parse_space_tasks(lines: List[str]) -> List[SpaceTask]:
     return tasks
 
 
+# Handles the find_space_task_by_key function logic.
+# Input: tasks: List[SpaceTask], key: str.
+# Output: Optional[SpaceTask].
 def find_space_task_by_key(tasks: List[SpaceTask], key: str) -> Optional[SpaceTask]:
     for task in tasks:
         if task.jira_key == key:
@@ -584,6 +698,9 @@ def find_space_task_by_key(tasks: List[SpaceTask], key: str) -> Optional[SpaceTa
     return None
 
 
+# Handles the assign_space_task_parents function logic.
+# Input: tasks: List[SpaceTask].
+# Output: None.
 def assign_space_task_parents(tasks: List[SpaceTask]) -> None:
     stack: List[SpaceTask] = []
     for task in tasks:
@@ -594,6 +711,9 @@ def assign_space_task_parents(tasks: List[SpaceTask]) -> None:
         stack.append(task)
 
 
+# Handles the build_reference_maps function logic.
+# Input: tasks: List[SpaceTask],.
+# Output: Tuple[Dict[str, str], Dict[str, str]].
 def build_reference_maps(
     tasks: List[SpaceTask],
 ) -> Tuple[Dict[str, str], Dict[str, str]]:
@@ -612,12 +732,18 @@ def build_reference_maps(
     return key_to_title, title_to_key
 
 
+# Handles the normalize_description_for_space function logic.
+# Input: description: str, key_to_title: Dict[str, str].
+# Output: str.
 def normalize_description_for_space(
     description: str, key_to_title: Dict[str, str]
 ) -> str:
     if not description:
         return ""
 
+    # Handles the repl function logic.
+    # Input: match: re.Match.
+    # Output: str.
     def repl(match: re.Match) -> str:
         ref = match.group(1).strip()
         if not ref:
@@ -637,6 +763,9 @@ def normalize_description_for_space(
     return "\n".join(filtered_lines).rstrip()
 
 
+# Handles the strip_token_lines_from_description function logic.
+# Input: description: str.
+# Output: str.
 def strip_token_lines_from_description(description: str) -> str:
     if not description:
         return ""
@@ -648,12 +777,18 @@ def strip_token_lines_from_description(description: str) -> str:
     return "\n".join(kept).rstrip()
 
 
+# Handles the convert_description_to_jira function logic.
+# Input: description: str, title_to_key: Dict[str, str].
+# Output: str.
 def convert_description_to_jira(
     description: str, title_to_key: Dict[str, str]
 ) -> str:
     if not description:
         return ""
 
+    # Handles the repl function logic.
+    # Input: match: re.Match.
+    # Output: str.
     def repl(match: re.Match) -> str:
         ref = match.group(1).strip()
         key = normalize_reference_to_key(ref, title_to_key)
@@ -664,11 +799,17 @@ def convert_description_to_jira(
     return REFERENCE_RE.sub(repl, description).rstrip()
 
 
+# Handles the _clean_story_points_line function logic.
+# Input: line: str.
+# Output: str.
 def _clean_story_points_line(line: str) -> str:
     cleaned = STORY_POINTS_RE.sub(" ", line)
     return " ".join(cleaned.split())
 
 
+# Handles the extract_story_points_from_description function logic.
+# Input: description: str.
+# Output: Optional[float].
 def extract_story_points_from_description(description: str) -> Optional[float]:
     if not description:
         return None
@@ -685,6 +826,9 @@ def extract_story_points_from_description(description: str) -> Optional[float]:
     return None
 
 
+# Handles the strip_story_points_from_description function logic.
+# Input: description: str.
+# Output: str.
 def strip_story_points_from_description(description: str) -> str:
     if not description:
         return ""
@@ -696,12 +840,18 @@ def strip_story_points_from_description(description: str) -> str:
     return "\n".join(lines).rstrip()
 
 
+# Handles the format_story_points_token function logic.
+# Input: value: float.
+# Output: str.
 def format_story_points_token(value: float) -> str:
     if float(value).is_integer():
         return str(int(value))
     return f"{value:.4f}".rstrip("0").rstrip(".")
 
 
+# Handles the format_token_line_with_story_points function logic.
+# Input: state: Optional[str], tags: List[str], people: List[str], story_points: Optional[float],.
+# Output: str.
 def format_token_line_with_story_points(
     state: Optional[str],
     tags: List[str],
@@ -717,6 +867,9 @@ def format_token_line_with_story_points(
     return f"{base} {story_token}"
 
 
+# Handles the story_points_to_estimate_minutes function logic.
+# Input: story_points: Optional[float].
+# Output: Optional[int].
 def story_points_to_estimate_minutes(story_points: Optional[float]) -> Optional[int]:
     if story_points is None:
         return 0
@@ -725,6 +878,9 @@ def story_points_to_estimate_minutes(story_points: Optional[float]) -> Optional[
     return max(0, int(round(float(story_points) * 60.0)))
 
 
+# Handles the estimate_seconds_to_story_points function logic.
+# Input: seconds: Any.
+# Output: Optional[float].
 def estimate_seconds_to_story_points(seconds: Any) -> Optional[float]:
     if not isinstance(seconds, (int, float)):
         return None
@@ -736,6 +892,9 @@ def estimate_seconds_to_story_points(seconds: Any) -> Optional[float]:
     return value
 
 
+# Handles the extract_jira_original_estimate_seconds function logic.
+# Input: fields: Dict[str, Any].
+# Output: Optional[int].
 def extract_jira_original_estimate_seconds(fields: Dict[str, Any]) -> Optional[int]:
     value = fields.get("timeoriginalestimate")
     if isinstance(value, (int, float)):
@@ -748,6 +907,7 @@ def extract_jira_original_estimate_seconds(fields: Dict[str, Any]) -> Optional[i
     return None
 
 
+# Stores the SYNC_FIELDS module constant.
 SYNC_FIELDS = [
     "title",
     "state",
@@ -759,6 +919,9 @@ SYNC_FIELDS = [
 ]
 
 
+# Handles the _entity_field_value function logic.
+# Input: entity: SyncEntity, field: str.
+# Output: Any.
 def _entity_field_value(entity: SyncEntity, field: str) -> Any:
     if field == "title":
         return entity.title or ""
@@ -779,6 +942,9 @@ def _entity_field_value(entity: SyncEntity, field: str) -> Any:
     return None
 
 
+# Handles the entities_equal function logic.
+# Input: left: SyncEntity, right: SyncEntity.
+# Output: bool.
 def entities_equal(left: SyncEntity, right: SyncEntity) -> bool:
     return all(
         _entity_field_value(left, field) == _entity_field_value(right, field)
@@ -786,6 +952,9 @@ def entities_equal(left: SyncEntity, right: SyncEntity) -> bool:
     )
 
 
+# Handles the update_entity_cache function logic.
+# Input: cache: Dict[str, SyncEntity], entity: SyncEntity, timestamp: float,.
+# Output: SyncEntity.
 def update_entity_cache(
     cache: Dict[str, SyncEntity],
     entity: SyncEntity,
@@ -816,6 +985,9 @@ def update_entity_cache(
     return entity
 
 
+# Handles the copy_entity function logic.
+# Input: entity: SyncEntity, timestamp: Optional[float] = None.
+# Output: SyncEntity.
 def copy_entity(entity: SyncEntity, timestamp: Optional[float] = None) -> SyncEntity:
     return SyncEntity(
         key=entity.key,
@@ -831,6 +1003,9 @@ def copy_entity(entity: SyncEntity, timestamp: Optional[float] = None) -> SyncEn
     )
 
 
+# Handles the prune_entity_cache function logic.
+# Input: cache: Dict[str, SyncEntity], keys: List[str].
+# Output: None.
 def prune_entity_cache(cache: Dict[str, SyncEntity], keys: List[str]) -> None:
     keep = set(keys)
     for key in list(cache.keys()):
@@ -838,6 +1013,9 @@ def prune_entity_cache(cache: Dict[str, SyncEntity], keys: List[str]) -> None:
             del cache[key]
 
 
+# Handles the build_space_entity function logic.
+# Input: task: SpaceTask, key_to_title: Dict[str, str], title_to_key: Dict[str, str],.
+# Output: SyncEntity.
 def build_space_entity(
     task: SpaceTask,
     key_to_title: Dict[str, str],
@@ -866,6 +1044,9 @@ def build_space_entity(
     )
 
 
+# Handles the resolve_state_slug function logic.
+# Input: status_name: Optional[str], states: Dict[str, StateConfig], order: List[str],.
+# Output: Tuple[Optional[str], bool].
 def resolve_state_slug(
     status_name: Optional[str],
     states: Dict[str, StateConfig],
@@ -885,6 +1066,9 @@ def resolve_state_slug(
     return slug, True
 
 
+# Handles the map_space_state_to_jira function logic.
+# Input: state: Optional[str], states: Dict[str, StateConfig].
+# Output: Optional[str].
 def map_space_state_to_jira(
     state: Optional[str], states: Dict[str, StateConfig]
 ) -> Optional[str]:
@@ -903,6 +1087,9 @@ def map_space_state_to_jira(
     return None
 
 
+# Handles the resolve_assignee_slug function logic.
+# Input: assignee: Optional[Dict[str, Any]], people: Dict[str, PersonConfig], order: List[str],.
+# Output: Tuple[Optional[str], bool].
 def resolve_assignee_slug(
     assignee: Optional[Dict[str, Any]],
     people: Dict[str, PersonConfig],
@@ -921,6 +1108,9 @@ def resolve_assignee_slug(
     return slug, True
 
 
+# Handles the build_jira_entity function logic.
+# Input: issue: Dict[str, Any], key_to_title: Dict[str, str], title_to_key: Dict[str, str], states: Dict[str, StateConfig], state_order: List[str], people: Dict[str, PersonConfig], people_order: List[str],.
+# Output: Tuple[SyncEntity, bool, bool].
 def build_jira_entity(
     issue: Dict[str, Any],
     key_to_title: Dict[str, str],
@@ -959,6 +1149,9 @@ def build_jira_entity(
     return entity, state_changed, people_changed
 
 
+# Handles the parse_tasks function logic.
+# Input: lines: List[str].
+# Output: List[ParsedTask].
 def parse_tasks(lines: List[str]) -> List[ParsedTask]:
     tasks: List[ParsedTask] = []
     for index, line in enumerate(lines):
@@ -1018,6 +1211,9 @@ def parse_tasks(lines: List[str]) -> List[ParsedTask]:
     return tasks
 
 
+# Handles the parse_space_task_token_values function logic.
+# Input: lines: List[str], task: SpaceTask.
+# Output: Tuple[Optional[str], List[str], List[str], Optional[float]].
 def parse_space_task_token_values(
     lines: List[str], task: SpaceTask
 ) -> Tuple[Optional[str], List[str], List[str], Optional[float]]:
@@ -1053,6 +1249,9 @@ def parse_space_task_token_values(
     return state, _normalize_list(tags), _normalize_list(people), story_points
 
 
+# Handles the assign_task_parents function logic.
+# Input: tasks: List[ParsedTask].
+# Output: None.
 def assign_task_parents(tasks: List[ParsedTask]) -> None:
     stack: List[ParsedTask] = []
     for task in tasks:
@@ -1063,6 +1262,9 @@ def assign_task_parents(tasks: List[ParsedTask]) -> None:
         stack.append(task)
 
 
+# Handles the find_task_by_line function logic.
+# Input: tasks: List[ParsedTask], line_index: int.
+# Output: Optional[ParsedTask].
 def find_task_by_line(tasks: List[ParsedTask], line_index: int) -> Optional[ParsedTask]:
     for task in tasks:
         if task.line_index == line_index:
@@ -1070,6 +1272,9 @@ def find_task_by_line(tasks: List[ParsedTask], line_index: int) -> Optional[Pars
     return None
 
 
+# Handles the extract_issue_link_refs function logic.
+# Input: issue: Dict[str, Any].
+# Output: List[str].
 def extract_issue_link_refs(issue: Dict[str, Any]) -> List[str]:
     fields = issue.get("fields", {}) if isinstance(issue, dict) else {}
     links = fields.get("issuelinks") or []
@@ -1097,14 +1302,23 @@ def extract_issue_link_refs(issue: Dict[str, Any]) -> List[str]:
     return unique
 
 
+# Handles the insert_jira_key function logic.
+# Input: lines: List[str], task: ParsedTask, jira_key: str.
+# Output: None.
 def insert_jira_key(lines: List[str], task: ParsedTask, jira_key: str) -> None:
     lines[task.line_index] = build_task_line(task.indent, task.name, jira_key)
 
 
+# Handles the set_task_name function logic.
+# Input: lines: List[str], task: ParsedTask, name: str.
+# Output: None.
 def set_task_name(lines: List[str], task: ParsedTask, name: str) -> None:
     lines[task.line_index] = build_task_line(task.indent, name, task.jira_key)
 
 
+# Handles the ensure_task_tokens function logic.
+# Input: lines: List[str], task: ParsedTask, state: Optional[str], tags: List[str], people: List[str],.
+# Output: Tuple[Optional[int], int, int].
 def ensure_task_tokens(
     lines: List[str],
     task: ParsedTask,
@@ -1137,6 +1351,9 @@ def ensure_task_tokens(
     return token_line_index, desc_start, desc_end
 
 
+# Handles the set_task_description function logic.
+# Input: lines: List[str], task: ParsedTask, description: str, desc_start: int, desc_end: int.
+# Output: None.
 def set_task_description(
     lines: List[str], task: ParsedTask, description: str, desc_start: int, desc_end: int
 ) -> None:
@@ -1150,6 +1367,9 @@ def set_task_description(
     lines[desc_start:desc_end] = new_block
 
 
+# Handles the modify_task function logic.
+# Input: lines: List[str], task: ParsedTask, operation: str, field: str, values: Optional[List[str]] = None,.
+# Output: None.
 def modify_task(
     lines: List[str],
     task: ParsedTask,
@@ -1322,6 +1542,9 @@ def modify_task(
     raise ValueError(f"unsupported field: {field}")
 
 
+# Handles the modify_task_text function logic.
+# Input: input_text: str, operation: str, field: str, values: Optional[List[str]] = None,.
+# Output: str.
 def modify_task_text(
     input_text: str,
     operation: str,
@@ -1336,6 +1559,9 @@ def modify_task_text(
     return "\n".join(lines)
 
 
+# Handles the map_state_to_jira function logic.
+# Input: state: Optional[str], project_key: Optional[str] = None.
+# Output: Optional[str].
 def map_state_to_jira(state: Optional[str], project_key: Optional[str] = None) -> Optional[str]:
     if not state:
         return JIRA_DEFAULT_STATE
@@ -1356,6 +1582,9 @@ def map_state_to_jira(state: Optional[str], project_key: Optional[str] = None) -
     return None
 
 
+# Handles the map_jira_to_state function logic.
+# Input: status_name: Optional[str].
+# Output: Optional[str].
 def map_jira_to_state(status_name: Optional[str]) -> Optional[str]:
     if not status_name:
         return None
@@ -1365,11 +1594,17 @@ def map_jira_to_state(status_name: Optional[str]) -> Optional[str]:
     return None
 
 
+# Handles the slugify_state function logic.
+# Input: status_name: str.
+# Output: str.
 def slugify_state(status_name: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", status_name.strip().lower())
     return slug.strip("-") or "state"
 
 
+# Handles the build_project_state_map function logic.
+# Input: statuses: List[str].
+# Output: Dict[str, str].
 def build_project_state_map(statuses: List[str]) -> Dict[str, str]:
     state_map: Dict[str, str] = {}
     for status in statuses:
@@ -1379,12 +1614,15 @@ def build_project_state_map(statuses: List[str]) -> Dict[str, str]:
     return state_map
 
 
+# Handles the ensure_project_state_map function logic.
+# Input: client: JiraClient, project_key: str.
+# Output: None.
 async def ensure_project_state_map(
     client: JiraClient, project_key: str
 ) -> None:
     if project_key in JIRA_STATE_MAP_BY_PROJECT:
         return
-    statuses, status_code = await asyncio.to_thread(
+    statuses, status_code = await run_blocking_io(
         client.get_project_statuses, project_key
     )
     if not statuses:
@@ -1402,6 +1640,9 @@ async def ensure_project_state_map(
     )
 
 
+# Handles the map_assignee_to_person function logic.
+# Input: assignee: Optional[Dict[str, Any]], people: Dict[str, PersonConfig],.
+# Output: Optional[str].
 def map_assignee_to_person(
     assignee: Optional[Dict[str, Any]],
     people: Dict[str, PersonConfig],
@@ -1426,6 +1667,9 @@ def map_assignee_to_person(
     return None
 
 
+# Handles the summarize_text function logic.
+# Input: text: Optional[str], limit: int = 60.
+# Output: str.
 def summarize_text(text: Optional[str], limit: int = 60) -> str:
     if text is None:
         return "(none)"
@@ -1437,12 +1681,18 @@ def summarize_text(text: Optional[str], limit: int = 60) -> str:
     return single
 
 
+# Handles the format_timestamp function logic.
+# Input: ts: float.
+# Output: str.
 def format_timestamp(ts: float) -> str:
     if not ts:
         return "-"
     return time.strftime("%m-%d %H:%M:%S", time.localtime(ts))
 
 
+# Handles the format_entity_summary function logic.
+# Input: entity: Optional[SyncEntity].
+# Output: str.
 def format_entity_summary(entity: Optional[SyncEntity]) -> str:
     if not entity:
         return "-"
@@ -1464,15 +1714,24 @@ def format_entity_summary(entity: Optional[SyncEntity]) -> str:
     return " ".join(parts).strip() or "-"
 
 
+# Handles the render_ascii_table function logic.
+# Input: headers: List[str], rows: List[List[str]].
+# Output: str.
 def render_ascii_table(headers: List[str], rows: List[List[str]]) -> str:
     widths = [len(header) for header in headers]
     for row in rows:
         for idx, cell in enumerate(row):
             widths[idx] = max(widths[idx], len(cell))
 
+    # Handles the sep function logic.
+    # Input: none.
+    # Output: str.
     def sep() -> str:
         return "+-" + "-+-".join("-" * width for width in widths) + "-+"
 
+    # Handles the render_row function logic.
+    # Input: row: List[str].
+    # Output: str.
     def render_row(row: List[str]) -> str:
         return "| " + " | ".join(
             cell.ljust(widths[idx]) for idx, cell in enumerate(row)
@@ -1485,6 +1744,9 @@ def render_ascii_table(headers: List[str], rows: List[List[str]]) -> str:
     return "\n".join(lines)
 
 
+# Handles the format_field_value function logic.
+# Input: field: str, entity: Optional[SyncEntity].
+# Output: str.
 def format_field_value(field: str, entity: Optional[SyncEntity]) -> str:
     if not entity:
         return "-"
@@ -1509,18 +1771,27 @@ def format_field_value(field: str, entity: Optional[SyncEntity]) -> str:
     return "-"
 
 
+# Handles the get_field_timestamp function logic.
+# Input: entity: Optional[SyncEntity], field: str.
+# Output: float.
 def get_field_timestamp(entity: Optional[SyncEntity], field: str) -> float:
     if not entity:
         return 0.0
     return entity.field_timestamps.get(field, entity.timestamp)
 
 
+# Handles the format_field_timestamp function logic.
+# Input: entity: Optional[SyncEntity], field: str.
+# Output: str.
 def format_field_timestamp(entity: Optional[SyncEntity], field: str) -> str:
     if not entity:
         return "-"
     return format_timestamp(get_field_timestamp(entity, field))
 
 
+# Handles the is_recent_space_field_change function logic.
+# Input: entity: Optional[SyncEntity], field: str, now: float, session_last_change: float,.
+# Output: bool.
 def is_recent_space_field_change(
     entity: Optional[SyncEntity],
     field: str,
@@ -1540,6 +1811,9 @@ def is_recent_space_field_change(
     return (now - field_ts) < JIRA_SPACE_STABLE_SECONDS
 
 
+# Handles the wrap_text function logic.
+# Input: value: str, width: int.
+# Output: List[str].
 def wrap_text(value: str, width: int) -> List[str]:
     if not value or value == "-":
         return ["-"]
@@ -1567,6 +1841,9 @@ def wrap_text(value: str, width: int) -> List[str]:
     return lines or ["-"]
 
 
+# Handles the format_sync_status function logic.
+# Input: direction: str, status: Optional[Dict[str, Optional[int]]].
+# Output: str.
 def format_sync_status(
     direction: str, status: Optional[Dict[str, Optional[int]]]
 ) -> str:
@@ -1584,6 +1861,9 @@ def format_sync_status(
     return f"{direction}({','.join(parts)})"
 
 
+# Handles the render_space_change_log function logic.
+# Input: space_id: str, old_lines: List[str], new_lines: List[str].
+# Output: Optional[str].
 def render_space_change_log(
     space_id: str, old_lines: List[str], new_lines: List[str]
 ) -> Optional[str]:
@@ -1631,6 +1911,9 @@ def render_space_change_log(
     )
 
 
+# Handles the format_tokens function logic.
+# Input: prefix: str, values: List[str].
+# Output: str.
 def format_tokens(prefix: str, values: List[str]) -> str:
     items = _normalize_list(values)
     if not items:
@@ -1638,6 +1921,9 @@ def format_tokens(prefix: str, values: List[str]) -> str:
     return " ".join(f"{prefix}{value}" for value in items)
 
 
+# Handles the log_field_change function logic.
+# Input: direction: str, space_id: str, project_key: str, jira_key: str, field: str, old: Any, new: Any,.
+# Output: None.
 def log_field_change(
     direction: str,
     space_id: str,
@@ -1706,6 +1992,9 @@ def log_field_change(
         return
 
 
+# Handles the summarize_jira_response function logic.
+# Input: status: Optional[int], payload: Optional[Dict[str, Any]].
+# Output: str.
 def summarize_jira_response(
     status: Optional[int], payload: Optional[Dict[str, Any]]
 ) -> str:
@@ -1719,6 +2008,9 @@ def summarize_jira_response(
     return f"status: {status}, payload: {preview}"
 
 
+# Handles the log_parsed_task function logic.
+# Input: space_id: str, task: ParsedTask.
+# Output: None.
 def log_parsed_task(space_id: str, task: ParsedTask) -> None:
     logger.info("[Space %s] parsed line_index=%s", space_id, task.line_index)
     logger.info("[Space %s] parsed indent=%s", space_id, repr(task.indent))
@@ -1733,6 +2025,9 @@ def log_parsed_task(space_id: str, task: ParsedTask) -> None:
     logger.info("[Space %s] parsed people=%s", space_id, ",".join(task.people))
 
 
+# Handles the log_jira_issue_fields function logic.
+# Input: space_id: str, project_key: str, jira_key: str, summary: str, description: str, status_name: Optional[str], next_state: Optional[str], labels: List[str], assignee: Optional[Dict[str, Any]], issue_links: Optional[List[str]] = None,.
+# Output: None.
 def log_jira_issue_fields(
     space_id: str,
     project_key: str,
@@ -1763,6 +2058,9 @@ def log_jira_issue_fields(
         logger.info("%s assignee.accountId=", prefix)
 
 
+# Handles the resolve_account_id function logic.
+# Input: client: JiraClient, email: str.
+# Output: Optional[str].
 async def resolve_account_id(
     client: JiraClient, email: str
 ) -> Optional[str]:
@@ -1772,7 +2070,7 @@ async def resolve_account_id(
     cached = JIRA_ACCOUNT_ID_BY_EMAIL.get(normalized)
     if cached:
         return cached
-    users, status = await asyncio.to_thread(client.search_users, normalized)
+    users, status = await run_blocking_io(client.search_users, normalized)
     if not users:
         logger.warning("Jira user search failed for %s (status: %s)", email, status)
         return None
@@ -1799,6 +2097,9 @@ async def resolve_account_id(
     return None
 
 
+# Handles the resolve_owner_account_id function logic.
+# Input: client: JiraClient, owner: Optional[str], people: Dict[str, PersonConfig],.
+# Output: Optional[str].
 async def resolve_owner_account_id(
     client: JiraClient,
     owner: Optional[str],
@@ -1817,6 +2118,9 @@ async def resolve_owner_account_id(
     return await resolve_account_id(client, config.mail)
 
 
+# Handles the sync_space_with_jira function logic.
+# Input: client: JiraClient, session: SpaceSession, project_key: str, force_direction: Optional[str] = None,.
+# Output: None.
 async def sync_space_with_jira(
     client: JiraClient,
     session: SpaceSession,
@@ -1901,7 +2205,7 @@ async def sync_space_with_jira(
             client, owner_slug, people_config
         )
         logger.info("* Adding task %s to jira", task.title)
-        issue_key, status, payload = await asyncio.to_thread(
+        issue_key, status, payload = await run_blocking_io(
             client.create_issue,
             project_key_hint,
             task.title,
@@ -1950,7 +2254,7 @@ async def sync_space_with_jira(
 
     for key in space_entities:
         logger.debug("Fetching Jira issue %s for space %s", key, session.space_id)
-        issue, status = await asyncio.to_thread(client.get_issue, key)
+        issue, status = await run_blocking_io(client.get_issue, key)
         logger.debug(
             "[Space %s] <- [JIRA %s] fetch response for %s: %s",
             session.space_id,
@@ -2249,7 +2553,7 @@ async def sync_space_with_jira(
                         if update_estimate
                         else JIRA_ESTIMATE_UNSET
                     )
-                    status, payload = await asyncio.to_thread(
+                    status, payload = await run_blocking_io(
                         client.update_issue,
                         key,
                         space_entity.title if update_summary else None,
@@ -2292,7 +2596,7 @@ async def sync_space_with_jira(
                             key,
                             jira_status,
                         )
-                        status, payload = await asyncio.to_thread(
+                        status, payload = await run_blocking_io(
                             client.transition_issue, key, jira_status
                         )
                         jira_status_by_key.setdefault(key, {})["transition"] = status
@@ -2525,6 +2829,9 @@ async def sync_space_with_jira(
         await asyncio.sleep(0.1)
 
 
+# Handles the jira_sync_loop function logic.
+# Input: one_shot: bool = False, force_direction: Optional[str] = None.
+# Output: None.
 async def jira_sync_loop(
     one_shot: bool = False, force_direction: Optional[str] = None
 ) -> None:
@@ -2592,6 +2899,9 @@ async def jira_sync_loop(
         await asyncio.sleep(JIRA_SYNC_INTERVAL)
 
 
+# Handles the main function logic.
+# Input: none.
+# Output: None.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Jira sync worker")
     parser.add_argument(
