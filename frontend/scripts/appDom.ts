@@ -4,6 +4,8 @@ type AppDomSpecific = {
   editor: HTMLTextAreaElement | null;
   fileInput: HTMLInputElement | null;
   searchInput: HTMLInputElement | null;
+  appBootLoader: HTMLElement | null;
+  appBootLoaderStatus: HTMLElement | null;
   topbarActions: HTMLElement | null;
   mobileToolbarToggle: HTMLButtonElement | null;
   searchName: HTMLInputElement | null;
@@ -28,8 +30,10 @@ type AppDomSpecific = {
   userPasswordRepeat: HTMLInputElement | null;
   taskEditTitleInput: HTMLInputElement | null;
   taskEditCode: HTMLTextAreaElement | null;
+  taskEditDelete: HTMLButtonElement | null;
   taskEditPreview: HTMLElement;
   taskEditSide: HTMLElement;
+  boardMobileConnection: HTMLElement | null;
   slugRenameCurrent: HTMLInputElement | null;
   slugRenameNew: HTMLInputElement | null;
   slugRenameDisplayName: HTMLInputElement | null;
@@ -71,6 +75,11 @@ type AppDomSpecific = {
   historySlider: HTMLInputElement | null;
   historyMarks: HTMLElement | null;
   historyCurrentLabel: HTMLElement | null;
+  historyRevertModal: HTMLElement | null;
+  historyRevertClose: HTMLButtonElement | null;
+  historyRevertMessage: HTMLElement | null;
+  historyRevertCancel: HTMLButtonElement | null;
+  historyRevertConfirm: HTMLButtonElement | null;
   historyTagModal: HTMLElement | null;
   historyTagClose: HTMLButtonElement | null;
   historyTagInput: HTMLInputElement | null;
@@ -90,6 +99,8 @@ function createAppDomRaw(doc: Document = document) {
     graphMinimap: doc.getElementById("graph-minimap"),
     minimapSvg: doc.getElementById("minimap-svg"),
     graphAddTask: doc.getElementById("graph-add-task"),
+    appBootLoader: doc.getElementById("app-boot-loader"),
+    appBootLoaderStatus: doc.getElementById("app-boot-loader-status"),
     topbarActions: doc.getElementById("topbar-actions"),
     mobileToolbarToggle: doc.getElementById("mobile-toolbar-toggle"),
     searchInput: doc.getElementById("search-input"),
@@ -98,6 +109,7 @@ function createAppDomRaw(doc: Document = document) {
     searchTag: doc.getElementById("search-tag"),
     searchPerson: doc.getElementById("search-person"),
     boardTitle: doc.getElementById("board-title"),
+    boardMobileConnection: doc.getElementById("board-mobile-connection"),
     boardConnection: doc.getElementById("board-connection"),
     undoButton: doc.getElementById("undo-button"),
     redoButton: doc.getElementById("redo-button"),
@@ -180,6 +192,7 @@ function createAppDomRaw(doc: Document = document) {
     taskEditJiraPill: doc.getElementById("task-edit-jira-pill"),
     taskEditPreview: doc.getElementById("task-edit-preview"),
     taskEditCode: doc.getElementById("task-edit-code"),
+    taskEditDelete: doc.getElementById("task-edit-delete"),
     taskEditCodeHost: doc.getElementById("task-edit-code-editor"),
     taskEditSide: doc.getElementById("task-edit-side"),
     taskEditStates: doc.getElementById("task-edit-states"),
@@ -267,6 +280,11 @@ function createAppDomRaw(doc: Document = document) {
     historySlider: doc.getElementById("history-slider"),
     historyMarks: doc.getElementById("history-marks"),
     historyCurrentLabel: doc.getElementById("history-current-label"),
+    historyRevertModal: doc.getElementById("history-revert-modal"),
+    historyRevertClose: doc.getElementById("history-revert-close"),
+    historyRevertMessage: doc.getElementById("history-revert-message"),
+    historyRevertCancel: doc.getElementById("history-revert-cancel"),
+    historyRevertConfirm: doc.getElementById("history-revert-confirm"),
     historyTagModal: doc.getElementById("history-tag-modal"),
     historyTagClose: doc.getElementById("history-tag-close"),
     historyTagInput: doc.getElementById("history-tag-input"),

@@ -45,6 +45,9 @@ export function createCanvas({
       return state?.mobileActivePane === "graph";
     }
     if (viewportMode === "tablet") {
+      if (String(state?.tabletPaneLayout || "vertical") === "code") {
+        return false;
+      }
       return String(state?.tabletRightPane || "graph") === "graph";
     }
     return true;
@@ -134,6 +137,44 @@ export function createCanvas({
 
   let activeTouchTaskDrag: any = null;
 
+  const isPointOverTaskTrash = (clientX: number, clientY: number): boolean => {
+    const taskTrash = dom.taskTrash as HTMLElement | null;
+    if (!taskTrash || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+      return false;
+    }
+    const rect = taskTrash.getBoundingClientRect();
+    return (
+      clientX >= rect.left
+      && clientX <= rect.right
+      && clientY >= rect.top
+      && clientY <= rect.bottom
+    );
+  };
+
+  const setTouchTaskTrashHover = (active: boolean): void => {
+    const taskTrash = dom.taskTrash as HTMLElement | null;
+    if (!taskTrash) {
+      return;
+    }
+    taskTrash.classList.toggle("drag-over", active);
+    document.body.classList.toggle("task-trash-over", active);
+  };
+
+  const clearTouchTaskTrashHover = (): void => {
+    setTouchTaskTrashHover(false);
+  };
+
+  const dispatchTouchTaskTrashDrop = (taskId: string): void => {
+    if (!taskId) {
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent("taskdroptrash", {
+        detail: { taskId },
+      })
+    );
+  };
+
   const shouldIgnoreTaskTouchDragStart = (target: EventTarget | null): boolean => {
     if (!(target instanceof Element)) {
       return false;
@@ -193,6 +234,13 @@ export function createCanvas({
     const draggedTask = getTaskById(draggedTaskId);
     if (!draggedTask) {
       clearGraphDropIndicators();
+      clearTouchTaskTrashHover();
+      return;
+    }
+    const overTrash = isPointOverTaskTrash(clientX, clientY);
+    setTouchTaskTrashHover(overTrash);
+    if (overTrash) {
+      clearGraphDropIndicators();
       return;
     }
     const reorderTarget = onReorderTask
@@ -219,6 +267,12 @@ export function createCanvas({
   };
 
   const performGraphTouchTaskDrop = (draggedTaskId: string, clientX: number, clientY: number): void => {
+    if (isPointOverTaskTrash(clientX, clientY)) {
+      clearGraphDropIndicators();
+      clearTouchTaskTrashHover();
+      dispatchTouchTaskTrashDrop(draggedTaskId);
+      return;
+    }
     const sourceTask = getTaskById(draggedTaskId);
     if (!sourceTask) {
       clearGraphDropIndicators();
@@ -802,6 +856,7 @@ export function createCanvas({
         node.dataset.touchDragSuppressUntil = String(Date.now() + GRAPH_TOUCH_DRAG_SUPPRESS_CLICK_MS);
         window.dispatchEvent(new CustomEvent("taskdragend"));
       }
+      clearTouchTaskTrashHover();
       clearTaskTouchDragGhost(drag);
       node.classList.remove("dragging");
       activeDraggedTaskId = "";
@@ -816,6 +871,7 @@ export function createCanvas({
       if (drag.dragging) {
         window.dispatchEvent(new CustomEvent("taskdragend"));
       }
+      clearTouchTaskTrashHover();
       clearTaskTouchDragGhost(drag);
       node.classList.remove("dragging");
       activeDraggedTaskId = "";

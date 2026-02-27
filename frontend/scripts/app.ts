@@ -64,9 +64,16 @@ const LAST_SPACE_STORAGE_KEY = "taskScript.lastSpace.v1";
 const MOBILE_PANE_STORAGE_KEY = "taskScript.mobilePane.v1";
 const TABLET_PANE_STORAGE_KEY = "taskScript.tabletPane.v1";
 const TABLET_PANE_LAYOUT_STORAGE_KEY = "taskScript.tabletPaneLayout.v1";
+const RESPONSIVE_LAYOUT_STORAGE_KEY = "taskScript.responsiveLayout.v1";
 const VIEWPORT_TABLET_MIN_PX = 768;
 const VIEWPORT_DESKTOP_MIN_PX = 1200;
 const VIEWPORT_COMPACT_HEIGHT_PX = 700;
+const HISTORY_PANEL_ANIMATION_MS = 220;
+const BOOT_LOADER_CONNECT_TIMEOUT_MS = 15000;
+const BOOT_LOADER_POLL_INTERVAL_MS = 120;
+const DEFAULT_LEFT_WIDTH_PERCENT = 45;
+const DEFAULT_KANBAN_HEIGHT_PX = 180;
+const DEFAULT_TABLET_HORIZONTAL_TOP_PERCENT = 50;
 const STATUS_LABELS: Record<string, string> = {
   connected: "live",
   connecting: "reconnecting",
@@ -190,6 +197,96 @@ function safeLocalStorageSet(key: string, value: string): void {
     // Ignore storage failures.
   }
 }
+
+function getStoredResponsiveLayoutProfile(): any {
+  const raw = safeLocalStorageGet(RESPONSIVE_LAYOUT_STORAGE_KEY);
+  if (!raw) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function persistResponsiveLayoutProfile(): void {
+  safeLocalStorageSet(RESPONSIVE_LAYOUT_STORAGE_KEY, JSON.stringify(responsiveLayoutProfile));
+}
+
+function normalizeViewportOrientation(value: any): "portrait" | "landscape" {
+  return String(value || "").toLowerCase() === "portrait" ? "portrait" : "landscape";
+}
+
+function getViewportOrientationForSize(width: number, height: number): "portrait" | "landscape" {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return "landscape";
+  }
+  return height > width ? "portrait" : "landscape";
+}
+
+function parseFiniteNumber(value: any, fallback: number): number {
+  const parsed = typeof value === "number" ? value : Number.parseFloat(String(value || ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeLeftWidthPercent(value: any, fallback = DEFAULT_LEFT_WIDTH_PERCENT): number {
+  return clampNumber(parseFiniteNumber(value, fallback), 0, 100);
+}
+
+function normalizeKanbanHeightPx(value: any, fallback = DEFAULT_KANBAN_HEIGHT_PX): number {
+  return Math.max(0, parseFiniteNumber(value, fallback));
+}
+
+function normalizeTabletHorizontalTopPercent(
+  value: any,
+  fallback = DEFAULT_TABLET_HORIZONTAL_TOP_PERCENT
+): number {
+  return clampNumber(parseFiniteNumber(value, fallback), 0, 100);
+}
+
+function readCssCustomNumber(name: string, fallback: number): number {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return parseFiniteNumber(raw, fallback);
+}
+
+function getResponsiveLayoutBucket(
+  viewport: any,
+  orientation: any,
+  { create = false }: { create?: boolean } = {}
+): any {
+  const viewportKey = String(viewport || "");
+  if (viewportKey !== "mobile" && viewportKey !== "tablet" && viewportKey !== "desktop") {
+    return null;
+  }
+  const orientationKey = normalizeViewportOrientation(orientation);
+  const profileRoot = responsiveLayoutProfile || {};
+  let viewportProfile = profileRoot[viewportKey];
+  if (!viewportProfile || typeof viewportProfile !== "object") {
+    if (!create) {
+      return null;
+    }
+    viewportProfile = {};
+    profileRoot[viewportKey] = viewportProfile;
+  }
+  let bucket = viewportProfile[orientationKey];
+  if (!bucket || typeof bucket !== "object") {
+    if (!create) {
+      return null;
+    }
+    bucket = {};
+    viewportProfile[orientationKey] = bucket;
+  }
+  responsiveLayoutProfile = profileRoot;
+  return bucket;
+}
+
+let responsiveLayoutProfile: any = getStoredResponsiveLayoutProfile();
 
 function getStoredLastSpaceRef(): { id: string; path: string } | null {
   const raw = safeLocalStorageGet(LAST_SPACE_STORAGE_KEY);
@@ -331,6 +428,7 @@ const state: any = {
   scopedSpellcheck: true,
   viewportMode: "desktop",
   viewportHeightMode: "regular",
+  viewportOrientation: "",
   mobileActivePane: "code",
   tabletRightPane: "graph",
   tabletPaneLayout: "vertical",
@@ -360,12 +458,113 @@ function getStoredTabletRightPane() {
   return normalizeTabletRightPane(safeLocalStorageGet(TABLET_PANE_STORAGE_KEY));
 }
 
-function normalizeTabletPaneLayout(value: any): "vertical" | "horizontal" {
-  return String(value || "").toLowerCase() === "horizontal" ? "horizontal" : "vertical";
+function normalizeTabletPaneLayout(value: any): "code" | "hide" | "vertical" | "horizontal" {
+  const normalized = String(value || "").toLowerCase();
+  if (normalized === "code") {
+    return "code";
+  }
+  if (normalized === "hide") {
+    return "hide";
+  }
+  if (normalized === "horizontal") {
+    return "horizontal";
+  }
+  return "vertical";
 }
 
 function getStoredTabletPaneLayout() {
   return normalizeTabletPaneLayout(safeLocalStorageGet(TABLET_PANE_LAYOUT_STORAGE_KEY));
+}
+
+function rememberResponsivePaneSelectionForCurrentViewport(): void {
+  const bucket = getResponsiveLayoutBucket(state.viewportMode, state.viewportOrientation, { create: true });
+  if (!bucket) {
+    return;
+  }
+  if (state.viewportMode === "mobile") {
+    bucket.mobilePane = normalizeMobilePane(state.mobileActivePane);
+  } else if (state.viewportMode === "tablet") {
+    bucket.tabletRightPane = normalizeTabletRightPane(state.tabletRightPane);
+    bucket.tabletPaneLayout = normalizeTabletPaneLayout(state.tabletPaneLayout);
+  }
+  persistResponsiveLayoutProfile();
+}
+
+function rememberLayoutGeometryForCurrentViewport(): void {
+  const bucket = getResponsiveLayoutBucket(state.viewportMode, state.viewportOrientation, { create: true });
+  if (!bucket) {
+    return;
+  }
+  if (state.viewportMode === "desktop") {
+    bucket.leftWidth = normalizeLeftWidthPercent(
+      readCssCustomNumber("--left-width", DEFAULT_LEFT_WIDTH_PERCENT)
+    );
+    bucket.kanbanHeight = normalizeKanbanHeightPx(
+      readCssCustomNumber("--kanban-height", DEFAULT_KANBAN_HEIGHT_PX)
+    );
+    persistResponsiveLayoutProfile();
+    return;
+  }
+  if (state.viewportMode === "tablet") {
+    bucket.tabletRightPane = normalizeTabletRightPane(state.tabletRightPane);
+    bucket.tabletPaneLayout = normalizeTabletPaneLayout(state.tabletPaneLayout);
+    if (state.tabletPaneLayout === "horizontal") {
+      bucket.tabletHorizontalTopHeight = normalizeTabletHorizontalTopPercent(
+        readCssCustomNumber("--tablet-horizontal-top-height", DEFAULT_TABLET_HORIZONTAL_TOP_PERCENT)
+      );
+    } else if (state.tabletPaneLayout === "vertical") {
+      bucket.leftWidth = normalizeLeftWidthPercent(
+        readCssCustomNumber("--left-width", DEFAULT_LEFT_WIDTH_PERCENT)
+      );
+    }
+    persistResponsiveLayoutProfile();
+    return;
+  }
+  if (state.viewportMode === "mobile") {
+    bucket.mobilePane = normalizeMobilePane(state.mobileActivePane);
+    persistResponsiveLayoutProfile();
+  }
+}
+
+function applyStoredLayoutForCurrentViewport(): void {
+  const bucket = getResponsiveLayoutBucket(state.viewportMode, state.viewportOrientation);
+  const currentLeftWidth = normalizeLeftWidthPercent(
+    readCssCustomNumber("--left-width", DEFAULT_LEFT_WIDTH_PERCENT)
+  );
+  const currentKanbanHeight = normalizeKanbanHeightPx(
+    readCssCustomNumber("--kanban-height", DEFAULT_KANBAN_HEIGHT_PX)
+  );
+  const currentTabletTop = normalizeTabletHorizontalTopPercent(
+    readCssCustomNumber("--tablet-horizontal-top-height", DEFAULT_TABLET_HORIZONTAL_TOP_PERCENT)
+  );
+
+  if (state.viewportMode === "mobile") {
+    state.mobileActivePane = normalizeMobilePane(bucket?.mobilePane ?? state.mobileActivePane);
+    return;
+  }
+
+  if (state.viewportMode === "tablet") {
+    state.tabletRightPane = normalizeTabletRightPane(bucket?.tabletRightPane ?? state.tabletRightPane);
+    state.tabletPaneLayout = normalizeTabletPaneLayout(bucket?.tabletPaneLayout ?? state.tabletPaneLayout);
+    const leftWidth = normalizeLeftWidthPercent(bucket?.leftWidth, currentLeftWidth);
+    document.documentElement.style.setProperty("--left-width", `${leftWidth}%`);
+    const tabletTop = normalizeTabletHorizontalTopPercent(
+      bucket?.tabletHorizontalTopHeight,
+      currentTabletTop
+    );
+    const topValue = `${tabletTop}%`;
+    document.documentElement.style.setProperty("--tablet-horizontal-top-height", topValue);
+    const appRoot = document.querySelector(".app") as HTMLElement | null;
+    if (appRoot) {
+      appRoot.style.setProperty("--tablet-horizontal-top-height", topValue);
+    }
+    return;
+  }
+
+  const leftWidth = normalizeLeftWidthPercent(bucket?.leftWidth, currentLeftWidth);
+  const kanbanHeight = normalizeKanbanHeightPx(bucket?.kanbanHeight, currentKanbanHeight);
+  document.documentElement.style.setProperty("--left-width", `${leftWidth}%`);
+  document.documentElement.style.setProperty("--kanban-height", `${kanbanHeight}px`);
 }
 
 function updateKanbanGroupButtons() {
@@ -481,6 +680,9 @@ function isResponsiveGraphVisible(): boolean {
     return state.mobileActivePane === "graph";
   }
   if (state.viewportMode === "tablet") {
+    if (state.tabletPaneLayout === "code") {
+      return false;
+    }
     return state.tabletRightPane === "graph";
   }
   return true;
@@ -491,6 +693,9 @@ function isResponsiveKanbanVisible(): boolean {
     return state.mobileActivePane === "kanban";
   }
   if (state.viewportMode === "tablet") {
+    if (state.tabletPaneLayout === "code") {
+      return false;
+    }
     return state.tabletRightPane === "kanban";
   }
   return true;
@@ -517,6 +722,7 @@ function setMobileActivePane(value: any, { persist = true }: { persist?: boolean
   updateResponsivePaneButtons();
   if (persist) {
     safeLocalStorageSet(MOBILE_PANE_STORAGE_KEY, next);
+    rememberResponsivePaneSelectionForCurrentViewport();
   }
   if (historyMode.panelOpen) {
     renderHistoryPanel();
@@ -534,6 +740,7 @@ function setTabletRightPane(value: any, { persist = true }: { persist?: boolean 
   updateResponsivePaneButtons();
   if (persist) {
     safeLocalStorageSet(TABLET_PANE_STORAGE_KEY, next);
+    rememberResponsivePaneSelectionForCurrentViewport();
   }
   flushResponsiveDeferredRenders();
 }
@@ -548,6 +755,7 @@ function setTabletPaneLayout(value: any, { persist = true }: { persist?: boolean
   updateResponsivePaneButtons();
   if (persist) {
     safeLocalStorageSet(TABLET_PANE_LAYOUT_STORAGE_KEY, next);
+    rememberResponsivePaneSelectionForCurrentViewport();
   }
   updateResponsiveLayoutOffsets();
   flushResponsiveDeferredRenders();
@@ -596,6 +804,8 @@ const collab: any = {
 
 const historyMode: any = {
   panelOpen: false,
+  panelOpening: false,
+  panelClosing: false,
   viewerActive: false,
   loading: false,
   spaceId: null,
@@ -657,6 +867,7 @@ function applyViewportDatasets(): void {
   const root = document.documentElement;
   root.dataset["viewport"] = state.viewportMode || "desktop";
   root.dataset["viewportHeight"] = state.viewportHeightMode || "regular";
+  root.dataset["viewportOrientation"] = normalizeViewportOrientation(state.viewportOrientation);
 }
 
 function updateResponsiveLayoutOffsets(): void {
@@ -690,13 +901,24 @@ function updateResponsiveLayoutOffsets(): void {
 }
 
 function updateViewportMode(): void {
-  const nextViewport = getViewportModeForWidth(window.innerWidth || document.documentElement.clientWidth || 0);
-  const nextHeightMode = getViewportHeightModeForHeight(window.innerHeight || document.documentElement.clientHeight || 0);
+  const width = window.innerWidth || document.documentElement.clientWidth || 0;
+  const height = window.innerHeight || document.documentElement.clientHeight || 0;
+  const nextViewport = getViewportModeForWidth(width);
+  const nextHeightMode = getViewportHeightModeForHeight(height);
+  const nextOrientation = getViewportOrientationForSize(width, height);
+  const viewportChanged = nextViewport !== state.viewportMode;
+  const orientationChanged = nextOrientation !== state.viewportOrientation;
   state.viewportMode = nextViewport;
   state.viewportHeightMode = nextHeightMode;
+  state.viewportOrientation = nextOrientation;
   state.mobileActivePane = normalizeMobilePane(state.mobileActivePane);
   state.tabletRightPane = normalizeTabletRightPane(state.tabletRightPane);
   state.tabletPaneLayout = normalizeTabletPaneLayout(state.tabletPaneLayout);
+  if (viewportChanged || orientationChanged) {
+    applyStoredLayoutForCurrentViewport();
+    rememberResponsivePaneSelectionForCurrentViewport();
+    rememberLayoutGeometryForCurrentViewport();
+  }
   applyViewportDatasets();
   applyResponsivePaneDatasets();
   updateResponsiveSearchPlacement();
@@ -753,6 +975,80 @@ function showToast(message: any, kind: any = "success", durationMs = 3200): void
     }, 180);
   };
   setTimeout(closeToast, Math.max(1200, durationMs));
+}
+
+function updateBootLoaderStatus(message: any): void {
+  if (!dom.appBootLoaderStatus) {
+    return;
+  }
+  const text = typeof message === "string" ? message.trim() : "";
+  dom.appBootLoaderStatus.textContent = text || "Preparing workspace...";
+}
+
+function setBootLoaderVisible(visible: boolean, statusText = ""): void {
+  if (!dom.appBootLoader) {
+    return;
+  }
+  if (statusText) {
+    updateBootLoaderStatus(statusText);
+  }
+  dom.appBootLoader.classList.toggle("hidden", !visible);
+}
+
+function isBootLoaderVisible(): boolean {
+  return Boolean(dom.appBootLoader && !dom.appBootLoader.classList.contains("hidden"));
+}
+
+function updateBootLoaderStatusFromConnection(status: string): void {
+  if (!isBootLoaderVisible()) {
+    return;
+  }
+  const normalized = String(status || "").toLowerCase();
+  if (normalized === "connected" || normalized === "idle") {
+    updateBootLoaderStatus("Loading task data...");
+    return;
+  }
+  if (normalized === "syncing") {
+    updateBootLoaderStatus("Syncing board data...");
+    return;
+  }
+  if (normalized === "connecting") {
+    updateBootLoaderStatus("Connecting to board...");
+    return;
+  }
+  if (normalized === "offline") {
+    updateBootLoaderStatus("Offline mode enabled.");
+    return;
+  }
+  if (normalized === "auth-failed") {
+    updateBootLoaderStatus("Authentication failed.");
+    return;
+  }
+  if (normalized === "read-only") {
+    updateBootLoaderStatus("Connected in read-only mode.");
+    return;
+  }
+  if (normalized === "disconnected") {
+    updateBootLoaderStatus("Unable to connect. Retrying...");
+    return;
+  }
+  updateBootLoaderStatus("Preparing workspace...");
+}
+
+async function waitForInitialConnectionReady(timeoutMs = BOOT_LOADER_CONNECT_TIMEOUT_MS): Promise<void> {
+  if (!collab.spaceId) {
+    return;
+  }
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (!collab.spaceId || collab.synced) {
+      return;
+    }
+    if (["offline", "auth-failed", "read-only"].includes(collab.connectionStatus)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, BOOT_LOADER_POLL_INTERVAL_MS));
+  }
 }
 
 function normalizePermissions(value: any) {
@@ -934,6 +1230,7 @@ function setConnectionStatus(status: string): void {
     return;
   }
   collab.connectionStatus = status;
+  updateBootLoaderStatusFromConnection(status);
   updateBoardConnectionLabel();
 }
 
@@ -970,12 +1267,29 @@ function stopIdleWatch() {
 }
 
 function updateBoardConnectionLabel() {
-  if (!dom.boardConnection) {
+  if (!dom.boardConnection && !dom.boardMobileConnection) {
     return;
   }
+  const setMobileBoardConnectionStatus = (status: string | null): void => {
+    if (!dom.boardMobileConnection) {
+      return;
+    }
+    if (!status) {
+      dom.boardMobileConnection.textContent = "";
+      dom.boardMobileConnection.className = "connection-status board-mobile-connection hidden";
+      return;
+    }
+    const normalizedStatus = String(status || "disconnected");
+    const statusLabel = STATUS_LABELS[normalizedStatus] ?? STATUS_LABELS["disconnected"] ?? "disconnected";
+    dom.boardMobileConnection.textContent = statusLabel;
+    dom.boardMobileConnection.className = `connection-status board-mobile-connection ${normalizedStatus}`;
+  };
   if (historyMode.viewerActive && !collab.spaceId) {
-    dom.boardConnection.textContent = "";
-    dom.boardConnection.classList.add("hidden");
+    if (dom.boardConnection) {
+      dom.boardConnection.textContent = "";
+      dom.boardConnection.classList.add("hidden");
+    }
+    setMobileBoardConnectionStatus(null);
     updateResponsiveLayoutOffsets();
     return;
   }
@@ -983,20 +1297,26 @@ function updateBoardConnectionLabel() {
     const status = collab.connectionStatus || "disconnected";
     const statusLabel = STATUS_LABELS[status] ?? STATUS_LABELS["disconnected"] ?? "disconnected";
     const spaceRef = collab.spacePath || collab.spaceId;
-    dom.boardConnection.textContent = "";
-    const text = document.createElement("span");
-    text.textContent = `${collab.username}@${getServerLabel()}/${spaceRef}`;
-    const pill = document.createElement("span");
-    pill.className = `connection-status ${status}`;
-    pill.textContent = statusLabel;
-    dom.boardConnection.append(text, pill);
-    dom.boardConnection.classList.remove("hidden");
+    if (dom.boardConnection) {
+      dom.boardConnection.textContent = "";
+      const text = document.createElement("span");
+      text.textContent = `${collab.username}@${getServerLabel()}/${spaceRef}`;
+      const pill = document.createElement("span");
+      pill.className = `connection-status ${status}`;
+      pill.textContent = statusLabel;
+      dom.boardConnection.append(text, pill);
+      dom.boardConnection.classList.remove("hidden");
+    }
+    setMobileBoardConnectionStatus(status);
   } else {
-    dom.boardConnection.textContent = "";
-    const text = document.createElement("span");
-    text.textContent = "offline mode";
-    dom.boardConnection.append(text);
-    dom.boardConnection.classList.remove("hidden");
+    if (dom.boardConnection) {
+      dom.boardConnection.textContent = "";
+      const text = document.createElement("span");
+      text.textContent = "offline mode";
+      dom.boardConnection.append(text);
+      dom.boardConnection.classList.remove("hidden");
+    }
+    setMobileBoardConnectionStatus("offline");
   }
   updateResponsiveLayoutOffsets();
 }
@@ -1574,6 +1894,7 @@ function updateTaskToken(task: any, token: any, action: any): void {
 let editingTaskRange: any = null;
 let editingTaskIndent = "";
 let editingTaskJiraKey: any = null;
+let editingTaskRef: any = null;
 let creatingTask = false;
 let pendingDeleteTask: any = null;
 let isTaskDragActive = false;
@@ -1961,6 +2282,39 @@ function ensureTaskEditEditor() {
   return modalEditorController;
 }
 
+function getTaskEditDeleteTarget(): any {
+  if (creatingTask || !editingTaskRef) {
+    return null;
+  }
+  const taskId = typeof editingTaskRef.id === "string" ? editingTaskRef.id : "";
+  if (taskId) {
+    const byId = state.allTasks.find((task: any) => task.id === taskId);
+    if (byId) {
+      return byId;
+    }
+  }
+  const lineIndex = Number.isInteger(editingTaskRange?.start)
+    ? editingTaskRange.start
+    : editingTaskRef.lineIndex;
+  if (Number.isInteger(lineIndex)) {
+    const byLine = state.allTasks.find((task: any) => task.lineIndex === lineIndex);
+    if (byLine) {
+      return byLine;
+    }
+  }
+  return editingTaskRef;
+}
+
+function updateTaskEditDeleteButtonVisibility(): void {
+  if (!dom.taskEditDelete) {
+    return;
+  }
+  const hasDeleteTarget = Boolean(getTaskEditDeleteTarget());
+  const visible = !creatingTask && hasDeleteTarget;
+  dom.taskEditDelete.classList.toggle("hidden", !visible);
+  dom.taskEditDelete.disabled = !visible;
+}
+
 function openTaskEditModal(task: any): void {
   if (!dom.taskEditModal || !task) {
     return;
@@ -1971,6 +2325,7 @@ function openTaskEditModal(task: any): void {
   if (!draft) {
     return;
   }
+  editingTaskRef = task;
   editingTaskRange = draft.range;
   editingTaskIndent = draft.indent;
   if (dom.taskEditError) {
@@ -1991,6 +2346,7 @@ function openTaskEditModal(task: any): void {
   }
   refreshTaskEditTokenLists();
   updateTaskEditPreviewFromText(draft.bodyText);
+  updateTaskEditDeleteButtonVisibility();
   dom.taskEditModal.classList.remove("hidden");
   if (modalEditor) {
     modalEditor.focus();
@@ -2002,6 +2358,7 @@ function openTaskCreateModal() {
     return;
   }
   creatingTask = true;
+  editingTaskRef = null;
   const lines = editorController.getValue().split("\n");
   const draft = buildTaskCreateDraft(lines);
   editingTaskRange = draft.range;
@@ -2024,6 +2381,7 @@ function openTaskCreateModal() {
   }
   refreshTaskEditTokenLists();
   updateTaskEditPreviewFromText(draft.bodyText);
+  updateTaskEditDeleteButtonVisibility();
   dom.taskEditModal.classList.remove("hidden");
   dom.taskEditTitleInput?.focus();
 }
@@ -2036,7 +2394,9 @@ function closeTaskEditModal() {
   editingTaskRange = null;
   editingTaskIndent = "";
   editingTaskJiraKey = null;
+  editingTaskRef = null;
   creatingTask = false;
+  updateTaskEditDeleteButtonVisibility();
   updateTaskEditJiraPill(null);
 }
 
@@ -4828,7 +5188,7 @@ async function restoreSessionFromCookie() {
     }
     if (restoreSpaceId) {
       try {
-        await connectToSpace(restoreSpaceId, restoreSpacePath || restoreSpaceId);
+        await connectToSpace(restoreSpaceId, restoreSpacePath || restoreSpaceId, { showLoader: false });
       } catch {
         showToast("Failed to reconnect to the last space.", "error");
       }
@@ -5103,19 +5463,43 @@ function scheduleCollabSync() {
   syncEngine.scheduleCollabSync();
 }
 
-async function connectToSpace(spaceId: any, spacePath: any = "") {
-  const result = await syncEngine.connectToSpace(spaceId, spacePath);
-  if (collab.spaceId) {
-    setStoredLastSpaceRef(collab.spaceId, collab.spacePath || spacePath || collab.spaceId);
+async function connectToSpace(
+  spaceId: any,
+  spacePath: any = "",
+  { showLoader = true }: { showLoader?: boolean } = {}
+) {
+  if (showLoader) {
+    setBootLoaderVisible(true, "Connecting to board...");
   }
-  updateHistoryButtonState();
-  return result;
+  try {
+    const result = await syncEngine.connectToSpace(spaceId, spacePath);
+    if (collab.spaceId) {
+      setStoredLastSpaceRef(collab.spaceId, collab.spacePath || spacePath || collab.spaceId);
+      if (showLoader) {
+        await waitForInitialConnectionReady();
+      }
+    }
+    updateHistoryButtonState();
+    return result;
+  } finally {
+    if (showLoader) {
+      setBootLoaderVisible(false);
+    }
+  }
 }
 
 function historyCheckpointDisplayLabel(checkpoint: any): string {
   if (!checkpoint || typeof checkpoint !== "object") {
     return "";
   }
+  const formatHistoryDateTime = (date: Date): string => {
+    const day = String(date.getDate()).padStart(2, "0");
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const year = String(date.getFullYear());
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+    return `${day}.${month}.${year} ${hours}:${minutes}`;
+  };
   const ts = typeof checkpoint.created_at_iso === "string" && checkpoint.created_at_iso
     ? checkpoint.created_at_iso
     : (typeof checkpoint.created_at === "number"
@@ -5123,7 +5507,7 @@ function historyCheckpointDisplayLabel(checkpoint: any): string {
       : "");
   const date = ts ? new Date(ts) : null;
   const dateLabel = date && Number.isFinite(date.getTime())
-    ? date.toLocaleString()
+    ? formatHistoryDateTime(date)
     : (ts || "Unknown time");
   const customLabel = typeof checkpoint.label === "string" && checkpoint.label.trim()
     ? checkpoint.label.trim()
@@ -5345,6 +5729,63 @@ async function postSpaceHistoryTag(
   return response.json();
 }
 
+let historyPanelAnimationTimer: any = null;
+
+function getHistoryPanelAnimationDurationMs(): number {
+  if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+    return 0;
+  }
+  return HISTORY_PANEL_ANIMATION_MS;
+}
+
+function clearHistoryPanelAnimationTimer(): void {
+  if (!historyPanelAnimationTimer) {
+    return;
+  }
+  clearTimeout(historyPanelAnimationTimer);
+  historyPanelAnimationTimer = null;
+}
+
+function startHistoryPanelOpenAnimation(): void {
+  clearHistoryPanelAnimationTimer();
+  historyMode.panelClosing = false;
+  historyMode.panelOpening = true;
+  renderHistoryPanel();
+  const duration = getHistoryPanelAnimationDurationMs();
+  if (duration <= 0) {
+    historyMode.panelOpening = false;
+    renderHistoryPanel();
+    return;
+  }
+  requestAnimationFrame(() => {
+    if (!historyMode.panelOpen) {
+      return;
+    }
+    historyMode.panelOpening = false;
+    renderHistoryPanel();
+  });
+}
+
+async function runHistoryPanelCloseAnimation(): Promise<void> {
+  if (!dom.historyPanel) {
+    return;
+  }
+  clearHistoryPanelAnimationTimer();
+  historyMode.panelOpening = false;
+  historyMode.panelClosing = true;
+  renderHistoryPanel();
+  const duration = getHistoryPanelAnimationDurationMs();
+  if (duration <= 0) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    historyPanelAnimationTimer = setTimeout(() => {
+      historyPanelAnimationTimer = null;
+      resolve();
+    }, duration);
+  });
+}
+
 function renderHistoryMarks(): void {
   if (!dom.historyMarks) {
     return;
@@ -5386,8 +5827,21 @@ function renderHistoryPanel(): void {
   }
   const checkpoints = Array.isArray(historyMode.checkpoints) ? historyMode.checkpoints : [];
   const hasPoints = checkpoints.length > 0;
+  const selected = hasPoints
+    ? checkpoints[Math.max(0, Math.min(historyMode.selectedIndex, checkpoints.length - 1))]
+    : null;
+  const hasLoadedSnapshot = Boolean(
+    historyMode.viewerActive
+    && selected
+    && typeof selected.id === "string"
+  );
   const timelineBounds = getHistoryTimelineBounds(checkpoints);
-  dom.historyPanel.classList.toggle("hidden", !historyMode.panelOpen);
+  const shouldShowPanel = Boolean(historyMode.panelOpen || historyMode.panelOpening || historyMode.panelClosing);
+  dom.historyPanel.classList.toggle("hidden", !shouldShowPanel);
+  dom.historyPanel.classList.toggle(
+    "history-panel-open",
+    Boolean(historyMode.panelOpen && !historyMode.panelOpening && !historyMode.panelClosing)
+  );
   dom.historySlider.disabled = !hasPoints;
   dom.historySlider.min = String(timelineBounds.min);
   dom.historySlider.max = String(timelineBounds.max);
@@ -5403,6 +5857,10 @@ function renderHistoryPanel(): void {
   if (dom.historyStepNext) {
     dom.historyStepNext.disabled = !hasPoints || historyMode.loading || historyMode.selectedIndex < 0 || historyMode.selectedIndex >= checkpoints.length - 1;
   }
+  if (dom.historyRevertButton) {
+    dom.historyRevertButton.classList.toggle("hidden", !hasLoadedSnapshot);
+    dom.historyRevertButton.disabled = !hasLoadedSnapshot || historyMode.loading;
+  }
   if (!hasPoints) {
     dom.historyCurrentLabel.textContent = historyMode.loading ? "Loading history..." : "No history checkpoints for this space yet.";
     if (dom.historyRevertButton) {
@@ -5411,11 +5869,7 @@ function renderHistoryPanel(): void {
     if (dom.historyTagButton) {
       dom.historyTagButton.disabled = !Boolean(historyMode.panelOpen && historyMode.spaceId && !historyMode.loading);
     }
-    if (dom.historyRevertButton) {
-      dom.historyRevertButton.disabled = true;
-    }
   } else {
-    const selected = checkpoints[Math.max(0, Math.min(historyMode.selectedIndex, checkpoints.length - 1))];
     dom.historyCurrentLabel.textContent = selected
       ? historyCheckpointDisplayLabel(selected)
       : "Select a history point";
@@ -5426,11 +5880,6 @@ function renderHistoryPanel(): void {
     }
     if (dom.historyTagButton) {
       dom.historyTagButton.disabled = !Boolean(historyMode.panelOpen && historyMode.spaceId && !historyMode.loading);
-    }
-    if (!historyMode.viewerActive) {
-      if (dom.historyRevertButton) {
-        dom.historyRevertButton.disabled = true;
-      }
     }
   }
   updateHistoryViewerBanner();
@@ -5484,18 +5933,18 @@ async function selectHistoryCheckpoint(index: number): Promise<void> {
 }
 
 async function closeHistoryPanel({ restoreOriginal = true }: { restoreOriginal?: boolean } = {}): Promise<void> {
-  if (!historyMode.panelOpen) {
+  if (!historyMode.panelOpen && !historyMode.panelClosing) {
     return;
   }
+  closeHistoryRevertModal();
   const shouldRestore = restoreOriginal && historyMode.viewerActive && typeof historyMode.originalText === "string";
   historyMode.panelOpen = false;
-  if (dom.historyPanel) {
-    dom.historyPanel.classList.add("hidden");
-  }
+  await runHistoryPanelCloseAnimation();
   if (shouldRestore) {
     forceEditorRefresh(historyMode.originalText, { collapseSelection: true });
   }
   setHistoryViewerMode(false);
+  historyMode.panelClosing = false;
   const reconnectSpaceId = historyMode.wasConnected ? historyMode.spaceId : null;
   const reconnectSpacePath = historyMode.spacePath;
   historyMode.spaceId = null;
@@ -5525,10 +5974,13 @@ async function openHistoryPanel(): Promise<void> {
     return;
   }
   historyMode.loading = true;
+  closeHistoryRevertModal();
   updateHistoryButtonState();
   try {
+    historyMode.panelClosing = false;
     historyMode.panelOpen = true;
-    historyMode.viewerActive = false;
+    startHistoryPanelOpenAnimation();
+    setHistoryViewerMode(false);
     historyMode.spaceId = String(collab.spaceId);
     historyMode.spacePath = String(collab.spacePath || "");
     historyMode.originalText = editorController.getValue();
@@ -5539,12 +5991,60 @@ async function openHistoryPanel(): Promise<void> {
     renderHistoryPanel();
   } catch (error: any) {
     historyMode.panelOpen = false;
+    historyMode.panelOpening = false;
+    historyMode.panelClosing = false;
     renderHistoryPanel();
     showToast(error?.message || "Failed to load history.", "error");
   } finally {
+    if (historyMode.panelOpen) {
+      historyMode.panelOpening = false;
+    }
     historyMode.loading = false;
     renderHistoryPanel();
     updateHistoryButtonState();
+  }
+}
+
+function getHistoryRevertSelection(): { checkpointId: string; targetLabel: string } | null {
+  if (!historyMode.panelOpen || !historyMode.spaceId) {
+    return null;
+  }
+  const selected = historyMode.checkpoints?.[historyMode.selectedIndex];
+  const checkpointId = typeof selected?.id === "string" ? selected.id : "";
+  if (!checkpointId) {
+    return null;
+  }
+  const targetLabel = selected ? historyCheckpointDisplayLabel(selected) : "selected history point";
+  return { checkpointId, targetLabel };
+}
+
+function openHistoryRevertModal(): void {
+  if (!dom.historyRevertModal) {
+    return;
+  }
+  const selection = getHistoryRevertSelection();
+  if (!selection) {
+    return;
+  }
+  if (dom.historyRevertMessage) {
+    dom.historyRevertMessage.textContent = `Revert to ${selection.targetLabel}? Current code will be saved to history as "revoked".`;
+  }
+  if (dom.historyRevertConfirm) {
+    dom.historyRevertConfirm.disabled = false;
+  }
+  dom.historyRevertModal.classList.remove("hidden");
+  queueMicrotask(() => {
+    dom.historyRevertConfirm?.focus();
+  });
+}
+
+function closeHistoryRevertModal(): void {
+  if (!dom.historyRevertModal) {
+    return;
+  }
+  dom.historyRevertModal.classList.add("hidden");
+  if (dom.historyRevertConfirm) {
+    dom.historyRevertConfirm.disabled = false;
   }
 }
 
@@ -5610,29 +6110,31 @@ async function submitHistoryTag(): Promise<void> {
   }
 }
 
-async function revertFromHistorySelection(): Promise<void> {
+async function revertFromHistorySelection(
+  { skipConfirmation = false }: { skipConfirmation?: boolean } = {}
+): Promise<void> {
   if (!historyMode.viewerActive || !historyMode.spaceId) {
     return;
   }
-  const selected = historyMode.checkpoints?.[historyMode.selectedIndex];
-  const checkpointId = typeof selected?.id === "string" ? selected.id : "";
-  if (!checkpointId) {
+  const selection = getHistoryRevertSelection();
+  if (!selection) {
     return;
   }
-  const targetLabel = selected ? historyCheckpointDisplayLabel(selected) : "selected history point";
-  const confirmed = window.confirm(
-    `Revert to ${targetLabel}?\n\nCurrent code will be saved to history as "revoked".`
-  );
-  if (!confirmed) {
+  if (!skipConfirmation) {
+    openHistoryRevertModal();
     return;
   }
+  closeHistoryRevertModal();
   try {
     if (dom.historyRevertButton) {
       dom.historyRevertButton.disabled = true;
     }
+    if (dom.historyRevertConfirm) {
+      dom.historyRevertConfirm.disabled = true;
+    }
     const result = await postSpaceHistoryRevert(
       historyMode.spaceId,
-      checkpointId,
+      selection.checkpointId,
       typeof historyMode.originalText === "string" ? historyMode.originalText : editorController.getValue(),
       historyMode.spacePath || ""
     );
@@ -5647,6 +6149,9 @@ async function revertFromHistorySelection(): Promise<void> {
   } finally {
     if (dom.historyRevertButton && historyMode.panelOpen) {
       dom.historyRevertButton.disabled = false;
+    }
+    if (dom.historyRevertConfirm) {
+      dom.historyRevertConfirm.disabled = false;
     }
   }
 }
@@ -5847,7 +6352,37 @@ if (dom.historyTagButton) {
 
 if (dom.historyRevertButton) {
   dom.historyRevertButton.addEventListener("click", () => {
-    void revertFromHistorySelection();
+    openHistoryRevertModal();
+  });
+}
+
+if (dom.historyRevertClose) {
+  dom.historyRevertClose.addEventListener("click", () => {
+    closeHistoryRevertModal();
+  });
+}
+
+if (dom.historyRevertCancel) {
+  dom.historyRevertCancel.addEventListener("click", () => {
+    closeHistoryRevertModal();
+  });
+}
+
+if (dom.historyRevertConfirm) {
+  dom.historyRevertConfirm.addEventListener("click", () => {
+    void revertFromHistorySelection({ skipConfirmation: true });
+  });
+}
+
+if (dom.historyRevertModal) {
+  dom.historyRevertModal.addEventListener("keydown", (event: any) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void revertFromHistorySelection({ skipConfirmation: true });
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeHistoryRevertModal();
+    }
   });
 }
 
@@ -6130,6 +6665,17 @@ if (dom.taskEditCancel) {
   });
 }
 
+if (dom.taskEditDelete) {
+  dom.taskEditDelete.addEventListener("click", () => {
+    const task = getTaskEditDeleteTarget();
+    if (!task) {
+      return;
+    }
+    closeTaskEditModal();
+    openTaskDeleteModal(task);
+  });
+}
+
 if (dom.taskEditSave) {
   dom.taskEditSave.addEventListener("click", () => {
     saveTaskEditModal();
@@ -6304,8 +6850,19 @@ window.addEventListener("taskdragend", () => {
   setTaskDragActive(false);
 });
 
-window.addEventListener("resize", () => {
-  updateViewportMode();
+window.addEventListener("taskdroptrash", (event: Event) => {
+  if (historyMode.viewerActive) {
+    return;
+  }
+  const customEvent = event as CustomEvent<any>;
+  const taskId = String(customEvent?.detail?.taskId || "");
+  if (!taskId) {
+    return;
+  }
+  const task = state.allTasks.find((item: any) => item.id === taskId);
+  if (task) {
+    openTaskDeleteModal(task);
+  }
 });
 
 if (dom.taskTrash) {
@@ -6604,6 +7161,10 @@ let resizingKanban = false;
 let pendingGraphRender: number | null = null;
 let legendHiddenByRightSnap = false;
 let legendHasVisibleContent = true;
+let activeTouchDividerPointerId: number | null = null;
+let activeTouchKanbanDividerPointerId: number | null = null;
+let activeTouchDividerTouchId: number | null = null;
+let activeTouchKanbanDividerTouchId: number | null = null;
 
 function applyLegendHiddenState() {
   if (!dom.legend) {
@@ -6629,6 +7190,83 @@ function scheduleGraphRender() {
     pendingGraphRender = null;
     canvasController.renderGraph();
   });
+}
+
+function findTouchByIdentifier(touches: TouchList, identifier: number): Touch | null {
+  for (let index = 0; index < touches.length; index += 1) {
+    const touch = touches.item(index);
+    if (touch && touch.identifier === identifier) {
+      return touch;
+    }
+  }
+  return null;
+}
+
+function updateKanbanHeightFromPointer(clientY: number): void {
+  const panelRect = (dom.graphPanel || dom.graphCanvas).getBoundingClientRect();
+  const dividerHeight = dom.kanbanDivider?.offsetHeight || 0;
+  const legendHeight = dom.legend?.getBoundingClientRect().height || 0;
+  const minHeight = 0;
+  const maxHeight = Math.max(minHeight, panelRect.height - legendHeight - dividerHeight);
+  const desired = panelRect.bottom - clientY;
+  let clamped = Math.min(maxHeight, Math.max(minHeight, desired));
+  const collapseThreshold = 48;
+  const isCollapsed = clamped < collapseThreshold;
+  if (isCollapsed) {
+    clamped = 0;
+    document.documentElement.setAttribute("data-kanban-collapsed", "true");
+  } else {
+    document.documentElement.removeAttribute("data-kanban-collapsed");
+  }
+  document.documentElement.style.setProperty("--kanban-height", `${clamped}px`);
+  setGraphTopHiddenForKanbanHeight(clamped, maxHeight);
+  scheduleGraphRender();
+}
+
+function updateMainDividerFromPointer(clientX: number): void {
+  const rect = document.body.getBoundingClientRect();
+  const dividerWidth = Math.max(1, dom.divider?.offsetWidth || 8);
+  const relativeX = clientX - rect.left;
+  const percentage = (relativeX / rect.width) * 100;
+  const maxPercent = Math.max(0, ((rect.width - dividerWidth) / rect.width) * 100);
+  const edgeSnapPx = 36;
+  const maxX = Math.max(0, rect.width - dividerWidth);
+  let clamped = Math.min(maxPercent, Math.max(0, percentage));
+  if (relativeX <= edgeSnapPx) {
+    clamped = 0;
+  } else if (relativeX >= maxX - edgeSnapPx) {
+    clamped = maxPercent;
+  }
+  document.documentElement.style.setProperty("--left-width", `${clamped}%`);
+  setGraphHiddenForLeftSnap(clamped);
+  setLegendHiddenForRightSnap(clamped, maxPercent);
+  scheduleGraphRender();
+}
+
+function updateTabletHorizontalDividerFromPointer(clientY: number): void {
+  const appRoot = document.querySelector(".app") as HTMLElement | null;
+  const rect = (appRoot || document.body).getBoundingClientRect();
+  if (!rect.height) {
+    return;
+  }
+  const dividerHeight = Math.max(1, dom.divider?.offsetHeight || 8);
+  const relativeY = clientY - rect.top;
+  const percentage = (relativeY / rect.height) * 100;
+  const maxPercent = Math.max(0, ((rect.height - dividerHeight) / rect.height) * 100);
+  const edgeSnapPx = 36;
+  const maxY = Math.max(0, rect.height - dividerHeight);
+  let clamped = Math.min(maxPercent, Math.max(0, percentage));
+  if (relativeY <= edgeSnapPx) {
+    clamped = 0;
+  } else if (relativeY >= maxY - edgeSnapPx) {
+    clamped = maxPercent;
+  }
+  const value = `${clamped}%`;
+  document.documentElement.style.setProperty("--tablet-horizontal-top-height", value);
+  if (appRoot) {
+    appRoot.style.setProperty("--tablet-horizontal-top-height", value);
+  }
+  scheduleGraphRender();
 }
 
 function setLegendHiddenForRightSnap(leftPercent: any, maxPercent: any) {
@@ -6660,13 +7298,46 @@ function updateLegendHiddenFromLayout() {
 dom.divider.addEventListener("mousedown", () => {
   if (
     state.viewportMode === "mobile"
-    || (state.viewportMode === "tablet" && state.tabletPaneLayout === "horizontal")
+    || (state.viewportMode === "tablet" && (state.tabletPaneLayout === "hide" || state.tabletPaneLayout === "code"))
   ) {
     return;
   }
   resizing = true;
   dom.divider.classList.add("dragging");
 });
+
+dom.divider.addEventListener("pointerdown", (event: PointerEvent) => {
+  if (event.pointerType !== "touch") {
+    return;
+  }
+  if (
+    state.viewportMode === "mobile"
+    || (state.viewportMode === "tablet" && (state.tabletPaneLayout === "hide" || state.tabletPaneLayout === "code"))
+  ) {
+    return;
+  }
+  event.preventDefault();
+  resizing = true;
+  activeTouchDividerPointerId = event.pointerId;
+  dom.divider.classList.add("dragging");
+});
+
+dom.divider.addEventListener("touchstart", (event: TouchEvent) => {
+  if (
+    state.viewportMode === "mobile"
+    || (state.viewportMode === "tablet" && (state.tabletPaneLayout === "hide" || state.tabletPaneLayout === "code"))
+  ) {
+    return;
+  }
+  const touch = event.changedTouches.item(0);
+  if (!touch) {
+    return;
+  }
+  event.preventDefault();
+  resizing = true;
+  activeTouchDividerTouchId = touch.identifier;
+  dom.divider.classList.add("dragging");
+}, { passive: false });
 
 if (dom.kanbanDivider) {
   dom.kanbanDivider.addEventListener("mousedown", () => {
@@ -6676,50 +7347,46 @@ if (dom.kanbanDivider) {
     resizingKanban = true;
     dom.kanbanDivider.classList.add("dragging");
   });
+  dom.kanbanDivider.addEventListener("pointerdown", (event: PointerEvent) => {
+    if (event.pointerType !== "touch") {
+      return;
+    }
+    if (state.viewportMode !== "desktop") {
+      return;
+    }
+    event.preventDefault();
+    resizingKanban = true;
+    activeTouchKanbanDividerPointerId = event.pointerId;
+    dom.kanbanDivider.classList.add("dragging");
+  });
+  dom.kanbanDivider.addEventListener("touchstart", (event: TouchEvent) => {
+    if (state.viewportMode !== "desktop") {
+      return;
+    }
+    const touch = event.changedTouches.item(0);
+    if (!touch) {
+      return;
+    }
+    event.preventDefault();
+    resizingKanban = true;
+    activeTouchKanbanDividerTouchId = touch.identifier;
+    dom.kanbanDivider.classList.add("dragging");
+  }, { passive: false });
 }
 
 window.addEventListener("mousemove", (event) => {
   if (!resizing) {
     if (resizingKanban) {
-      const panelRect = (dom.graphPanel || dom.graphCanvas).getBoundingClientRect();
-      const dividerHeight = dom.kanbanDivider?.offsetHeight || 0;
-      const legendHeight = dom.legend?.getBoundingClientRect().height || 0;
-      const minHeight = 0;
-      const maxHeight = Math.max(minHeight, panelRect.height - legendHeight - dividerHeight);
-      const desired = panelRect.bottom - event.clientY;
-      let clamped = Math.min(maxHeight, Math.max(minHeight, desired));
-      const collapseThreshold = 48;
-      const isCollapsed = clamped < collapseThreshold;
-      if (isCollapsed) {
-        clamped = 0;
-        document.documentElement.setAttribute("data-kanban-collapsed", "true");
-      } else {
-        document.documentElement.removeAttribute("data-kanban-collapsed");
-      }
-      document.documentElement.style.setProperty("--kanban-height", `${clamped}px`);
-      setGraphTopHiddenForKanbanHeight(clamped, maxHeight);
-      scheduleGraphRender();
+      updateKanbanHeightFromPointer(event.clientY);
       return;
     }
     return;
   }
-  const rect = document.body.getBoundingClientRect();
-  const dividerWidth = Math.max(1, dom.divider?.offsetWidth || 8);
-  const relativeX = event.clientX - rect.left;
-  const percentage = (relativeX / rect.width) * 100;
-  const maxPercent = Math.max(0, ((rect.width - dividerWidth) / rect.width) * 100);
-  const edgeSnapPx = 36;
-  const maxX = Math.max(0, rect.width - dividerWidth);
-  let clamped = Math.min(maxPercent, Math.max(0, percentage));
-  if (relativeX <= edgeSnapPx) {
-    clamped = 0;
-  } else if (relativeX >= maxX - edgeSnapPx) {
-    clamped = maxPercent;
+  if (state.viewportMode === "tablet" && state.tabletPaneLayout === "horizontal") {
+    updateTabletHorizontalDividerFromPointer(event.clientY);
+    return;
   }
-  document.documentElement.style.setProperty("--left-width", `${clamped}%`);
-  setGraphHiddenForLeftSnap(clamped);
-  setLegendHiddenForRightSnap(clamped, maxPercent);
-  scheduleGraphRender();
+  updateMainDividerFromPointer(event.clientX);
 });
 
 window.addEventListener("mouseup", () => {
@@ -6727,6 +7394,7 @@ window.addEventListener("mouseup", () => {
     if (resizingKanban) {
       resizingKanban = false;
       dom.kanbanDivider.classList.remove("dragging");
+      rememberLayoutGeometryForCurrentViewport();
       scheduleGraphRender();
       return;
     }
@@ -6738,22 +7406,158 @@ window.addEventListener("mouseup", () => {
     resizingKanban = false;
     dom.kanbanDivider.classList.remove("dragging");
   }
+  rememberLayoutGeometryForCurrentViewport();
   scheduleGraphRender();
 });
 
+window.addEventListener("pointermove", (event: PointerEvent) => {
+  if (event.pointerType !== "touch") {
+    return;
+  }
+  const dividerActive = resizing && activeTouchDividerPointerId === event.pointerId;
+  const kanbanActive = resizingKanban && activeTouchKanbanDividerPointerId === event.pointerId;
+  if (!dividerActive && !kanbanActive) {
+    return;
+  }
+  event.preventDefault();
+  if (dividerActive) {
+    if (state.viewportMode === "tablet" && state.tabletPaneLayout === "horizontal") {
+      updateTabletHorizontalDividerFromPointer(event.clientY);
+      return;
+    }
+    updateMainDividerFromPointer(event.clientX);
+    return;
+  }
+  if (kanbanActive) {
+    updateKanbanHeightFromPointer(event.clientY);
+  }
+}, { passive: false });
+
+window.addEventListener("touchmove", (event: TouchEvent) => {
+  let handled = false;
+  if (resizing && activeTouchDividerTouchId !== null) {
+    const touch = findTouchByIdentifier(event.touches, activeTouchDividerTouchId);
+    if (touch) {
+      if (state.viewportMode === "tablet" && state.tabletPaneLayout === "horizontal") {
+        updateTabletHorizontalDividerFromPointer(touch.clientY);
+      } else {
+        updateMainDividerFromPointer(touch.clientX);
+      }
+      handled = true;
+    }
+  }
+  if (resizingKanban && activeTouchKanbanDividerTouchId !== null) {
+    const touch = findTouchByIdentifier(event.touches, activeTouchKanbanDividerTouchId);
+    if (touch) {
+      updateKanbanHeightFromPointer(touch.clientY);
+      handled = true;
+    }
+  }
+  if (handled) {
+    event.preventDefault();
+  }
+}, { passive: false });
+
+const finishTouchDividerResize = (pointerId: number): void => {
+  let didFinish = false;
+  if (resizing && activeTouchDividerPointerId === pointerId) {
+    resizing = false;
+    activeTouchDividerPointerId = null;
+    dom.divider.classList.remove("dragging");
+    didFinish = true;
+  }
+  if (resizingKanban && activeTouchKanbanDividerPointerId === pointerId) {
+    resizingKanban = false;
+    activeTouchKanbanDividerPointerId = null;
+    dom.kanbanDivider?.classList.remove("dragging");
+    didFinish = true;
+  }
+  if (didFinish) {
+    rememberLayoutGeometryForCurrentViewport();
+    scheduleGraphRender();
+  }
+};
+
+const finishTouchDividerResizeByIdentifier = (touchIdentifier: number): void => {
+  let didFinish = false;
+  if (resizing && activeTouchDividerTouchId === touchIdentifier) {
+    resizing = false;
+    activeTouchDividerTouchId = null;
+    dom.divider.classList.remove("dragging");
+    didFinish = true;
+  }
+  if (resizingKanban && activeTouchKanbanDividerTouchId === touchIdentifier) {
+    resizingKanban = false;
+    activeTouchKanbanDividerTouchId = null;
+    dom.kanbanDivider?.classList.remove("dragging");
+    didFinish = true;
+  }
+  if (didFinish) {
+    rememberLayoutGeometryForCurrentViewport();
+    scheduleGraphRender();
+  }
+};
+
+window.addEventListener("pointerup", (event: PointerEvent) => {
+  if (event.pointerType !== "touch") {
+    return;
+  }
+  finishTouchDividerResize(event.pointerId);
+});
+
+window.addEventListener("pointercancel", (event: PointerEvent) => {
+  if (event.pointerType !== "touch") {
+    return;
+  }
+  finishTouchDividerResize(event.pointerId);
+});
+
+window.addEventListener("touchend", (event: TouchEvent) => {
+  for (let index = 0; index < event.changedTouches.length; index += 1) {
+    const touch = event.changedTouches.item(index);
+    if (touch) {
+      finishTouchDividerResizeByIdentifier(touch.identifier);
+    }
+  }
+}, { passive: true });
+
+window.addEventListener("touchcancel", (event: TouchEvent) => {
+  for (let index = 0; index < event.changedTouches.length; index += 1) {
+    const touch = event.changedTouches.item(index);
+    if (touch) {
+      finishTouchDividerResizeByIdentifier(touch.identifier);
+    }
+  }
+}, { passive: true });
+
 window.addEventListener("resize", () => {
-  updateLegendHiddenFromLayout();
   updateViewportMode();
+  updateLegendHiddenFromLayout();
   scheduleGraphRender();
 });
 
 state.kanbanGroupBy = getStoredKanbanGroup();
 updateKanbanGroupButtons();
 
-initializeSecretToggles();
-updateConnectButtonLabel();
-updateHistoryButtonState();
-updateViewportMode();
-updateLegendHiddenFromLayout();
-restoreSessionFromCookie();
-sync();
+async function initializeApp(): Promise<void> {
+  setBootLoaderVisible(true, "Preparing workspace...");
+  try {
+    initializeSecretToggles();
+    updateConnectButtonLabel();
+    updateHistoryButtonState();
+    updateViewportMode();
+    updateLegendHiddenFromLayout();
+    sync();
+    updateBootLoaderStatus("Restoring session...");
+    await restoreSessionFromCookie();
+    if (collab.spaceId && !collab.synced) {
+      updateBootLoaderStatusFromConnection(collab.connectionStatus);
+      await waitForInitialConnectionReady();
+    }
+    sync();
+  } finally {
+    setBootLoaderVisible(false);
+  }
+}
+
+void initializeApp();

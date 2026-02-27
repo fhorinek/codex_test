@@ -20,10 +20,12 @@ coverage/
 Thumbs.db
 __pycache__
 .ystore
+ystore
 backend/jira/jira_config.json
 backend/users_config.json
 backend/sessions.json
 backend/spaces/**
+backend/ystore/**
 frontend/test-artifacts/
 backend/.coverage
 backend/.coverage.*

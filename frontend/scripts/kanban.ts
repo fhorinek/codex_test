@@ -282,6 +282,44 @@ function clearKanbanTouchDragGhost(drag: any): void {
   drag.ghost = null;
 }
 
+function isPointOverTaskTrash(clientX: number, clientY: number): boolean {
+  const taskTrash = document.getElementById("task-trash") as HTMLElement | null;
+  if (!taskTrash || !Number.isFinite(clientX) || !Number.isFinite(clientY)) {
+    return false;
+  }
+  const rect = taskTrash.getBoundingClientRect();
+  return (
+    clientX >= rect.left
+    && clientX <= rect.right
+    && clientY >= rect.top
+    && clientY <= rect.bottom
+  );
+}
+
+function setKanbanTouchTaskTrashHover(active: boolean): void {
+  const taskTrash = document.getElementById("task-trash") as HTMLElement | null;
+  if (!taskTrash) {
+    return;
+  }
+  taskTrash.classList.toggle("drag-over", active);
+  document.body.classList.toggle("task-trash-over", active);
+}
+
+function clearKanbanTouchTaskTrashHover(): void {
+  setKanbanTouchTaskTrashHover(false);
+}
+
+function dispatchKanbanTouchTaskTrashDrop(taskId: string): void {
+  if (!taskId) {
+    return;
+  }
+  window.dispatchEvent(
+    new CustomEvent("taskdroptrash", {
+      detail: { taskId },
+    })
+  );
+}
+
 function uniqueTokens(tokens: any[]): any[] {
   return Array.from(new Set(tokens));
 }
@@ -702,6 +740,12 @@ function bindKanbanCard({
     }
     event.preventDefault();
     updateKanbanTouchDragGhost(drag);
+    const overTrash = isPointOverTaskTrash(drag.lastClientX, drag.lastClientY);
+    setKanbanTouchTaskTrashHover(overTrash);
+    if (overTrash) {
+      clearKanbanTouchDragHoverColumn(drag);
+      return;
+    }
     const hoveredElement = document.elementFromPoint(drag.lastClientX, drag.lastClientY);
     const hoveredColumn = hoveredElement?.closest?.(".kanban-column") as HTMLElement | null;
     setKanbanTouchDragHoverColumn(drag, hoveredColumn);
@@ -719,14 +763,19 @@ function bindKanbanCard({
     drag.lastClientY = endedTouch.clientY;
     if (drag.dragging) {
       event.preventDefault();
-      const task = getTaskById(drag.taskId);
-      const nextState = String(drag.hoverColumn?.dataset?.stateTag || "");
-      if (task && nextState && task.state !== nextState) {
-        updateTaskState(task, nextState);
+      if (isPointOverTaskTrash(drag.lastClientX, drag.lastClientY)) {
+        dispatchKanbanTouchTaskTrashDrop(drag.taskId);
+      } else {
+        const task = getTaskById(drag.taskId);
+        const nextState = String(drag.hoverColumn?.dataset?.stateTag || "");
+        if (task && nextState && task.state !== nextState) {
+          updateTaskState(task, nextState);
+        }
       }
       card.dataset.touchDragSuppressUntil = String(Date.now() + KANBAN_TOUCH_DRAG_SUPPRESS_CLICK_MS);
       window.dispatchEvent(new CustomEvent("taskdragend"));
     }
+    clearKanbanTouchTaskTrashHover();
     clearKanbanTouchDragHoverColumn(drag);
     clearKanbanTouchDragGhost(drag);
     card.classList.remove("dragging");
@@ -740,6 +789,7 @@ function bindKanbanCard({
     if (drag.dragging) {
       window.dispatchEvent(new CustomEvent("taskdragend"));
     }
+    clearKanbanTouchTaskTrashHover();
     clearKanbanTouchDragHoverColumn(drag);
     clearKanbanTouchDragGhost(drag);
     card.classList.remove("dragging");
