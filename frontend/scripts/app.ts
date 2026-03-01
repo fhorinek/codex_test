@@ -129,6 +129,16 @@ const FRONTEND_BUILD_ID = (() => {
 })();
 // Stores the FRONTEND_BUILD_INFO_URL module constant.
 const FRONTEND_BUILD_INFO_URL = `${REMOTE_BASE}/build-info.json`;
+// Stores the SYSTEM_SHARED_ROOM_ID module constant.
+const SYSTEM_SHARED_ROOM_ID = "__system__";
+// Stores the SYSTEM_SHARED_MAP_NAME module constant.
+const SYSTEM_SHARED_MAP_NAME = "system";
+// Stores the SYSTEM_SHARED_KEY_JIRA_PROJECT_KEYS module constant.
+const SYSTEM_SHARED_KEY_JIRA_PROJECT_KEYS = "jiraProjectKeys";
+// Stores the SYSTEM_SHARED_KEY_BACKEND_BUILD_ID module constant.
+const SYSTEM_SHARED_KEY_BACKEND_BUILD_ID = "backendBuildId";
+// Stores the SYSTEM_SHARED_KEY_PRESENCE_BY_SPACE module constant.
+const SYSTEM_SHARED_KEY_PRESENCE_BY_SPACE = "presenceBySpace";
 
 initPerformanceMonitoring();
 
@@ -590,6 +600,10 @@ const state: any = {
   tagMeta: new Map(),
   peopleMeta: new Map(),
   stateMeta: new Map(),
+  jiraProjects: [],
+  jiraProjectKeys: new Set(),
+  jiraIssueKeys: new Set(),
+  jiraTokens: new Set(),
   totalStoryPoints: 0,
   selectedTags: new Set(),
   selectedPeople: new Set(),
@@ -1071,6 +1085,10 @@ const collab: any = {
   provider: null,
   ydoc: null,
   ytext: null,
+  systemProvider: null,
+  systemDoc: null,
+  systemMap: null,
+  systemMapObserver: null,
   binding: null,
   bindingMode: null,
   saveTimer: null,
@@ -1100,6 +1118,8 @@ const collab: any = {
   },
   authToken: AUTH_TOKEN,
   isAuthenticated: false,
+  backendBuildId: "",
+  systemPresenceBySpace: {},
   connectionStatus: "disconnected",
   offlineDraftTimer: null,
   offlineDraftDirty: false,
@@ -2624,9 +2644,10 @@ function sync(): void {
     incomingReferenceCountByName,
     totalStoryPoints,
   } = parseTasks(sourceText);
-  applyStableTaskIds({ allTasks: Array.isArray(allTasks) ? allTasks : [] });
+  const parsedAllTasks = Array.isArray(allTasks) ? allTasks : [];
+  applyStableTaskIds({ allTasks: parsedAllTasks });
   state.tasks = tasks;
-  state.allTasks = allTasks;
+  state.allTasks = parsedAllTasks;
   state.tags = tags;
   state.people = people;
   state.states = states;
@@ -2637,6 +2658,27 @@ function sync(): void {
   state.stateMeta = stateMeta;
   state.incomingReferenceCountByName = incomingReferenceCountByName;
   state.totalStoryPoints = totalStoryPoints;
+  const jiraIssueKeys = new Set<string>();
+  const jiraTokens = new Set<string>();
+  parsedAllTasks.forEach((task: any) => {
+    const jiraKey = typeof task?.jiraKey === "string" ? task.jiraKey.trim().toUpperCase() : "";
+    if (jiraKey) {
+      jiraIssueKeys.add(jiraKey);
+      jiraTokens.add(jiraKey);
+    }
+    const jiraToken = typeof task?.jiraToken === "string" ? task.jiraToken.trim().toUpperCase() : "";
+    if (jiraToken) {
+      jiraTokens.add(jiraToken);
+    }
+  });
+  state.jiraProjectKeys.forEach((projectKey: any) => {
+    const normalizedProjectKey = typeof projectKey === "string" ? projectKey.trim().toUpperCase() : "";
+    if (normalizedProjectKey) {
+      jiraTokens.add(normalizedProjectKey);
+    }
+  });
+  state.jiraIssueKeys = jiraIssueKeys;
+  state.jiraTokens = jiraTokens;
   trackOfflineDraftChange(sourceText);
   if (dom.boardTitle) {
     const title = config.boardName || "Task Script";
@@ -2967,8 +3009,8 @@ function updateTaskEditPreviewFromText(text: any): void {
   }
   const parsed = parseTaskBody(text);
   const titleValue = dom.taskEditTitleInput?.value.trim() || "Untitled task";
-  const { key: jiraKey, title: jiraTitle } = parseJiraTitle(titleValue);
-  const displayKey = jiraKey || editingTaskJiraKey;
+  const { token: jiraToken, title: jiraTitle } = parseJiraTitle(titleValue);
+  const displayKey = jiraToken || editingTaskJiraKey;
   updateTaskEditJiraPill(displayKey);
   const displayTitle = jiraTitle || "Untitled task";
   /**
@@ -3133,6 +3175,10 @@ function ensureTaskEditEditor() {
       tags: state.tags,
       people: state.people,
       states: state.states,
+      jiraProjects: state.jiraProjects,
+      jiraProjectKeys: state.jiraProjectKeys,
+      jiraIssueKeys: state.jiraIssueKeys,
+      jiraTokens: state.jiraTokens,
       allTasks: state.allTasks,
       selectedLine: 0,
     };
@@ -3140,6 +3186,10 @@ function ensureTaskEditEditor() {
   modalEditorState.tags = state.tags;
   modalEditorState.people = state.people;
   modalEditorState.states = state.states;
+  modalEditorState.jiraProjects = state.jiraProjects;
+  modalEditorState.jiraProjectKeys = state.jiraProjectKeys;
+  modalEditorState.jiraIssueKeys = state.jiraIssueKeys;
+  modalEditorState.jiraTokens = state.jiraTokens;
   modalEditorState.allTasks = state.allTasks;
   if (!modalEditorController) {
     modalEditorController = createEditor({
@@ -4050,6 +4100,134 @@ function publishCollabIdentityAwareness(): void {
 }
 
 /**
+ * Handles the decodeSystemSharedValue function logic.
+ * Input: raw: any.
+ * Output: any.
+ */
+function decodeSystemSharedValue(raw: any): any {
+  if (typeof raw !== "string") {
+    return raw;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return "";
+  }
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return raw;
+  }
+}
+
+/**
+ * Handles the applySystemSharedSnapshot function logic.
+ * Input: rawSnapshot: any.
+ * Output: void.
+ */
+function applySystemSharedSnapshot(rawSnapshot: any): void {
+  const snapshot = rawSnapshot && typeof rawSnapshot === "object" ? rawSnapshot : {};
+  const jiraProjectsRaw = decodeSystemSharedValue(snapshot[SYSTEM_SHARED_KEY_JIRA_PROJECT_KEYS]);
+  const jiraProjectKeys = Array.isArray(jiraProjectsRaw)
+    ? jiraProjectsRaw
+      .map((value: any) => (typeof value === "string" ? value.trim().toUpperCase() : ""))
+      .filter((value: string) => Boolean(value))
+    : [];
+  if (Array.isArray(jiraProjectsRaw)) {
+    setJiraProjectCatalog(jiraProjectKeys.map((key: string) => ({ key, name: key })));
+  }
+  const backendBuildIdRaw = decodeSystemSharedValue(snapshot[SYSTEM_SHARED_KEY_BACKEND_BUILD_ID]);
+  collab.backendBuildId =
+    typeof backendBuildIdRaw === "string" ? backendBuildIdRaw.trim() : "";
+  const presenceRaw = decodeSystemSharedValue(snapshot[SYSTEM_SHARED_KEY_PRESENCE_BY_SPACE]);
+  if (presenceRaw && typeof presenceRaw === "object" && !Array.isArray(presenceRaw)) {
+    const normalizedPresence: Record<string, string[]> = {};
+    Object.keys(presenceRaw).forEach((spacePath: string) => {
+      const usersRaw = (presenceRaw as Record<string, any>)[spacePath];
+      const users = Array.isArray(usersRaw)
+        ? usersRaw
+          .map((value: any) => (typeof value === "string" ? value.trim() : ""))
+          .filter((value: string) => Boolean(value))
+        : [];
+      if (users.length) {
+        normalizedPresence[spacePath] = users;
+      }
+    });
+    collab.systemPresenceBySpace = normalizedPresence;
+  } else {
+    collab.systemPresenceBySpace = {};
+  }
+}
+
+/**
+ * Handles the disconnectSystemSharedChannel function logic.
+ * Input: none.
+ * Output: void.
+ */
+function disconnectSystemSharedChannel(): void {
+  try {
+    if (collab.systemMap && collab.systemMapObserver) {
+      collab.systemMap.unobserve(collab.systemMapObserver);
+    }
+  } catch {
+    // Ignore shared map observer cleanup failures.
+  }
+  collab.systemMapObserver = null;
+  collab.systemMap = null;
+  if (collab.systemProvider?.destroy) {
+    collab.systemProvider.destroy();
+  }
+  collab.systemProvider = null;
+  if (collab.systemDoc?.destroy) {
+    collab.systemDoc.destroy();
+  }
+  collab.systemDoc = null;
+}
+
+/**
+ * Handles the connectSystemSharedChannel function logic.
+ * Input: none.
+ * Output: Promise<void>.
+ */
+async function connectSystemSharedChannel(): Promise<void> {
+  if (!collab.isAuthenticated || collab.systemProvider) {
+    return;
+  }
+  try {
+    const { Y, WebsocketProvider } = await loadCollabModules();
+    if (!Y || !WebsocketProvider) {
+      return;
+    }
+    const ydoc = new Y.Doc();
+    const wsParams: Record<string, string> = {};
+    if (collab.username && collab.authToken) {
+      wsParams["user"] = collab.username;
+      wsParams["pass"] = collab.authToken;
+    }
+    const provider = new WebsocketProvider(WS_BASE, SYSTEM_SHARED_ROOM_ID, ydoc, {
+      params: wsParams,
+    });
+    const sharedMap = ydoc.getMap(SYSTEM_SHARED_MAP_NAME);
+    const observer = () => {
+      const snapshot = sharedMap?.toJSON ? sharedMap.toJSON() : {};
+      applySystemSharedSnapshot(snapshot);
+    };
+    sharedMap.observe(observer);
+    provider.on("sync", (synced: any) => {
+      if (!synced) {
+        return;
+      }
+      observer();
+    });
+    collab.systemProvider = provider;
+    collab.systemDoc = ydoc;
+    collab.systemMap = sharedMap;
+    collab.systemMapObserver = observer;
+  } catch {
+    disconnectSystemSharedChannel();
+  }
+}
+
+/**
  * Handles the authHeaders function logic.
  * Input: { includeBasic = false } = {}.
  * Output: result produced by this function.
@@ -4302,6 +4480,74 @@ async function fetchJiraConfig() {
     baseUrl: typeof data.base_url === "string" ? data.base_url : "",
     email: typeof data.email === "string" ? data.email : "",
     token: typeof data.token === "string" ? data.token : "",
+  };
+}
+
+/**
+ * Handles the fetchJiraProjects function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
+async function fetchJiraProjects() {
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/jira-projects`, {
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (response.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    throw new Error("Unable to fetch Jira projects.");
+  }
+  const data = await response.json();
+  const projects = Array.isArray(data.projects) ? data.projects : [];
+  return projects
+    .map((project: any) => ({
+      key: typeof project?.key === "string" ? project.key.trim().toUpperCase() : "",
+      name: typeof project?.name === "string" ? project.name.trim() : "",
+    }))
+    .filter((project: any) => project.key);
+}
+
+/**
+ * Handles the fetchJiraIssueHierarchy function logic.
+ * Input: projectKey: any = "".
+ * Output: result produced by this function.
+ */
+async function fetchJiraIssueHierarchy(projectKey: any = "") {
+  const params = new URLSearchParams();
+  const project = typeof projectKey === "string" ? projectKey.trim() : "";
+  if (project) {
+    params.set("project", project);
+  }
+  const query = params.toString();
+  let response;
+  try {
+    response = await fetch(`${REMOTE_BASE}/api/jira-issue-hierarchy${query ? `?${query}` : ""}`, {
+      headers: authHeaders(),
+    });
+  } catch {
+    throw new Error("Unable to reach the backend.");
+  }
+  if (response.status === 401) {
+    throw new Error("Unauthorized");
+  }
+  if (!response.ok) {
+    if (response.status === 400) {
+      throw new Error("Project key is required.");
+    }
+    throw new Error("Unable to fetch Jira hierarchy.");
+  }
+  const data = await response.json();
+  const chain = Array.isArray(data.chain) ? data.chain.filter((item: any) => typeof item === "string") : [];
+  return {
+    project: typeof data.project === "string" ? data.project : "",
+    chain,
+    levels: Array.isArray(data.levels) ? data.levels : [],
   };
 }
 
@@ -5228,6 +5474,7 @@ async function loadSpaceList({ showLoading = true } = {}) {
       message.textContent = "Unable to reach the backend.";
       dom.spaceList.appendChild(message);
     }
+    disconnectSystemSharedChannel();
     collab.isAuthenticated = false;
     collab.permissions = normalizePermissions(null);
     updateRoleVisibility();
@@ -5289,6 +5536,18 @@ function fillJiraConfigForm(config: any) {
 }
 
 /**
+ * Handles the setJiraHierarchySummary function logic.
+ * Input: message: any.
+ * Output: result produced by this function.
+ */
+function setJiraHierarchySummary(message: any) {
+  if (!dom.jiraConfigHierarchy) {
+    return;
+  }
+  dom.jiraConfigHierarchy.textContent = String(message || "");
+}
+
+/**
  * Handles the readJiraConfigForm function logic.
  * Input: none.
  * Output: result produced by this function.
@@ -5299,6 +5558,135 @@ function readJiraConfigForm() {
     email: dom.jiraConfigEmail?.value?.trim() || "",
     token: dom.jiraConfigToken?.value || "",
   };
+}
+
+/**
+ * Handles the setJiraProjectCatalog function logic.
+ * Input: projects: any[].
+ * Output: void.
+ */
+function setJiraProjectCatalog(projects: any[] = []): void {
+  const normalizedProjects = Array.isArray(projects)
+    ? projects
+      .map((project: any) => ({
+        key: typeof project?.key === "string" ? project.key.trim().toUpperCase() : "",
+        name: typeof project?.name === "string" ? project.name.trim() : "",
+      }))
+      .filter((project: any) => project.key)
+    : [];
+  const byKey = new Map<string, any>();
+  normalizedProjects.forEach((project: any) => {
+    if (!byKey.has(project.key)) {
+      byKey.set(project.key, {
+        key: project.key,
+        name: project.name || project.key,
+      });
+    }
+  });
+  const dedupedProjects = Array.from(byKey.values()).sort((a: any, b: any) => a.key.localeCompare(b.key));
+  state.jiraProjects = dedupedProjects;
+  state.jiraProjectKeys = new Set(dedupedProjects.map((project: any) => project.key));
+  const jiraTokens = new Set<string>(state.jiraTokens || []);
+  state.jiraProjectKeys.forEach((projectKey: any) => {
+    const normalizedProjectKey = typeof projectKey === "string" ? projectKey.trim().toUpperCase() : "";
+    if (normalizedProjectKey) {
+      jiraTokens.add(normalizedProjectKey);
+    }
+  });
+  state.jiraTokens = jiraTokens;
+  if (modalEditorState) {
+    modalEditorState.jiraProjects = state.jiraProjects;
+    modalEditorState.jiraProjectKeys = state.jiraProjectKeys;
+    modalEditorState.jiraTokens = state.jiraTokens;
+  }
+}
+
+/**
+ * Handles the inferJiraHierarchyProjectKey function logic.
+ * Input: projects: any[].
+ * Output: string.
+ */
+function inferJiraHierarchyProjectKey(projects: any[] = []): string {
+  const available = new Set(
+    (Array.isArray(projects) ? projects : [])
+      .map((project: any) => (typeof project?.key === "string" ? project.key.trim().toUpperCase() : ""))
+      .filter((key: string) => Boolean(key))
+  );
+  if (!available.size) {
+    return "";
+  }
+  for (const task of state.allTasks || []) {
+    const jiraToken = typeof task?.jiraToken === "string" ? task.jiraToken.trim().toUpperCase() : "";
+    if (jiraToken && !jiraToken.includes("-") && available.has(jiraToken)) {
+      return jiraToken;
+    }
+    const jiraKey = typeof task?.jiraKey === "string" ? task.jiraKey.trim().toUpperCase() : "";
+    if (jiraKey) {
+      const projectKey = jiraKey.split("-")[0] || "";
+      if (projectKey && available.has(projectKey)) {
+        return projectKey;
+      }
+    }
+  }
+  return projects[0]?.key || "";
+}
+
+/**
+ * Handles the summarizeJiraProjects function logic.
+ * Input: projects: any[].
+ * Output: string.
+ */
+function summarizeJiraProjects(projects: any[] = []): string {
+  const labels = (Array.isArray(projects) ? projects : [])
+    .map((project: any) => (typeof project?.key === "string" ? project.key.trim().toUpperCase() : ""))
+    .filter((key: string) => Boolean(key));
+  if (!labels.length) {
+    return "(none)";
+  }
+  const visible = labels.slice(0, 12);
+  return labels.length > 12 ? `${visible.join(", ")} ...` : visible.join(", ");
+}
+
+/**
+ * Handles the loadJiraHierarchySummary function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
+async function loadJiraHierarchySummary() {
+  setJiraHierarchySummary("Jira: loading projects...");
+  try {
+    void connectSystemSharedChannel();
+    let projects = Array.isArray(state.jiraProjects) ? state.jiraProjects : [];
+    if (!projects.length) {
+      projects = await fetchJiraProjects();
+      setJiraProjectCatalog(projects);
+      projects = Array.isArray(state.jiraProjects) ? state.jiraProjects : projects;
+    }
+    if (!projects.length) {
+      setJiraHierarchySummary("Projects: none found.");
+      return;
+    }
+    const hierarchyProject = inferJiraHierarchyProjectKey(projects);
+    if (!hierarchyProject) {
+      setJiraHierarchySummary(`Projects: ${summarizeJiraProjects(projects)}.`);
+      return;
+    }
+    const hierarchy = await fetchJiraIssueHierarchy(hierarchyProject);
+    const projectSummary = summarizeJiraProjects(projects);
+    if (!hierarchy.chain.length) {
+      setJiraHierarchySummary(
+        `Projects: ${projectSummary}. Hierarchy (${hierarchyProject}): no issue types available.`
+      );
+      return;
+    }
+    const prefix = hierarchy.project ? `${hierarchy.project} ` : "";
+    setJiraHierarchySummary(
+      `Projects: ${projectSummary}. Hierarchy (${prefix}root to leaf): ${hierarchy.chain.join(" -> ")}`
+    );
+  } catch (error) {
+    setJiraProjectCatalog([]);
+    setJiraHierarchySummary(`Jira: ${formatSpaceError(error, "Unavailable.")}`);
+  }
 }
 
 /**
@@ -5325,6 +5713,7 @@ async function openJiraConfigModal() {
   clearJiraConfigError();
   dom.jiraConfigModal.classList.remove("hidden");
   applyAuthFromInputs({ markDirty: false });
+  void loadJiraHierarchySummary();
   try {
     const config = await fetchJiraConfig();
     fillJiraConfigForm(config);
@@ -5359,6 +5748,7 @@ async function submitJiraConfig() {
     const payload = readJiraConfigForm();
     const saved = await saveJiraConfig(payload);
     fillJiraConfigForm(saved);
+    await loadJiraHierarchySummary();
     showToast("Jira configuration saved.");
     closeJiraConfigModal({ reopenSpaces: true });
   } catch (error) {
@@ -6778,12 +7168,14 @@ async function attemptLogin() {
     updateConnectButtonLabel();
     closeLoginModal();
     openSpacesModal();
+    void connectSystemSharedChannel();
     showToast("Logged in.");
     if (collab.mustChangePassword) {
       showToast("Change the default admin password.", "error");
       openProfileModal();
     }
   } catch (error) {
+    disconnectSystemSharedChannel();
     collab.isAuthenticated = false;
     collab.mustChangePassword = false;
     collab.permissions = normalizePermissions(null);
@@ -6813,6 +7205,7 @@ async function restoreSessionFromCookie() {
     collab.isAuthenticated = true;
     collab.authToken = "";
     updateConnectButtonLabel();
+    void connectSystemSharedChannel();
     const allowedSpaces = Array.isArray(me.spaces)
       ? me.spaces.filter((spaceId: any) => typeof spaceId === "string")
       : [];
@@ -6838,6 +7231,7 @@ async function restoreSessionFromCookie() {
       }
     }
   } catch {
+    disconnectSystemSharedChannel();
     collab.isAuthenticated = false;
     collab.mustChangePassword = false;
     collab.permissions = normalizePermissions(null);
@@ -6852,6 +7246,7 @@ async function restoreSessionFromCookie() {
  * Output: result produced by this function.
  */
 async function logout() {
+  disconnectSystemSharedChannel();
   disconnectSpace();
   await logoutRequest();
   collab.isAuthenticated = false;
@@ -7202,6 +7597,7 @@ async function connectToSpace(
   }
   try {
     const result = await syncEngine.connectToSpace(spaceId, spacePath);
+    void connectSystemSharedChannel();
     if (collab.spaceId) {
       setStoredLastSpaceRef(collab.spaceId, collab.spacePath || spacePath || collab.spaceId);
       if (showLoader) {
@@ -8665,8 +9061,8 @@ if (dom.taskEditTitleInput) {
       return;
     }
     const parsedTitle = parseJiraTitle(taskEditTitleInput.value || "");
-    if (parsedTitle.key) {
-      editingTaskJiraKey = parsedTitle.key;
+    if (parsedTitle.token) {
+      editingTaskJiraKey = parsedTitle.token;
     }
     updateTaskEditJiraPill(editingTaskJiraKey);
     updateTaskEditPreviewFromText(modalEditorController.getValue());

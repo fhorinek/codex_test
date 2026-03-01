@@ -33,6 +33,15 @@ test("editor source contains header-config autocomplete implementation", async (
   assert.match(source, /taskScriptCompletionSource/);
 });
 
+// Verifies Jira bracket autocomplete support is present:
+// "[" trigger, Jira marker collector, and closing-bracket apply text.
+test("editor source contains jira bracket autocomplete implementation", async () => {
+  const source = await readEditorSource();
+  assert.match(source, /function collectJiraMarkerValues/);
+  assert.match(source, /trigger === "\["/);
+  assert.match(source, /apply:\s*`\$\{value\}\]`/);
+});
+
 // Verifies modifier-key visual hinting support exists so tokens can be underlined on ctrl/cmd hold.
 test("editor source contains modifier-nav activation logic", async () => {
   const source = await readEditorSource();

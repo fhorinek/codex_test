@@ -145,8 +145,9 @@ Admin-only modal:
 
 ## Task Script Format
 
-- Task line starts with `%` and may include optional Jira key:
-  - `% [JIRA:ABC-123] Task title`
+- Task line starts with `%` and may include optional Jira marker:
+  - `% [ABC] Task title` creates a new Jira issue in project `ABC`
+  - `% [ABC-123] Task title` links an existing Jira issue
 - Subtasks use 4-space indentation.
 - Optional tag line is the first body line (same indentation as task line body):
   - tokens only, e.g. `@person !state #tag ~2`

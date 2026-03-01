@@ -262,7 +262,7 @@ function parseTaskTitleFromLine(text: any) {
         return "";
     }
     return (taskMatch[1] ?? "")
-        .replace(/\s*\[JIRA:[A-Z][A-Z0-9]+-\d+\]\s*/g, " ")
+        .replace(/\s*\[[A-Z][A-Z0-9]+(?:-\d+)?\]\s*/g, " ")
         .replace(/\s{2,}/g, " ")
         .trim();
 }
@@ -282,7 +282,7 @@ function taskTitleRangeFromLine(line: any) {
     }
     const prefixLength = taskMatch[0].length;
     let titleStart = prefixLength;
-    const jiraMatch = text.slice(titleStart).match(/^\[JIRA:[A-Z][A-Z0-9]+-\d+\]\s*/);
+    const jiraMatch = text.slice(titleStart).match(/^\[[A-Z][A-Z0-9]+(?:-\d+)?\]\s*/);
     if (jiraMatch) {
         titleStart += jiraMatch[0].length;
     }
@@ -533,7 +533,7 @@ function buildDecorations(view: any, appState: any, incomingReferenceSources = n
                     decoration: hasTarget ? referenceDecoration : invalidReferenceDecoration,
                 });
             }
-            const jiraRegex = /\[JIRA:[A-Z][A-Z0-9]+-\d+\]/g;
+            const jiraRegex = /\[[A-Z][A-Z0-9]+(?:-\d+)?\]/g;
             while ((match = jiraRegex.exec(text)) !== null) {
                 ranges.push({
                     from: line.from + match.index,
@@ -778,26 +778,55 @@ function collectConfigSlugValues(section: SlugSection, state: any) {
     return sortedSlugValues(values);
 }
 /**
+ * Handles the collectJiraMarkerValues function logic.
+ * Input: state: any.
+ * Output: string[].
+ */
+function collectJiraMarkerValues(state: any): string[] {
+    const values = new Set<string>();
+    const addValue = (value: any): void => {
+        if (typeof value !== "string") {
+            return;
+        }
+        const normalized = value.trim().toUpperCase();
+        if (!/^[A-Z][A-Z0-9]+(?:-\d+)?$/.test(normalized)) {
+            return;
+        }
+        values.add(normalized);
+    };
+    const addFromIterable = (source: any): void => {
+        if (!source || typeof source.forEach !== "function") {
+            return;
+        }
+        source.forEach((entry: any) => addValue(entry));
+    };
+    addFromIterable(state?.jiraProjectKeys);
+    if (Array.isArray(state?.jiraProjects)) {
+        state.jiraProjects.forEach((project: any) => addValue(project?.key));
+    }
+    return sortedSlugValues(values);
+}
+/**
  * Handles the buildTokenCompletions function logic.
  * Input: context: any, state: any.
  * Output: result produced by this function.
  */
 function buildTokenCompletions(context: any, state: any) {
-    const before = context.matchBefore(/(?:^|\s)([#@!{])([^\s}]*)$/);
+    const before = context.matchBefore(/(?:^|\s)([#@!{\[])([^\s\]}]*)$/);
     if (!before) {
         return null;
     }
     if (before.from === before.to && !context.explicit) {
         return null;
     }
-    const triggerMatch = before.text.match(/[#@!{]/);
+    const triggerMatch = before.text.match(/[#@!{\[]/);
     if (!triggerMatch) {
         return null;
     }
     const trigger = triggerMatch[0];
     const triggerIndex = before.text.lastIndexOf(trigger);
     const partial = before.text.slice(triggerIndex + 1);
-    const from = before.from + triggerIndex + (trigger === "{" ? 1 : 0);
+    const from = before.from + triggerIndex + (trigger === "{" || trigger === "[" ? 1 : 0);
     let options = [];
     if (trigger === "#") {
         options = Array.from(state.tags).map((value) => ({ label: value, type: "tag" }));
@@ -808,11 +837,19 @@ function buildTokenCompletions(context: any, state: any) {
     else if (trigger === "!") {
         options = Array.from(state.states).map((value) => ({ label: value, type: "state" }));
     }
-    else {
+    else if (trigger === "{") {
         options = state.allTasks.map((task: any) => ({
             label: task.name,
             type: "reference",
             apply: `${task.name}}`,
+        }));
+    }
+    else {
+        options = collectJiraMarkerValues(state).map((value) => ({
+            label: value,
+            type: "reference",
+            detail: /-\d+$/.test(value) ? "Issue key" : "Project key",
+            apply: `${value}]`,
         }));
     }
     const lowerPartial = partial.toLowerCase();
@@ -820,11 +857,12 @@ function buildTokenCompletions(context: any, state: any) {
     if (!filtered.length) {
         return null;
     }
+    const validFor = trigger === "[" ? /[A-Z0-9-]*/ : /[^\s}]*/;
     return {
         from,
         to: before.to,
         options: filtered,
-        validFor: /[^\s}]*/,
+        validFor,
     };
 }
 /**
@@ -1323,7 +1361,7 @@ function taskTitleAtPosition(doc: any, pos: any) {
     while (cursor < text.length && /\s/.test(text[cursor])) {
         cursor += 1;
     }
-    const jiraMatch = text.slice(cursor).match(/^\[JIRA:[A-Z][A-Z0-9]+-\d+\]/);
+    const jiraMatch = text.slice(cursor).match(/^\[[A-Z][A-Z0-9]+(?:-\d+)?\]/);
     if (jiraMatch) {
         cursor += jiraMatch[0].length;
         while (cursor < text.length && /\s/.test(text[cursor])) {

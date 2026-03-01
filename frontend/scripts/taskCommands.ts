@@ -24,6 +24,7 @@ type TaskEditDraftTask = {
   lineIndex?: number;
   name?: string;
   jiraKey?: string | null;
+  jiraToken?: string | null;
 };
 // Defines the TaskEditDraft type structure for this module.
 type TaskEditDraft = {
@@ -81,6 +82,37 @@ type SaveTaskEditResult =
  */
 function lineAt(lines: string[], index: number): string {
   return lines[index] ?? "";
+}
+
+/**
+ * Handles the buildTaskLineDepthMap function logic.
+ * Input: lines: string[].
+ * Output: Map<number, { depth: number; indent: string; indentLength: number }>.
+ */
+function buildTaskLineDepthMap(
+  lines: string[]
+): Map<number, { depth: number; indent: string; indentLength: number }> {
+  const byLine = new Map<number, { depth: number; indent: string; indentLength: number }>();
+  const stack: Array<{ depth: number; indentLength: number }> = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lineAt(lines, index);
+    const match = line.match(/^(\s*)%/);
+    if (!match) {
+      continue;
+    }
+    const indent = match[1] || "";
+    const indentLength = indent.length;
+    let lastStackEntry = stack.length ? stack[stack.length - 1] : null;
+    while (lastStackEntry && lastStackEntry.indentLength >= indentLength) {
+      stack.pop();
+      lastStackEntry = stack.length ? stack[stack.length - 1] : null;
+    }
+    const parentEntry = stack.length ? stack[stack.length - 1] : null;
+    const depth = parentEntry ? parentEntry.depth + 1 : 0;
+    byLine.set(index, { depth, indent, indentLength });
+    stack.push({ depth, indentLength });
+  }
+  return byLine;
 }
 
 /**
@@ -267,22 +299,18 @@ export function adjustIndent(line: string, deltaSpaces: number): string {
  * Output: TaskBlock | null.
  */
 export function findTaskBlock(lines: string[], lineIndex: number): TaskBlock | null {
-  const taskLine = lines[lineIndex] || "";
-  const match = taskLine.match(/^(\s*)%/);
-  if (!match) {
+  const depthByLine = buildTaskLineDepthMap(lines);
+  const taskLine = depthByLine.get(lineIndex);
+  if (!taskLine) {
     return null;
   }
-  const indent = match[1] || "";
-  const depth = Math.floor(indent.length / 4);
+  const indent = taskLine.indent;
+  const depth = taskLine.depth;
   let end = lineIndex + 1;
   while (end < lines.length) {
-    const line = lineAt(lines, end);
-    const taskMatch = line.match(/^(\s*)%/);
-    if (taskMatch) {
-      const lineDepth = Math.floor((taskMatch[1] ?? "").length / 4);
-      if (lineDepth <= depth) {
-        break;
-      }
+    const lineTask = depthByLine.get(end);
+    if (lineTask && lineTask.depth <= depth) {
+      break;
     }
     end += 1;
   }
@@ -375,7 +403,7 @@ export function buildTaskEditDraft(lines: string[], task: TaskEditDraftTask | nu
   const taskLine = lineAt(lines, lineIndex);
   const indent = taskLine.match(/^\s*/)?.[0] || "";
   const parsedTitle = parseJiraTitle(task.name || "");
-  const jiraKey = task.jiraKey || parsedTitle.key || null;
+  const jiraKey = task.jiraToken || task.jiraKey || parsedTitle.token || parsedTitle.key || null;
   const title = task.name || parsedTitle.title || "";
   const bodyLines = lines
     .slice(lineIndex + 1, end)
@@ -661,6 +689,7 @@ export function createTaskCommandController(options: TaskCommandControllerOption
    */
   function deleteTaskKeepSubtasksAtLine(lineIndex: number): number | null {
     const lines = getEditorValue().split("\n");
+    const depthByLine = buildTaskLineDepthMap(lines);
     const block = findTaskBlock(lines, lineIndex);
     if (!block) {
       return null;
@@ -677,20 +706,16 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     const childBlocks = [];
     let index = block.start + 1;
     while (index < block.end) {
-      const line = lineAt(lines, index);
-      const taskMatch = line.match(/^(\s*)%/);
-      if (taskMatch) {
-        const lineDepth = Math.floor((taskMatch[1] ?? "").length / 4);
-        if (lineDepth === block.depth + 1) {
-          const childBlock = findTaskBlock(lines, index);
-          if (childBlock) {
-            const childLines = lines
-              .slice(childBlock.start, childBlock.end)
-              .map((childLine: string) => adjustIndent(childLine, -4));
-            childBlocks.push(...childLines);
-            index = childBlock.end;
-            continue;
-          }
+      const lineTask = depthByLine.get(index);
+      if (lineTask && lineTask.depth === block.depth + 1) {
+        const childBlock = findTaskBlock(lines, index);
+        if (childBlock) {
+          const childLines = lines
+            .slice(childBlock.start, childBlock.end)
+            .map((childLine: string) => adjustIndent(childLine, -4));
+          childBlocks.push(...childLines);
+          index = childBlock.end;
+          continue;
         }
       }
       index += 1;
@@ -724,7 +749,7 @@ export function createTaskCommandController(options: TaskCommandControllerOption
       return { ok: false, error: "Missing task range." };
     }
     const parsedTitle = parseJiraTitle(typeof rawTitle === "string" ? rawTitle : "");
-    const jiraKey = parsedTitle.key || fallbackJiraKey || "";
+    const jiraKey = parsedTitle.token || parsedTitle.key || fallbackJiraKey || "";
     const title = parsedTitle.title || "";
     if (!title) {
       return { ok: false, error: "Title is required." };
@@ -733,7 +758,7 @@ export function createTaskCommandController(options: TaskCommandControllerOption
       .replace(/\r/g, "")
       .split("\n")
       .map((line) => (line.trim() === "" ? "" : `${indent}${line}`));
-    const jiraPrefix = jiraKey ? ` [JIRA:${jiraKey}]` : "";
+    const jiraPrefix = jiraKey ? ` [${jiraKey}]` : "";
     const nextLines = [`${indent}%${jiraPrefix} ${title}`, ...bodyLines];
     const lines = getEditorValue().split("\n");
     const oldTitle = creatingTask ? "" : parseTaskTitleFromLine(lines[taskRange.start] || "");

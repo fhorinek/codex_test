@@ -5,9 +5,9 @@
  */
 
 // Stores the JIRA_MARKER_RE module constant.
-export const JIRA_MARKER_RE = /\[JIRA:([A-Z][A-Z0-9]+(?:-\d+)?)\]/;
+export const JIRA_MARKER_RE = /\[([A-Z][A-Z0-9]+(?:-\d+)?)\]/;
 // Stores the JIRA_MARKER_GLOBAL_RE module constant.
-export const JIRA_MARKER_GLOBAL_RE = /\s*\[JIRA:[A-Z][A-Z0-9]+(?:-\d+)?\]\s*/g;
+export const JIRA_MARKER_GLOBAL_RE = /\s*\[[A-Z][A-Z0-9]+(?:-\d+)?\]\s*/g;
 
 // Stores the STATE_TOKEN_MATCH_RE module constant.
 const STATE_TOKEN_MATCH_RE = /(^|\s)(![^\s#@~]+)(?=\s|$)/;

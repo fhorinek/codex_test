@@ -2,6 +2,7 @@
 
 import asyncio
 import difflib
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -19,6 +20,10 @@ logger = logging.getLogger("jira-worker")
 
 # Stores the WS_BASE_URL module constant.
 WS_BASE_URL = "ws://localhost:5000/ws"
+# Stores the SYSTEM_SHARED_ROOM_ID module constant.
+SYSTEM_SHARED_ROOM_ID = "__system__"
+# Stores the SYSTEM_SHARED_MAP_NAME module constant.
+SYSTEM_SHARED_MAP_NAME = "system"
 
 # Stores the REFERENCE_RE module constant.
 REFERENCE_RE = re.compile(r"\{([^}]+)\}")
@@ -540,3 +545,47 @@ async def read_ydoc_text(ydoc: Y.YDoc, retries: int = 5) -> str:
                 raise
             await asyncio.sleep(0.05)
     return ""
+
+
+# Handles the _encode_shared_map_value function logic.
+# Input: value: Any.
+# Output: str.
+def _encode_shared_map_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return json.dumps(str(value), ensure_ascii=False)
+
+
+# Handles the set_shared_map_values function logic.
+# Input: ydoc: Y.YDoc, values: dict[str, Any].
+# Output: bool.
+def set_shared_map_values(ydoc: Y.YDoc, values: dict[str, Any]) -> bool:
+    if not isinstance(values, dict) or not values:
+        return False
+    shared_map = ydoc.get_map(SYSTEM_SHARED_MAP_NAME)
+    changed = False
+
+    # Handles the apply function logic.
+    # Input: txn.
+    # Output: None.
+    def apply(txn) -> None:
+        nonlocal changed
+        for raw_key, value in values.items():
+            if not isinstance(raw_key, str):
+                continue
+            key = raw_key.strip()
+            if not key:
+                continue
+            encoded = _encode_shared_map_value(value)
+            current = shared_map.get(key)
+            current_encoded = _encode_shared_map_value(current)
+            if current_encoded == encoded:
+                continue
+            shared_map.set(txn, key, encoded)
+            changed = True
+
+    ydoc.transact(apply)
+    return changed

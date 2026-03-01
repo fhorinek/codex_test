@@ -26,6 +26,7 @@ type AppDomSpecific = {
   jiraConfigBaseUrl: HTMLInputElement | null;
   jiraConfigEmail: HTMLInputElement | null;
   jiraConfigToken: HTMLInputElement | null;
+  jiraConfigHierarchy: HTMLElement | null;
   userNewUsername: HTMLInputElement | null;
   userNewDisplayName: HTMLInputElement | null;
   userNewPassword: HTMLInputElement | null;
@@ -165,6 +166,7 @@ function createAppDomRaw(doc: Document = document) {
     jiraConfigBaseUrl: doc.getElementById("jira-config-base-url"),
     jiraConfigEmail: doc.getElementById("jira-config-email"),
     jiraConfigToken: doc.getElementById("jira-config-token"),
+    jiraConfigHierarchy: doc.getElementById("jira-config-hierarchy"),
     jiraConfigSave: doc.getElementById("jira-config-save"),
     jiraConfigCancel: doc.getElementById("jira-config-cancel"),
     jiraConfigError: doc.getElementById("jira-config-error"),

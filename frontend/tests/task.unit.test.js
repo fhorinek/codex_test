@@ -140,6 +140,16 @@ test("applyInlineMarkdownWithOptions respects disableLinks option", async () => 
   assert.doesNotMatch(plainUrl, /<a /);
 });
 
+// Verifies Jira bracket token parsing supports both project and issue keys.
+test("parseJiraTitle parses jira project and issue markers", async () => {
+  const { parseJiraTitle } = await loadTaskModule();
+  const project = parseJiraTitle("[KAN] New task");
+  const issue = parseJiraTitle("[KAN-123] Existing task");
+
+  assert.deepEqual(project, { key: null, token: "KAN", title: "New task" });
+  assert.deepEqual(issue, { key: "KAN-123", token: "KAN-123", title: "Existing task" });
+});
+
 // Verifies table markdown is rendered as semantic table structure with header and body rows.
 test("renderMarkdown renders table headers and rows", async () => {
   const { renderMarkdown } = await loadTaskModule();
@@ -220,6 +230,32 @@ test("parseTasks parses story points and computes recursive totals", async () =>
   assert.equal(parent.storyPointsSubtasksTotal, 3);
   assert.equal(parent.storyPointsTotal, 6);
   assert.equal(parsed.totalStoryPoints, 6);
+});
+
+// Verifies hierarchy parsing uses relative indentation, not fixed 4-space steps:
+// any increase in leading spaces creates a child level.
+test("parseTasks treats any positive indent increase as child depth", async () => {
+  const { parseTasks } = await loadTaskModule();
+  const parsed = parseTasks(
+    [
+      "% Root",
+      " % Child A",
+      "  % Grandchild",
+      " % Child B",
+      "% Root 2",
+    ].join("\n")
+  );
+
+  assert.equal(parsed.tasks.length, 2);
+  const root = parsed.tasks[0];
+  const root2 = parsed.tasks[1];
+  assert.equal(root.depth, 0);
+  assert.equal(root.children.length, 2);
+  assert.equal(root.children[0].depth, 1);
+  assert.equal(root.children[0].children.length, 1);
+  assert.equal(root.children[0].children[0].depth, 2);
+  assert.equal(root.children[1].depth, 1);
+  assert.equal(root2.depth, 0);
 });
 
 // Verifies config metadata parsing for slug definitions:

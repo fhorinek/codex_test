@@ -57,11 +57,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_add_tag_from_space_text_task(self):
         input_text = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !todo #backend
         """
         output_text = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !todo #backend #urgent
         """
         self.assert_space_modification(
@@ -74,11 +74,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_add_tag_inserts_token_line_before_description(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         planning notes
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         #backend
         planning notes
         """
@@ -92,11 +92,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_remove_tag_from_space_text_task(self):
         input_text = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !todo #backend #urgent @maya
         """
         output_text = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !todo #urgent @maya
         """
         self.assert_space_modification(
@@ -109,11 +109,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_add_people_and_set_state_from_space_text_task(self):
         input_people = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !todo #backend
         """
         output_people = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !todo #backend @maya @sam
         """
         self.assert_space_modification(
@@ -125,11 +125,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
         )
 
         input_state = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !todo #backend
         """
         output_state = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !inprogress #backend
         """
         self.assert_space_modification(
@@ -142,11 +142,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_add_reference_from_space_text_task_description(self):
         input_text = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !todo #backend
         """
         output_text = """
-        % [JIRA:KAN-1] Sync task
+        % [KAN-1] Sync task
         !todo #backend
         {Release Plan}
         """
@@ -168,11 +168,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_add_reference_appends_after_nonempty_description_with_blank_line(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         details line
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         details line
 
         {Release Plan}
@@ -187,12 +187,12 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_remove_tag_token_line(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         #tag1 #tag2 @fero
         description
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         #tag1 @fero
         description
         """
@@ -206,12 +206,12 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_remove_tag_description_body(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         description
         #tag1 #tag2 @fero
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         description
         #tag1 @fero
         """
@@ -225,12 +225,12 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_remove_people_token_line(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo #tag1 @fero @maya
         description
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo #tag1 @maya
         description
         """
@@ -244,12 +244,12 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_remove_people_description_body(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         description
         owners @fero @maya
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         description
         owners @maya
         """
@@ -263,12 +263,12 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_remove_state_token_line(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo #tag1 @fero
         description
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         #tag1 @fero
         description
         """
@@ -282,12 +282,12 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_remove_state_deletes_empty_token_line(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo
         description
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         description
         """
         self.assert_space_modification(
@@ -300,12 +300,12 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_description_field_add_and_remove(self):
         input_add = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo #tag1
         first line
         """
         output_add = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo #tag1
         first line
         second line
@@ -320,14 +320,14 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
         )
 
         input_remove = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo #tag1
         first line
         second line
         third line
         """
         output_remove = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo #tag1
         first line
         third line
@@ -342,11 +342,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_description_field_add_to_empty_description(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo #tag1
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo #tag1
         new details
         """
@@ -360,11 +360,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_name_field_add_and_remove(self):
         input_rename = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo
         """
         output_rename = """
-        % [JIRA:KAN-1] Renamed task
+        % [KAN-1] Renamed task
         !todo
         """
         self.assert_space_modification(
@@ -376,11 +376,11 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
         )
 
         input_clear = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo
         """
         output_clear = """
-        % [JIRA:KAN-1]
+        % [KAN-1]
         !todo
         """
         self.assert_space_modification(
@@ -397,7 +397,7 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
         !todo
         """
         output_add = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo
         """
         self.assert_space_modification(
@@ -409,7 +409,7 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
         )
 
         input_remove = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         !todo
         """
         output_remove = """
@@ -426,12 +426,12 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_remove_state_description_body(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         description
         status !todo @fero
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         description
         status @fero
         """
@@ -445,12 +445,12 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
     def test_space_modification_remove_reference_description_body(self):
         input_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         details {Release Plan} and link {KAN-2}
         {Release Plan}
         """
         output_text = """
-        % [JIRA:KAN-1] Task
+        % [KAN-1] Task
         details  and link {KAN-2}
         """
         self.assert_space_modification(
@@ -472,8 +472,8 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
 
         multiple_tasks = "\n".join(
             [
-                "% [JIRA:KAN-1] First",
-                "% [JIRA:KAN-2] Second",
+                "% [KAN-1] First",
+                "% [KAN-2] Second",
             ]
         )
         with self.assertRaisesRegex(ValueError, "expected exactly one task"):
@@ -487,7 +487,7 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
     def test_modify_task_text_rejects_unsupported_operation_for_each_field(self):
         base_task = "\n".join(
             [
-                "% [JIRA:KAN-1] Task",
+                "% [KAN-1] Task",
                 "!todo #tag1 @fero",
                 "details {Release Plan}",
             ]
@@ -513,7 +513,7 @@ class JiraSpaceTaskModificationTests(unittest.TestCase):
     def test_modify_task_text_rejects_unsupported_field(self):
         base_task = "\n".join(
             [
-                "% [JIRA:KAN-1] Task",
+                "% [KAN-1] Task",
                 "!todo",
             ]
         )

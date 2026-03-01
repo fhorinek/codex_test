@@ -10,7 +10,13 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-from jira.client import JiraClient, from_adf, to_adf
+from jira.client import (
+    JiraClient,
+    build_issue_type_hierarchy_levels,
+    from_adf,
+    normalize_project_issue_types,
+    to_adf,
+)
 
 
 class JiraClientTests(unittest.TestCase):
@@ -155,6 +161,107 @@ class JiraClientTests(unittest.TestCase):
             names, status = self.client.get_project_statuses("KAN")
         self.assertIsNone(names)
         self.assertEqual(status, 200)
+
+    def test_get_projects_normalizes_shape(self):
+        payload = {
+            "values": [
+                {"id": "1", "key": "kan", "name": "Kanban", "projectTypeKey": "software"},
+                {"id": 2, "key": "OPS", "name": "Operations"},
+                {"key": "", "name": "ignored"},
+                "ignored",
+            ]
+        }
+        with patch.object(self.client, "_request", return_value=(payload, 200)) as mocked:
+            projects, status = self.client.get_projects(max_results=50)
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            projects,
+            [
+                {
+                    "id": "1",
+                    "key": "KAN",
+                    "name": "Kanban",
+                    "project_type": "software",
+                },
+                {
+                    "id": "2",
+                    "key": "OPS",
+                    "name": "Operations",
+                },
+            ],
+        )
+        mocked.assert_called_once_with("GET", "/rest/api/3/project/search?maxResults=50")
+
+        with patch.object(self.client, "_request", return_value=({"bad": True}, 200)):
+            projects, status = self.client.get_projects()
+        self.assertIsNone(projects)
+        self.assertEqual(status, 200)
+
+    def test_get_project_issue_type_hierarchy_uses_project_issue_types(self):
+        payload = {
+            "issueTypes": [
+                {"id": "10000", "name": "Task", "hierarchyLevel": 0, "subtask": False},
+                {"id": "10001", "name": "Epic", "hierarchyLevel": 1, "subtask": False},
+                {"id": "10002", "name": "Sub-task", "hierarchyLevel": -1, "subtask": True},
+            ]
+        }
+        with patch.object(self.client, "_request", return_value=(payload, 200)) as mocked:
+            issue_types, status = self.client.get_project_issue_type_hierarchy("KAN")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            [item["name"] for item in issue_types],
+            ["Epic", "Task", "Sub-task"],
+        )
+        self.assertEqual(
+            [item["hierarchy_level"] for item in issue_types],
+            [1, 0, -1],
+        )
+        method, path = mocked.call_args.args
+        self.assertEqual(method, "GET")
+        self.assertIn("/rest/api/3/project/KAN?expand=issueTypes", path)
+
+    def test_get_project_issue_type_hierarchy_falls_back_to_statuses(self):
+        with patch.object(
+            self.client,
+            "_request",
+            side_effect=[
+                ({}, 200),
+                (
+                    [
+                        {"id": "3", "name": "Bug", "subtask": False},
+                        {"id": "5", "name": "Sub-task", "subtask": True},
+                    ],
+                    200,
+                ),
+            ],
+        ):
+            issue_types, status = self.client.get_project_issue_type_hierarchy("KAN")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            issue_types,
+            [
+                {"id": "3", "name": "Bug", "hierarchy_level": 0, "is_subtask": False},
+                {
+                    "id": "5",
+                    "name": "Sub-task",
+                    "hierarchy_level": -1,
+                    "is_subtask": True,
+                },
+            ],
+        )
+
+    def test_issue_type_helpers_normalize_and_build_levels(self):
+        normalized = normalize_project_issue_types(
+            [
+                {"name": "Story", "hierarchyLevel": 0},
+                {"name": "Task", "hierarchyLevel": 0},
+                {"name": "Epic", "hierarchyLevel": 1},
+                {"name": "Sub-task", "subtask": True},
+            ]
+        )
+        levels = build_issue_type_hierarchy_levels(normalized)
+        self.assertEqual([item["issue_type"] for item in levels], ["Epic", "Task", "Sub-task"])
+        self.assertEqual([item["hierarchy_level"] for item in levels], [1, 0, -1])
 
     def test_search_users_encodes_query_and_validates_shape(self):
         with patch.object(self.client, "_request", return_value=([{"accountId": "1"}], 200)) as mocked:

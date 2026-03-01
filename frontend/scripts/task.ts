@@ -48,6 +48,7 @@ type ParsedTaskRecord = {
   id: string;
   name: string;
   jiraKey: string | null;
+  jiraToken?: string | null;
   depth: number;
   indent: number;
   parent: ParsedTaskRecord | null;
@@ -143,14 +144,18 @@ export function parseJiraTitle(title: string): JiraTitleParseResult {
   const trimmed = raw.replace(/^%\s*/, "");
   const match = trimmed.match(JIRA_MARKER_RE);
   if (!match) {
-    return { key: null, title: trimmed.trim() };
+    return { key: null, token: null, title: trimmed.trim() };
   }
-  const value = match[1] ?? "";
+  const value = (match[1] ?? "").trim().toUpperCase();
   const cleaned = trimmed
     .replace(JIRA_MARKER_GLOBAL_RE, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
-  return { key: /-\d+$/.test(value) ? value : null, title: cleaned };
+  return {
+    key: /-\d+$/.test(value) ? value : null,
+    token: value || null,
+    title: cleaned,
+  };
 }
 
 /**
@@ -193,7 +198,7 @@ export function applyInlineMarkdownWithOptions(text: string, options: InlineMark
     "$1<span class=\"pill inline-pill\" data-type=\"person\" data-value=\"@$2\">👤 $2</span>"
   );
   value = value.replace(
-    /\[JIRA:([A-Z][A-Z0-9]+(?:-\d+)?)\]/g,
+    /\[([A-Z][A-Z0-9]+(?:-\d+)?)\]/g,
     "<span class=\"pill inline-pill jira-pill\" data-type=\"jira\" data-value=\"$1\">$1</span>"
   );
   value = value.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_match: string, alt: string, src: string) =>
@@ -520,7 +525,7 @@ export function parseTasks(text: string): ParsedTaskDocument {
   const lines = text.split("\n");
   const { config, startIndex } = parseConfig(lines);
   const tasks: ParsedTaskRecord[] = [];
-  const stack: ParsedTaskRecord[] = [];
+  const stack: Array<{ indent: number; task: ParsedTaskRecord }> = [];
   let rootCounter = 0;
   let currentTask: ParsedTaskRecord | null = null;
   const tags = new Set<string>();
@@ -554,7 +559,13 @@ export function parseTasks(text: string): ParsedTaskDocument {
     const taskMatch = raw.match(/^(\s*)%\s+(.*)$/);
     if (taskMatch) {
       const indent = (taskMatch[1] ?? "").length;
-      const depth = Math.floor(indent / 4);
+      let lastStackEntry = stack.length ? stack[stack.length - 1] : null;
+      while (lastStackEntry && lastStackEntry.indent >= indent) {
+        stack.pop();
+        lastStackEntry = stack.length ? stack[stack.length - 1] : null;
+      }
+      const parentEntry = stack.length ? stack[stack.length - 1] : null;
+      const depth = parentEntry ? parentEntry.task.depth + 1 : 0;
       const rawName = (taskMatch[2] ?? "").trim();
       const parsedTitle = parseJiraTitle(rawName);
       const name = parsedTitle.title || "";
@@ -564,6 +575,7 @@ export function parseTasks(text: string): ParsedTaskDocument {
         id: "",
         name,
         jiraKey: parsedTitle.key,
+        jiraToken: parsedTitle.token,
         depth,
         indent,
         parent: null,
@@ -581,25 +593,18 @@ export function parseTasks(text: string): ParsedTaskDocument {
         children: [],
         lineIndex: index,
       };
-      if (depth === 0) {
+      if (!parentEntry) {
         rootCounter += 1;
         task.id = `root/${rootCounter}-${encodedName}`;
         tasks.push(task);
-        stack.length = 0;
-        stack.push(task);
       } else {
-        const parent = stack[depth - 1];
-        if (parent) {
-          parent._childSeq = (parent._childSeq || 0) + 1;
-          task.id = `${parent.id}/${parent._childSeq}-${encodedName}`;
-          parent.children.push(task);
-          task.parent = parent;
-        } else {
-          rootCounter += 1;
-          task.id = `root/${rootCounter}-${encodedName}`;
-        }
-        stack[depth] = task;
+        const parent = parentEntry.task;
+        parent._childSeq = (parent._childSeq || 0) + 1;
+        task.id = `${parent.id}/${parent._childSeq}-${encodedName}`;
+        parent.children.push(task);
+        task.parent = parent;
       }
+      stack.push({ indent, task });
       currentTask = task;
       return;
     }

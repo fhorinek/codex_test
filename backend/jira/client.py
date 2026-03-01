@@ -35,6 +35,9 @@ _REFERENCE_PREFIX = "https://task.local/"
 _HIGHLIGHT_COLOR = "#FFAB00"
 # Stores the _JIRA_KEY_RE module constant.
 _JIRA_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
+_SUBTASK_TYPE_NAMES = {"sub-task", "subtask"}
+_MID_TIER_TYPE_PREFERENCE = ["task", "story", "bug", "issue"]
+_TOP_TIER_TYPE_PREFERENCE = ["epic"]
 
 
 # Handles the _parse_inline function logic.
@@ -351,6 +354,104 @@ def from_adf(doc: Any) -> str:
     return "\n".join(lines).strip()
 
 
+# Handles the _issue_type_preference function logic.
+# Input: issue_type: Dict[str, Any].
+# Output: Tuple[int, str].
+def _issue_type_preference(issue_type: Dict[str, Any]) -> Tuple[int, str]:
+    name = str(issue_type.get("name") or "").strip()
+    level = int(issue_type.get("hierarchy_level", 0))
+    is_subtask = bool(issue_type.get("is_subtask"))
+    lowered = name.lower()
+    if is_subtask or level < 0:
+        if lowered in _SUBTASK_TYPE_NAMES:
+            return (0, lowered)
+        return (10, lowered)
+    if level > 0:
+        if lowered in _TOP_TIER_TYPE_PREFERENCE:
+            return (0, lowered)
+        return (10, lowered)
+    if lowered in _MID_TIER_TYPE_PREFERENCE:
+        return (_MID_TIER_TYPE_PREFERENCE.index(lowered), lowered)
+    return (10, lowered)
+
+
+# Handles the normalize_project_issue_types function logic.
+# Input: raw_issue_types: Any.
+# Output: List[Dict[str, Any]].
+def normalize_project_issue_types(raw_issue_types: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw_issue_types, list):
+        return []
+    normalized: List[Dict[str, Any]] = []
+    seen = set()
+    for entry in raw_issue_types:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        raw_level = entry.get("hierarchyLevel")
+        if isinstance(raw_level, bool):
+            raw_level = 0
+        level: int
+        if isinstance(raw_level, (int, float)):
+            level = int(raw_level)
+        elif entry.get("subtask") is True:
+            level = -1
+        else:
+            level = 0
+        is_subtask = bool(entry.get("subtask") is True or level < 0)
+        normalized_name = name.strip()
+        key = (normalized_name.lower(), level, is_subtask)
+        if key in seen:
+            continue
+        seen.add(key)
+        issue_id = entry.get("id")
+        normalized.append(
+            {
+                "id": str(issue_id) if issue_id is not None else None,
+                "name": normalized_name,
+                "hierarchy_level": level,
+                "is_subtask": is_subtask,
+            }
+        )
+    normalized.sort(
+        key=lambda item: (
+            -int(item.get("hierarchy_level", 0)),
+            1 if item.get("is_subtask") else 0,
+            str(item.get("name", "")).lower(),
+        )
+    )
+    return normalized
+
+
+# Handles the build_issue_type_hierarchy_levels function logic.
+# Input: issue_types: List[Dict[str, Any]].
+# Output: List[Dict[str, Any]].
+def build_issue_type_hierarchy_levels(
+    issue_types: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    if not issue_types:
+        return []
+    by_level: Dict[int, List[Dict[str, Any]]] = {}
+    for item in issue_types:
+        level = int(item.get("hierarchy_level", 0))
+        by_level.setdefault(level, []).append(item)
+    levels: List[Dict[str, Any]] = []
+    for depth, hierarchy_level in enumerate(sorted(by_level.keys(), reverse=True)):
+        candidates = sorted(by_level[hierarchy_level], key=_issue_type_preference)
+        chosen = candidates[0]
+        levels.append(
+            {
+                "depth": depth,
+                "hierarchy_level": hierarchy_level,
+                "issue_type": chosen.get("name"),
+                "is_subtask": bool(chosen.get("is_subtask")),
+                "issue_types": [entry.get("name") for entry in candidates if entry.get("name")],
+            }
+        )
+    return levels
+
+
 # Defines the JiraClient structure used by this module.
 class JiraClient:
     # Handles the __init__ function logic.
@@ -468,7 +569,7 @@ class JiraClient:
         try:
             data, status = self._request(
                 "GET",
-                f"/rest/api/3/issue/{key}?fields=summary,description,status,labels,assignee,issuelinks,subtasks,parent,timetracking,timeoriginalestimate",
+                f"/rest/api/3/issue/{key}?fields=summary,description,status,labels,assignee,issuetype,issuelinks,subtasks,parent,timetracking,timeoriginalestimate",
             )
             return data, status
         except Exception:
@@ -583,6 +684,60 @@ class JiraClient:
             logger.exception("Failed to update Jira issue %s", key)
             return None, None
 
+    # Handles the get_projects function logic.
+    # Input: self, max_results: int = 200.
+    # Output: Tuple[Optional[List[Dict[str, Any]]], Optional[int]].
+    def get_projects(
+        self, max_results: int = 200
+    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[int]]:
+        safe_max = max(1, int(max_results or 200))
+        try:
+            data, status = self._request(
+                "GET",
+                f"/rest/api/3/project/search?maxResults={safe_max}",
+            )
+            raw_projects: List[Any] = []
+            if isinstance(data, dict):
+                values = data.get("values")
+                if isinstance(values, list):
+                    raw_projects = values
+                elif isinstance(data.get("projects"), list):
+                    raw_projects = data.get("projects")
+                else:
+                    return None, status
+            elif isinstance(data, list):
+                raw_projects = data
+            else:
+                return None, status
+
+            normalized: Dict[str, Dict[str, Any]] = {}
+            for entry in raw_projects:
+                if not isinstance(entry, dict):
+                    continue
+                raw_key = entry.get("key")
+                if not isinstance(raw_key, str) or not raw_key.strip():
+                    continue
+                key = raw_key.strip().upper()
+                raw_name = entry.get("name")
+                name = raw_name.strip() if isinstance(raw_name, str) and raw_name.strip() else key
+                item: Dict[str, Any] = {
+                    "key": key,
+                    "name": name,
+                }
+                raw_id = entry.get("id")
+                if raw_id is not None:
+                    item["id"] = str(raw_id)
+                raw_type = entry.get("projectTypeKey")
+                if isinstance(raw_type, str) and raw_type.strip():
+                    item["project_type"] = raw_type.strip()
+                if key not in normalized:
+                    normalized[key] = item
+
+            return sorted(normalized.values(), key=lambda item: item.get("key", "")), status
+        except Exception:
+            logger.exception("Failed to fetch Jira projects")
+            return None, None
+
     # Handles the get_project_statuses function logic.
     # Input: self, project_key: str.
     # Output: Tuple[Optional[List[str]], Optional[int]].
@@ -608,6 +763,49 @@ class JiraClient:
             return unique, status
         except Exception:
             logger.exception("Failed to fetch Jira statuses for %s", project_key)
+            return None, None
+
+    # Handles the get_project_issue_type_hierarchy function logic.
+    # Input: self, project_key: str.
+    # Output: Tuple[Optional[List[Dict[str, Any]]], Optional[int]].
+    def get_project_issue_type_hierarchy(
+        self, project_key: str
+    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[int]]:
+        encoded_project = quote(project_key)
+        try:
+            data, status = self._request(
+                "GET", f"/rest/api/3/project/{encoded_project}?expand=issueTypes"
+            )
+            issue_types = (
+                data.get("issueTypes")
+                if isinstance(data, dict)
+                else None
+            )
+            normalized = normalize_project_issue_types(issue_types)
+            if normalized:
+                return normalized, status
+            fallback, fallback_status = self._request(
+                "GET", f"/rest/api/3/project/{encoded_project}/statuses"
+            )
+            fallback_issue_types = (
+                [
+                    {
+                        "id": str(entry.get("id")) if entry.get("id") is not None else None,
+                        "name": entry.get("name"),
+                        "subtask": bool(entry.get("subtask")),
+                    }
+                    for entry in fallback
+                    if isinstance(entry, dict)
+                ]
+                if isinstance(fallback, list)
+                else []
+            )
+            normalized = normalize_project_issue_types(fallback_issue_types)
+            if normalized:
+                return normalized, fallback_status
+            return None, fallback_status
+        except Exception:
+            logger.exception("Failed to fetch Jira issue type hierarchy for %s", project_key)
             return None, None
 
     # Handles the search_users function logic.

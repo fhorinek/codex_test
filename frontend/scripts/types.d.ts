@@ -17,6 +17,7 @@ export interface SlugConfigEntry {
 // Defines the JiraTitleParseResult interface structure for this module.
 export interface JiraTitleParseResult {
   key: string | null;
+  token: string | null;
   title: string;
 }
 
@@ -29,6 +30,7 @@ export interface TaskNode {
   state?: string | null;
   estimate?: number | string | null;
   jira?: string | null;
+  jiraToken?: string | null;
   tags?: string[];
   people?: string[];
   depth?: number;

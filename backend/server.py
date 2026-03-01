@@ -30,6 +30,7 @@ from ypy_websocket.yutils import YMessageType
 import uvicorn
 from uvicorn.protocols.utils import ClientDisconnected
 from websockets.exceptions import ConnectionClosedOK
+from jira.client import JiraClient, build_issue_type_hierarchy_levels
 from jira.config import (
     JIRA_DAEMON_USERNAME,
     load_jira_config_data,
@@ -91,6 +92,25 @@ SESSION_TTL_SECONDS = 60 * 60 * 24 * 30
 PERSONAL_FOLDER_NAME = "personal"
 # Stores the JIRA_DAEMON_DISPLAY_NAME module constant.
 JIRA_DAEMON_DISPLAY_NAME = "Jira Daemon"
+# Stores the SYSTEM_SHARED_ROOM_ID module constant.
+SYSTEM_SHARED_ROOM_ID = "__system__"
+# Stores the SYSTEM_SHARED_WS_PATH module constant.
+SYSTEM_SHARED_WS_PATH = f"/ws/{SYSTEM_SHARED_ROOM_ID}"
+# Stores the SYSTEM_SHARED_MAP_NAME module constant.
+SYSTEM_SHARED_MAP_NAME = "system"
+# Stores the SYSTEM_SHARED_KEY_BACKEND_BUILD_ID module constant.
+SYSTEM_SHARED_KEY_BACKEND_BUILD_ID = "backendBuildId"
+# Stores the SYSTEM_SHARED_KEY_JIRA_PROJECT_KEYS module constant.
+SYSTEM_SHARED_KEY_JIRA_PROJECT_KEYS = "jiraProjectKeys"
+# Stores the SYSTEM_SHARED_KEY_PRESENCE_BY_SPACE module constant.
+SYSTEM_SHARED_KEY_PRESENCE_BY_SPACE = "presenceBySpace"
+# Stores the SYSTEM_SHARED_KEY_UPDATED_AT module constant.
+SYSTEM_SHARED_KEY_UPDATED_AT = "updatedAt"
+# Stores the BACKEND_BUILD_ID module constant.
+BACKEND_BUILD_ID = (
+    os.getenv("TASKSCRIPT_BACKEND_BUILD_ID", "").strip()
+    or f"backend-{int(time.time())}"
+)
 
 # Stores the PRESENCE_TTL module constant.
 PRESENCE_TTL = 40
@@ -108,6 +128,11 @@ SESSIONS_LOCK = threading.RLock()
 USERS_STORE_LOCK = threading.RLock()
 # Stores the HISTORY_LOCK module constant.
 HISTORY_LOCK = threading.RLock()
+# Stores the SYSTEM_SHARED_PRESENCE_REFRESH_DELAY module constant.
+SYSTEM_SHARED_PRESENCE_REFRESH_DELAY = 0.15
+# Stores the SYSTEM_SHARED_PRESENCE_SYNC_INTERVAL module constant.
+SYSTEM_SHARED_PRESENCE_SYNC_INTERVAL = 5
+system_shared_presence_task: Optional[asyncio.Task] = None
 
 
 # Defines the AuthUser structure used by this module.
@@ -1772,6 +1797,144 @@ def room_name(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = Non
     return f"/ws/{safe_id}"
 
 
+# Handles the is_system_shared_ws_path function logic.
+# Input: path: str.
+# Output: bool.
+def is_system_shared_ws_path(path: str) -> bool:
+    candidate = str(path or "").split("?", 1)[0].rstrip("/")
+    return candidate == SYSTEM_SHARED_WS_PATH
+
+
+# Handles the _encode_system_shared_value function logic.
+# Input: value: Any.
+# Output: str.
+def _encode_system_shared_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except Exception:
+        return json.dumps(str(value), ensure_ascii=False)
+
+
+# Handles the set_system_shared_map_values function logic.
+# Input: ydoc: Y.YDoc, values: Dict[str, Any].
+# Output: bool.
+def set_system_shared_map_values(ydoc: Y.YDoc, values: Dict[str, Any]) -> bool:
+    if not isinstance(values, dict) or not values:
+        return False
+    shared_map = ydoc.get_map(SYSTEM_SHARED_MAP_NAME)
+    changed = False
+
+    # Handles the apply function logic.
+    # Input: txn.
+    # Output: None.
+    def apply(txn) -> None:
+        nonlocal changed
+        for raw_key, value in values.items():
+            if not isinstance(raw_key, str):
+                continue
+            key = raw_key.strip()
+            if not key:
+                continue
+            encoded = _encode_system_shared_value(value)
+            current = shared_map.get(key)
+            current_encoded = _encode_system_shared_value(current)
+            if current_encoded == encoded:
+                continue
+            shared_map.set(txn, key, encoded)
+            changed = True
+
+    ydoc.transact(apply)
+    return changed
+
+
+# Handles the build_system_presence_snapshot function logic.
+# Input: none.
+# Output: Dict[str, List[str]].
+def build_system_presence_snapshot() -> Dict[str, List[str]]:
+    users = load_users_store()
+    snapshot: Dict[str, List[str]] = {}
+    for entry in list_space_entries(users):
+        if not isinstance(entry, dict):
+            continue
+        space_id = entry.get("id")
+        space_path = entry.get("path")
+        if not isinstance(space_id, str) or not space_id.strip():
+            continue
+        if not isinstance(space_path, str) or not space_path.strip():
+            continue
+        connected_users = users_for_space(space_id, space_path_hint=space_path)
+        if connected_users:
+            snapshot[space_path] = connected_users
+    return snapshot
+
+
+# Handles the publish_system_shared_values function logic.
+# Input: values: Dict[str, Any].
+# Output: bool.
+async def publish_system_shared_values(values: Dict[str, Any]) -> bool:
+    room = await websocket_server.get_room(SYSTEM_SHARED_WS_PATH)
+    return set_system_shared_map_values(room.ydoc, values)
+
+
+# Handles the publish_system_presence_snapshot function logic.
+# Input: none.
+# Output: None.
+async def publish_system_presence_snapshot() -> None:
+    snapshot = build_system_presence_snapshot()
+    await publish_system_shared_values(
+        {
+            SYSTEM_SHARED_KEY_BACKEND_BUILD_ID: BACKEND_BUILD_ID,
+            SYSTEM_SHARED_KEY_PRESENCE_BY_SPACE: snapshot,
+            SYSTEM_SHARED_KEY_UPDATED_AT: int(time.time()),
+        }
+    )
+
+
+# Handles the schedule_system_presence_snapshot function logic.
+# Input: delay_seconds: float = SYSTEM_SHARED_PRESENCE_REFRESH_DELAY.
+# Output: None.
+def schedule_system_presence_snapshot(
+    delay_seconds: float = SYSTEM_SHARED_PRESENCE_REFRESH_DELAY,
+) -> None:
+    global system_shared_presence_task
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    existing = system_shared_presence_task
+    if isinstance(existing, asyncio.Task) and not existing.done():
+        existing.cancel()
+
+    # Handles the _publish function logic.
+    # Input: none.
+    # Output: None.
+    async def _publish() -> None:
+        try:
+            if delay_seconds > 0:
+                await asyncio.sleep(delay_seconds)
+            await publish_system_presence_snapshot()
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            logger.exception("Failed to publish system shared presence snapshot")
+
+    system_shared_presence_task = loop.create_task(_publish())
+
+
+# Handles the system_shared_presence_sync_loop function logic.
+# Input: none.
+# Output: None.
+async def system_shared_presence_sync_loop() -> None:
+    while True:
+        try:
+            await publish_system_presence_snapshot()
+        except Exception:
+            logger.exception("System shared presence loop failed")
+        await asyncio.sleep(SYSTEM_SHARED_PRESENCE_SYNC_INTERVAL)
+
+
 # Handles the normalize_space_path_hint_for_id function logic.
 # Input: space_id: str, value: Any.
 # Output: str.
@@ -2684,6 +2847,63 @@ def read_jira_config(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     }
 
 
+# Handles the read_jira_projects function logic.
+# Input: user: AuthUser = Depends(require_auth).
+# Output: Dict[str, Any].
+@app.get("/api/jira-projects")
+def read_jira_projects(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+    if not can_manage_jira(user):
+        raise HTTPException(status_code=403, detail="Not allowed.")
+    config = load_jira_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Jira is not configured.")
+    client = JiraClient(config.base_url, config.email, config.token)
+    projects, status = client.get_projects()
+    if projects is None:
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to load Jira projects.",
+        )
+    return {
+        "status": status,
+        "projects": projects,
+    }
+
+
+# Handles the read_jira_issue_hierarchy function logic.
+# Input: project: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth).
+# Output: Dict[str, Any].
+@app.get("/api/jira-issue-hierarchy")
+def read_jira_issue_hierarchy(
+    project: Optional[str] = Query(default=None),
+    user: AuthUser = Depends(require_auth),
+) -> Dict[str, Any]:
+    if not can_manage_jira(user):
+        raise HTTPException(status_code=403, detail="Not allowed.")
+    config = load_jira_config()
+    if not config.enabled:
+        raise HTTPException(status_code=400, detail="Jira is not configured.")
+    project_key = (project or "").strip().upper()
+    if not project_key:
+        raise HTTPException(status_code=400, detail="Project key is required.")
+    client = JiraClient(config.base_url, config.email, config.token)
+    issue_types, status = client.get_project_issue_type_hierarchy(project_key)
+    if not issue_types:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Unable to load Jira issue hierarchy for project {project_key}.",
+        )
+    levels = build_issue_type_hierarchy_levels(issue_types)
+    chain = [level.get("issue_type") for level in levels if level.get("issue_type")]
+    return {
+        "project": project_key,
+        "status": status,
+        "issue_types": issue_types,
+        "levels": levels,
+        "chain": chain,
+    }
+
+
 # Handles the write_jira_config function logic.
 # Input: payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
@@ -2916,13 +3136,18 @@ def clear_presence(
 # Output: None.
 def cleanup_presence() -> None:
     now = time.time()
+    changed = False
     for space_id in list(presence.keys()):
         users = presence[space_id]
         stale = [name for name, ts in users.items() if now - ts > PRESENCE_TTL]
         for name in stale:
             users.pop(name, None)
+            changed = True
         if not users:
             presence.pop(space_id, None)
+            changed = True
+    if changed:
+        schedule_system_presence_snapshot()
 
 
 # Handles the _presence_key function logic.
@@ -2941,6 +3166,7 @@ def _presence_key(space_id: str, *, space_path_hint: Optional[str] = None) -> st
 def mark_presence(space_id: str, username: str, *, space_path_hint: Optional[str] = None) -> None:
     cleanup_presence()
     presence.setdefault(_presence_key(space_id, space_path_hint=space_path_hint), {})[username] = time.time()
+    schedule_system_presence_snapshot()
 
 
 # Handles the remove_presence function logic.
@@ -2953,6 +3179,7 @@ def remove_presence(space_id: str, username: str, *, space_path_hint: Optional[s
     users.pop(username, None)
     if not users:
         presence.pop(_presence_key(space_id, space_path_hint=space_path_hint), None)
+    schedule_system_presence_snapshot()
 
 
 # Handles the users_for_space function logic.
@@ -3092,6 +3319,17 @@ def ws_session_token(scope: Dict[str, Any]) -> Optional[str]:
 # Input: _message: Dict[str, Any], scope: Dict[str, Any].
 # Output: bool.
 async def on_connect(_message: Dict[str, Any], scope: Dict[str, Any]) -> bool:
+    path = scope.get("path", "")
+    if is_system_shared_ws_path(path):
+        auth = auth_from_session(ws_session_token(scope))
+        if auth:
+            return False
+        username, password = ws_credentials(scope)
+        if not username or not password:
+            return True
+        auth = authenticate(username.strip(), password)
+        return not bool(auth)
+
     ref = space_ref_from_ws_path(scope.get("path", ""))
     if not ref:
         return True
@@ -3127,6 +3365,14 @@ class PersistentWebsocketServer(WebsocketServer):
     # Input: self, name: str.
     # Output: value produced by this function.
     async def get_room(self, name: str):
+        if is_system_shared_ws_path(name):
+            if name not in self.rooms.keys():
+                room = YRoom(ready=self.rooms_ready, log=self.log)
+                self.rooms[name] = room
+                attach_awareness_hook(room)
+            room = self.rooms[name]
+            await self.start_room(room)
+            return room
         if name not in self.rooms.keys():
             ref = space_ref_from_ws_path(name)
             if ref:
@@ -3272,6 +3518,7 @@ app.mount("/", StaticFiles(directory=FRONTEND_STATIC_DIR, html=True), name="stat
 # Input: none.
 # Output: None.
 async def main() -> None:
+    global system_shared_presence_task
     load_users_store()
     await sync_snapshots_from_ystore_on_startup()
     port_value = os.getenv("PORT", "5000").strip()
@@ -3291,6 +3538,16 @@ async def main() -> None:
     server = uvicorn.Server(config)
     try:
         async with websocket_server:
+            await publish_system_shared_values(
+                {
+                    SYSTEM_SHARED_KEY_BACKEND_BUILD_ID: BACKEND_BUILD_ID,
+                    SYSTEM_SHARED_KEY_PRESENCE_BY_SPACE: {},
+                    SYSTEM_SHARED_KEY_UPDATED_AT: int(time.time()),
+                }
+            )
+            system_shared_presence_task = asyncio.create_task(
+                system_shared_presence_sync_loop()
+            )
             await server.serve()
     except BaseException as exc:
         if BASE_EXCEPTION_GROUP_TYPE is not None and isinstance(exc, BASE_EXCEPTION_GROUP_TYPE):
@@ -3303,6 +3560,13 @@ async def main() -> None:
         else:
             raise
     finally:
+        if isinstance(system_shared_presence_task, asyncio.Task):
+            system_shared_presence_task.cancel()
+            try:
+                await system_shared_presence_task
+            except Exception:
+                pass
+            system_shared_presence_task = None
         pending_save_tasks = list(space_save_tasks.values())
         for task in pending_save_tasks:
             task.cancel()

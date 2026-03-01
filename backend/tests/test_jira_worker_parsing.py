@@ -22,7 +22,7 @@ from jira.worker import (
 class JiraWorkerParsingTests(unittest.TestCase):
     def test_parse_space_tasks_extracts_fields_and_project_hint(self):
         lines = [
-            "% [JIRA:KAN] Planned task",
+            "% [KAN] Planned task",
             "!todo #backend ~2 @maya",
             "details {KAN-2}",
         ]
@@ -41,10 +41,10 @@ class JiraWorkerParsingTests(unittest.TestCase):
 
     def test_parse_space_tasks_stops_at_blank_line_and_finds_by_key(self):
         lines = [
-            "% [JIRA:KAN-1] First",
+            "% [KAN-1] First",
             "line one",
             "",
-            "% [JIRA:KAN-2] Second",
+            "% [KAN-2] Second",
             "line two",
         ]
         tasks = parse_space_tasks(lines)
@@ -56,11 +56,11 @@ class JiraWorkerParsingTests(unittest.TestCase):
 
     def test_assign_space_task_parents_uses_indentation(self):
         lines = [
-            "% [JIRA:KAN-1] Root",
-            "  % [JIRA:KAN-2] Child A",
-            "    % [JIRA:KAN-3] Grandchild",
-            "  % [JIRA:KAN-4] Child B",
-            "% [JIRA:KAN-5] Root 2",
+            "% [KAN-1] Root",
+            "  % [KAN-2] Child A",
+            "    % [KAN-3] Grandchild",
+            "  % [KAN-4] Child B",
+            "% [KAN-5] Root 2",
         ]
         tasks = parse_space_tasks(lines)
         assign_space_task_parents(tasks)
@@ -74,11 +74,11 @@ class JiraWorkerParsingTests(unittest.TestCase):
 
     def test_reference_maps_and_description_conversion_helpers(self):
         lines = [
-            "% [JIRA:KAN-1] Alpha",
+            "% [KAN-1] Alpha",
             "refs {KAN-2}",
-            "% [JIRA:KAN-2] Beta",
+            "% [KAN-2] Beta",
             "!todo",
-            "% [JIRA:KAN-3] Alpha",
+            "% [KAN-3] Alpha",
             "duplicate title should not override first mapping",
         ]
         tasks = parse_space_tasks(lines)
@@ -102,8 +102,8 @@ class JiraWorkerParsingTests(unittest.TestCase):
 
     def test_build_space_entity_normalizes_tokens_and_links(self):
         lines = [
-            "% [JIRA:KAN-1] Parent",
-            "% [JIRA:KAN-2] Child",
+            "% [KAN-1] Parent",
+            "% [KAN-2] Child",
             "!todo #backend #backend @maya ~2",
             "depends on {KAN-1}",
         ]
@@ -122,7 +122,7 @@ class JiraWorkerParsingTests(unittest.TestCase):
 
     def test_parse_space_tasks_reads_state_and_estimate_from_any_body_line(self):
         lines = [
-            "% [JIRA:KAN-1] Task",
+            "% [KAN-1] Task",
             "body !done ~3 #backend @maya",
         ]
         tasks = parse_space_tasks(lines)
@@ -163,10 +163,10 @@ class JiraWorkerParsingTests(unittest.TestCase):
 
     def test_parse_tasks_detects_token_line_and_description_range(self):
         lines = [
-            "% [JIRA:KAN-1] Task",
+            "% [KAN-1] Task",
             "!todo #tag1 ~3 @maya",
             "desc line",
-            "% [JIRA:KAN-2] Task 2",
+            "% [KAN-2] Task 2",
             "description starts immediately",
         ]
         tasks = parse_tasks(lines)
@@ -183,7 +183,7 @@ class JiraWorkerParsingTests(unittest.TestCase):
 
     def test_build_space_entity_reads_story_points_from_token_line(self):
         lines = [
-            "% [JIRA:KAN-1] Task",
+            "% [KAN-1] Task",
             "!todo #tag ~1.5 @maya",
             "body line",
         ]
