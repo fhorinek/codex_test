@@ -1,0 +1,8 @@
+legend folding (hiding) when in tablet mode when dragging divider to the top/bottom left/right
+
+do not use fullscreen modal on tablet view
+
+  File "/root/codex_test/backend/server.py", line 1544, in _save
+    await asyncio.to_thread(write_space_text_and_maybe_checkpoint, space_id, content, space_path_hint=space_path_hint)
+AttributeError: module 'asyncio' has no attribute 'to_thread'
+2026-02-27 02:35:27,461 ERROR server: Failed to snapshot space jira_test

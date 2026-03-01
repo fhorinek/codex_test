@@ -22,6 +22,28 @@ bash run.sh
 
 Open the URL printed by `run.sh`.
 
+## Measure Responsiveness
+
+Enable built-in frontend perf monitoring in either way:
+
+- URL flag for one session: `http://localhost:4173/?perf=1`
+- Browser console (persists): `window.__taskScriptPerf.enable()`
+
+Use in console:
+
+- `window.__taskScriptPerf.reset()` before your test run.
+- Perform interactions (typing, dragging nodes, zooming graph, resizing panes).
+- `window.__taskScriptPerf.print()` to print a summary and top metrics table.
+- `window.__taskScriptPerf.snapshot()` to get raw JSON report.
+- `window.__taskScriptPerf.disable()` to turn monitoring off.
+
+Key metrics to watch in report:
+
+- `browser.longtask`: main-thread tasks over 50ms.
+- `browser.frameDelta`: frame spacing; higher p95/max means jank.
+- `browser.event.*`: slow input event handlers.
+- `app.*` and `canvas.*`: app-specific render/layout timing hotspots.
+
 ## Core Features
 
 - Live editor + graph + kanban updates.

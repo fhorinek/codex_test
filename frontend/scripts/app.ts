@@ -41,6 +41,10 @@ import {
   updateCheckboxInBody,
 } from "./taskCommands.js";
 import { createSyncEngine } from "./syncEngine.js";
+import {
+  initPerformanceMonitoring,
+  measurePerformanceSync,
+} from "./perfMonitor.js";
 
 // Stores the REMOTE_BASE module constant.
 const REMOTE_BASE = window.location.origin;
@@ -113,6 +117,20 @@ const STATUS_LABELS: Record<string, string> = {
   offline: "offline",
   idle: "idle",
 };
+// Stores the FRONTEND_BUILD_PLACEHOLDER module constant.
+const FRONTEND_BUILD_PLACEHOLDER = "__TASKSCRIPT_FRONTEND_BUILD_ID__";
+// Stores the FRONTEND_BUILD_ID module constant.
+const FRONTEND_BUILD_ID = (() => {
+  const raw = String(window.__taskScriptFrontendBuildId || "").trim();
+  if (!raw || raw === FRONTEND_BUILD_PLACEHOLDER) {
+    return "";
+  }
+  return raw;
+})();
+// Stores the FRONTEND_BUILD_INFO_URL module constant.
+const FRONTEND_BUILD_INFO_URL = `${REMOTE_BASE}/build-info.json`;
+
+initPerformanceMonitoring();
 
 /**
  * Handles the copyToClipboard function logic.
@@ -1125,6 +1143,14 @@ let createUserSpacesPicker: any = null;
 let toastContainer: any = null;
 // Stores the lastToast module constant.
 let lastToast = { message: "", kind: "", at: 0 };
+// Stores the connectedAtLeastOnce module constant.
+let connectedAtLeastOnce = false;
+// Stores the checkFrontendVersionOnNextConnected module constant.
+let checkFrontendVersionOnNextConnected = false;
+// Stores the frontendVersionCheckInFlight module constant.
+let frontendVersionCheckInFlight = false;
+// Stores the staleFrontendToastShown module constant.
+let staleFrontendToastShown = false;
 
 /**
  * Handles the normalizeMobilePane function logic.
@@ -1320,6 +1346,121 @@ function showToast(message: any, kind: any = "success", durationMs = 3200): void
     }, 180);
   };
   setTimeout(closeToast, Math.max(1200, durationMs));
+}
+
+/**
+ * Handles the showToastWithAction function logic.
+ * Input: { message, kind = "error", actionLabel, onAction, durationMs = 0, }: any.
+ * Output: void.
+ */
+function showToastWithAction({
+  message,
+  kind = "error",
+  actionLabel,
+  onAction,
+  durationMs = 0,
+}: any): void {
+  const text = typeof message === "string" ? message.trim() : "";
+  const label = typeof actionLabel === "string" ? actionLabel.trim() : "";
+  if (!text || !label || typeof onAction !== "function") {
+    return;
+  }
+  const normalizedKind = kind === "error" ? "error" : "success";
+  const container = ensureToastContainer();
+  const toast = document.createElement("div");
+  toast.className = `toast-item ${normalizedKind}`;
+  const textNode = document.createElement("div");
+  textNode.className = "toast-message";
+  textNode.textContent = text;
+  const actions = document.createElement("div");
+  actions.className = "toast-actions";
+  const actionButton = document.createElement("button");
+  actionButton.type = "button";
+  actionButton.className = "toast-action-button";
+  actionButton.textContent = label;
+  actions.appendChild(actionButton);
+  toast.appendChild(textNode);
+  toast.appendChild(actions);
+  container.appendChild(toast);
+  requestAnimationFrame(() => {
+    toast.classList.add("show");
+  });
+
+  /**
+   * Handles the closeToast function logic.
+   * Input: none.
+   * Output: void.
+   */
+  const closeToast = () => {
+    if (!toast.parentElement) {
+      return;
+    }
+    toast.classList.remove("show");
+    setTimeout(() => {
+      toast.remove();
+    }, 180);
+  };
+
+  actionButton.addEventListener("click", () => {
+    closeToast();
+    onAction();
+  });
+
+  if (Number.isFinite(durationMs) && durationMs > 0) {
+    setTimeout(closeToast, Math.max(1200, durationMs));
+  }
+}
+
+/**
+ * Handles the fetchCurrentFrontendBuildId function logic.
+ * Input: none.
+ * Output: Promise<string>.
+ */
+async function fetchCurrentFrontendBuildId(): Promise<string> {
+  try {
+    const response = await fetch(`${FRONTEND_BUILD_INFO_URL}?t=${Date.now()}`, {
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      return "";
+    }
+    const payload = await response.json();
+    const value = typeof payload?.buildId === "string" ? payload.buildId.trim() : "";
+    if (!value || value === FRONTEND_BUILD_PLACEHOLDER) {
+      return "";
+    }
+    return value;
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Handles the checkFrontendVersionAfterReconnect function logic.
+ * Input: none.
+ * Output: Promise<void>.
+ */
+async function checkFrontendVersionAfterReconnect(): Promise<void> {
+  if (frontendVersionCheckInFlight || staleFrontendToastShown || !FRONTEND_BUILD_ID) {
+    return;
+  }
+  frontendVersionCheckInFlight = true;
+  try {
+    const serverBuildId = await fetchCurrentFrontendBuildId();
+    if (!serverBuildId || serverBuildId === FRONTEND_BUILD_ID) {
+      return;
+    }
+    staleFrontendToastShown = true;
+    showToastWithAction({
+      message: "You are running an older frontend version. Refresh to update.",
+      kind: "error",
+      actionLabel: "Refresh",
+      onAction: () => window.location.reload(),
+      durationMs: 0,
+    });
+  } finally {
+    frontendVersionCheckInFlight = false;
+  }
 }
 
 /**
@@ -1651,10 +1792,25 @@ function getServerLabel() {
  * Output: void.
  */
 function setConnectionStatus(status: string): void {
-  if (collab.connectionStatus === status) {
+  const previousStatus = collab.connectionStatus;
+  if (previousStatus === status) {
     return;
   }
   collab.connectionStatus = status;
+  if (
+    previousStatus === "connected"
+    && ["disconnected", "connecting", "offline"].includes(status)
+  ) {
+    checkFrontendVersionOnNextConnected = true;
+  }
+  if (status === "connected") {
+    const reconnected = connectedAtLeastOnce && checkFrontendVersionOnNextConnected;
+    connectedAtLeastOnce = true;
+    checkFrontendVersionOnNextConnected = false;
+    if (reconnected) {
+      void checkFrontendVersionAfterReconnect();
+    }
+  }
   updateBootLoaderStatusFromConnection(status);
   updateBoardConnectionLabel();
 }
@@ -2025,7 +2181,7 @@ if (canvasController?.renderGraph) {
       return;
     }
     state.pendingResponsiveGraphRender = false;
-    return rawRenderGraph(...args);
+    return measurePerformanceSync("app.canvas.renderGraph", () => rawRenderGraph(...args));
   };
 }
 
@@ -2506,28 +2662,30 @@ function sync(): void {
  * Output: void.
  */
 function buildKanban(): void {
-  if (!isResponsiveKanbanVisible()) {
-    state.pendingResponsiveKanbanBuild = true;
-    return;
-  }
-  state.pendingResponsiveKanbanBuild = false;
-  buildKanbanView({
-    state,
-    dom,
-    renderMarkdown,
-    selectTask,
-    /**
-     * Handles the onEditTask function logic.
-     * Input: task: any.
-     * Output: result produced by this function.
-     */
-    onEditTask: (task: any) => openTaskEditModal(task),
-    matchesSearchTask,
-    filtersActive,
-    matchesFilters,
-    updateTaskState,
-    onToggleCheckbox: toggleCheckboxAtLine,
-    groupBy: state.kanbanGroupBy,
+  measurePerformanceSync("app.buildKanban", () => {
+    if (!isResponsiveKanbanVisible()) {
+      state.pendingResponsiveKanbanBuild = true;
+      return;
+    }
+    state.pendingResponsiveKanbanBuild = false;
+    buildKanbanView({
+      state,
+      dom,
+      renderMarkdown,
+      selectTask,
+      /**
+       * Handles the onEditTask function logic.
+       * Input: task: any.
+       * Output: result produced by this function.
+       */
+      onEditTask: (task: any) => openTaskEditModal(task),
+      matchesSearchTask,
+      filtersActive,
+      matchesFilters,
+      updateTaskState,
+      onToggleCheckbox: toggleCheckboxAtLine,
+      groupBy: state.kanbanGroupBy,
+    });
   });
 }
 
@@ -8960,7 +9118,9 @@ function scheduleGraphRender() {
   // Batch graph reflows to one per frame while dragging resizers.
   pendingGraphRender = requestAnimationFrame(() => {
     pendingGraphRender = null;
-    canvasController.renderGraph();
+    measurePerformanceSync("app.scheduleGraphRender.flush", () => {
+      canvasController.renderGraph();
+    });
   });
 }
 

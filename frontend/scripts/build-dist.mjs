@@ -14,6 +14,19 @@ const __dirname = path.dirname(__filename);
 const FRONTEND_DIR = path.resolve(__dirname, "..");
 // Stores the DIST_DIR module constant.
 const DIST_DIR = path.join(FRONTEND_DIR, "dist");
+// Stores the BUILD_ID_PLACEHOLDER module constant.
+const BUILD_ID_PLACEHOLDER = "__TASKSCRIPT_FRONTEND_BUILD_ID__";
+
+/**
+ * Creates the frontend build-info payload with a unique build id.
+ * Input: none.
+ * Output: { buildId: string, builtAt: string }.
+ */
+function createBuildInfo() {
+  const buildId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const builtAt = new Date().toISOString();
+  return { buildId, builtAt };
+}
 
 /**
  * Copies a frontend build entry (file or directory) into the dist output directory.
@@ -43,24 +56,29 @@ async function verifyBuiltEntry() {
 }
 
 /**
- * Writes a usage README into the dist directory with serving instructions.
- * Input: none.
+ * Writes build metadata consumed by runtime version checks.
+ * Input: buildInfo: { buildId: string, builtAt: string }.
  * Output: Promise<void>.
  */
-async function writeReadme() {
-  const text = [
-    "Generated frontend build output",
-    "",
-    "Serve the frontend project root and open /dist/index.html.",
-    "This keeps absolute /node_modules import-map paths working without duplicating dependencies.",
-    "",
-    "Example:",
-    "  cd frontend",
-    "  npm run dev",
-    "  # then open http://127.0.0.1:4173/dist/index.html",
-    "",
-  ].join("\n");
-  await fs.writeFile(path.join(DIST_DIR, "README.txt"), text, "utf8");
+async function writeBuildInfo(buildInfo) {
+  await fs.writeFile(
+    path.join(DIST_DIR, "build-info.json"),
+    `${JSON.stringify(buildInfo, null, 2)}\n`,
+    "utf8"
+  );
+}
+
+/**
+ * Copies index.html into dist while injecting the current build id.
+ * Input: buildId: string.
+ * Output: Promise<void>.
+ */
+async function copyBuiltIndex(buildId) {
+  const sourcePath = path.join(FRONTEND_DIR, "index.html");
+  const targetPath = path.join(DIST_DIR, "index.html");
+  const raw = await fs.readFile(sourcePath, "utf8");
+  const next = raw.replaceAll(BUILD_ID_PLACEHOLDER, buildId);
+  await fs.writeFile(targetPath, next, "utf8");
 }
 
 /**
@@ -70,11 +88,12 @@ async function writeReadme() {
  */
 async function main() {
   await verifyBuiltEntry();
-  await copyEntry("index.html");
+  const buildInfo = createBuildInfo();
+  await copyBuiltIndex(buildInfo.buildId);
   await copyEntry("styles");
   await copyEntry("assets");
-  await writeReadme();
-  console.log("Built frontend dist output in ./dist (open /dist/index.html when serving frontend root).");
+  await writeBuildInfo(buildInfo);
+  console.log("Built frontend dist output in ./dist for backend static serving.");
 }
 
 main().catch((error) => {

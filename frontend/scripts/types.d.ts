@@ -81,8 +81,40 @@ export type MoveTaskAsSubtaskHandler = (
 ) => boolean | void;
 
 declare global {
+  interface TaskScriptPerfMetricSummary {
+    name: string;
+    count: number;
+    avgMs: number;
+    p95Ms: number;
+    maxMs: number;
+    totalMs: number;
+    over16Ms: number;
+    over50Ms: number;
+  }
+
+  interface TaskScriptPerfReport {
+    enabled: boolean;
+    runningForMs: number;
+    metricCount: number;
+    longTaskCount: number;
+    worstInteractionMs: number;
+    worstInteractionName: string;
+    interactionCount: number;
+    metrics: TaskScriptPerfMetricSummary[];
+  }
+
+  interface TaskScriptPerfApi {
+    enable: () => void;
+    disable: () => void;
+    reset: () => void;
+    snapshot: () => TaskScriptPerfReport;
+    print: () => TaskScriptPerfReport;
+  }
+
   interface Window {
     __taskScriptTestHooks?: Record<string, unknown>;
+    __taskScriptPerf?: TaskScriptPerfApi;
+    __taskScriptFrontendBuildId?: string;
     reportPresence?: (spaceId: string, offline?: boolean) => void;
   }
 }

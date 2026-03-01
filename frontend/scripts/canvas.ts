@@ -11,6 +11,7 @@ import {
   renderTaskDescriptionNode,
   wireDescriptionCheckboxes,
 } from "./taskDescription.js";
+import { measurePerformanceSync } from "./perfMonitor.js";
 
 // Defines the CreateCanvasOptions type structure for this module.
 type CreateCanvasOptions = {
@@ -797,6 +798,9 @@ export function createCanvas({
       return;
     }
     node.dataset.bound = "true";
+    node.addEventListener("pointerdown", (event: PointerEvent) => {
+      node.dataset.lastPointerType = String(event.pointerType || "").toLowerCase();
+    }, { passive: true });
     node.addEventListener("click", () => {
       const suppressUntil = Number(node.dataset.touchDragSuppressUntil || "0");
       if (Number.isFinite(suppressUntil) && suppressUntil > Date.now()) {
@@ -837,6 +841,12 @@ export function createCanvas({
       }
       const task = getTaskById(node.dataset.taskId);
       if (!task) {
+        return;
+      }
+      const lastPointerType = String(node.dataset.lastPointerType || "").toLowerCase();
+      const requireSelectedForTouchDrag = !lastPointerType || lastPointerType === "touch";
+      if (requireSelectedForTouchDrag && state.selectedTaskId !== task.id) {
+        onSelectTask(task);
         return;
       }
       const touch = event.changedTouches.item(0);
@@ -1149,28 +1159,30 @@ export function createCanvas({
   };
 
   const updateGraphLines = (): void => {
-    const paths: string[] = [];
-    lastVisibleTasks.forEach((task: any) => {
-      const node = lastNodesById.get(task.id);
-      if (!node) {
-        return;
-      }
-      const startX = node.offsetLeft + node.offsetWidth;
-      const startY = node.offsetTop + node.offsetHeight / 2;
-      task.children
-        .filter((child: any) => lastNodesById.has(child.id))
-        .forEach((child: any) => {
-          const childNode = lastNodesById.get(child.id);
-          const endX = childNode.offsetLeft;
-          const endY = childNode.offsetTop + childNode.offsetHeight / 2;
-          const midX = (startX + endX) / 2;
-          const muted = !matchesFiltersTask(task) || !matchesFiltersTask(child);
-          paths.push(
-            `<path d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="5" fill="none" stroke-opacity="${muted ? 0.15 : 1}" />`
-          );
-        });
+    measurePerformanceSync("canvas.updateGraphLines", () => {
+      const paths: string[] = [];
+      lastVisibleTasks.forEach((task: any) => {
+        const node = lastNodesById.get(task.id);
+        if (!node) {
+          return;
+        }
+        const startX = node.offsetLeft + node.offsetWidth;
+        const startY = node.offsetTop + node.offsetHeight / 2;
+        task.children
+          .filter((child: any) => lastNodesById.has(child.id))
+          .forEach((child: any) => {
+            const childNode = lastNodesById.get(child.id);
+            const endX = childNode.offsetLeft;
+            const endY = childNode.offsetTop + childNode.offsetHeight / 2;
+            const midX = (startX + endX) / 2;
+            const muted = !matchesFiltersTask(task) || !matchesFiltersTask(child);
+            paths.push(
+              `<path d="M ${startX} ${startY} C ${midX} ${startY} ${midX} ${endY} ${endX} ${endY}" stroke="#b9c0ff" stroke-width="5" fill="none" stroke-opacity="${muted ? 0.15 : 1}" />`
+            );
+          });
+      });
+      graphLines.innerHTML = `<g>${paths.join("")}</g>`;
     });
-    graphLines.innerHTML = `<g>${paths.join("")}</g>`;
   };
 
   const scheduleLineAnimation = (duration = 550): void => {
@@ -1426,7 +1438,7 @@ export function createCanvas({
    * Input: none.
    * Output: result produced by this function.
    */
-  function renderGraph() {
+  function renderGraphInner() {
     if (!isResponsiveGraphVisible()) {
       return;
     }
@@ -1564,6 +1576,12 @@ export function createCanvas({
 
     applyTransform(state.animateTransform);
     state.animateTransform = false;
+  }
+
+  function renderGraph() {
+    measurePerformanceSync("canvas.renderGraph", () => {
+      renderGraphInner();
+    });
   }
 
   /**
@@ -1780,7 +1798,7 @@ export function createCanvas({
    * Input: animate = false.
    * Output: result produced by this function.
    */
-  function applyTransform(animate = false) {
+  function applyTransformInner(animate = false) {
     const { x, y, scale } = state.transform;
     const transitionValue = animate ? "transform 0.5s ease" : "none";
     graphNodes.style.transition = transitionValue;
@@ -1788,6 +1806,12 @@ export function createCanvas({
     graphNodes.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     graphLines.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
     updateMinimapViewport();
+  }
+
+  function applyTransform(animate = false) {
+    measurePerformanceSync("canvas.applyTransform", () => {
+      applyTransformInner(animate);
+    });
   }
 
   /**

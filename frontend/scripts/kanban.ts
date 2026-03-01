@@ -901,6 +901,9 @@ function bindKanbanCard({
     return;
   }
   card.dataset.bound = "true";
+  card.addEventListener("pointerdown", (event: PointerEvent) => {
+    card.dataset.lastPointerType = String(event.pointerType || "").toLowerCase();
+  }, { passive: true });
   card.addEventListener("click", () => {
     const suppressUntil = Number(card.dataset.touchDragSuppressUntil || "0");
     if (Number.isFinite(suppressUntil) && suppressUntil > Date.now()) {
@@ -940,6 +943,12 @@ function bindKanbanCard({
     }
     const task = getTaskById(card.dataset.taskId);
     if (!task) {
+      return;
+    }
+    const lastPointerType = String(card.dataset.lastPointerType || "").toLowerCase();
+    const requireSelectedForTouchDrag = !lastPointerType || lastPointerType === "touch";
+    if (requireSelectedForTouchDrag && state.selectedTaskId !== task.id) {
+      selectTask(task);
       return;
     }
     const touch = event.changedTouches.item(0);
