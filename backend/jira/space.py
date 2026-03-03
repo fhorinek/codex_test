@@ -46,6 +46,13 @@ def _normalize_list(values):
     return sorted({value.strip() for value in values if value and value.strip()})
 
 
+# Handles the format_space_label function logic.
+# Input: space_id: str.
+# Output: str.
+def format_space_label(space_id: str) -> str:
+    return str(space_id)
+
+
 # Handles the format_token_line function logic.
 # Input: state, tags, people.
 # Output: str.
@@ -437,8 +444,9 @@ async def open_space_session(space_id: str) -> SpaceSession:
     server_user, server_password = load_jira_worker_credentials()
     if not server_user or not server_password:
         raise RuntimeError("Jira worker credentials are not configured. Save Jira config in the frontend first.")
+    space_label = format_space_label(space_id)
     url = f"{WS_BASE_URL}/{space_id}?user={server_user}&password={server_password}"
-    logger.debug("Connecting to space %s via %s", space_id, url)
+    logger.debug("Connecting to space %s via %s", space_label, url)
     try:
         ws = await asyncio.wait_for(
             websockets.connect(
@@ -456,22 +464,22 @@ async def open_space_session(space_id: str) -> SpaceSession:
     except Exception:
         logger.exception("Failed to connect to %s", url)
         raise
-    logger.debug("Websocket connected for space %s", space_id)
+    logger.debug("Websocket connected for space %s", space_label)
     adapter = WebsocketAdapter(ws, path=f"/ws/{space_id}")
     ydoc = Y.YDoc()
     provider_logger = logging.getLogger("jira-worker.yjs")
     provider_logger.setLevel(logging.WARNING)
     provider = WebsocketProvider(ydoc, adapter, log=provider_logger)
-    logger.debug("Starting Yjs provider for space %s", space_id)
+    logger.debug("Starting Yjs provider for space %s", space_label)
     provider_task = asyncio.create_task(provider.start())
     try:
         await asyncio.wait_for(provider.started.wait(), timeout=5)
     except TimeoutError:
-        logger.error("Timed out waiting for Yjs provider to start for %s", space_id)
+        logger.error("Timed out waiting for Yjs provider to start for %s", space_label)
         provider_task.cancel()
         await ws.close()
         raise
-    logger.info("Yjs provider started for space %s", space_id)
+    logger.info("Yjs provider started for space %s", space_label)
     await asyncio.sleep(0.2)
     session = SpaceSession(
         space_id=space_id,
@@ -488,7 +496,7 @@ async def open_space_session(space_id: str) -> SpaceSession:
         session.pending_change = True
 
     ydoc.observe_after_transaction(_after_txn)
-    logger.info("Connected to space %s via Yjs", space_id)
+    logger.info("Connected to space %s via Yjs", space_label)
     return session
 
 

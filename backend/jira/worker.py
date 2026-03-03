@@ -9,7 +9,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 import sys
 import unicodedata
 
@@ -34,6 +34,7 @@ if __package__ in (None, ""):
         apply_linked_references,
         extract_linked_keys,
         format_token_line,
+        format_space_label,
         normalize_reference_to_key,
         open_space_session,
         read_ydoc_text,
@@ -60,6 +61,7 @@ else:
         apply_linked_references,
         extract_linked_keys,
         format_token_line,
+        format_space_label,
         normalize_reference_to_key,
         open_space_session,
         read_ydoc_text,
@@ -77,6 +79,10 @@ SPACES_DIR = BACKEND_DIR / "spaces"
 
 # Stores the JIRA_SYNC_INTERVAL module constant.
 JIRA_SYNC_INTERVAL = 10
+# Stores the JIRA_BULK_TASK_POLL_INTERVAL module constant.
+JIRA_BULK_TASK_POLL_INTERVAL = 1.0
+# Stores the JIRA_BULK_TASK_TIMEOUT_SECONDS module constant.
+JIRA_BULK_TASK_TIMEOUT_SECONDS = 120.0
 # Stores the JIRA_PULL_IDLE_SECONDS module constant.
 JIRA_PULL_IDLE_SECONDS = 5
 # Stores the JIRA_SPACE_STABLE_SECONDS module constant.
@@ -97,6 +103,8 @@ JIRA_STATE_MAP = {
 JIRA_STATE_MAP_BY_PROJECT: Dict[str, Dict[str, str]] = {}
 # Stores the JIRA_ISSUE_HIERARCHY_BY_PROJECT module constant.
 JIRA_ISSUE_HIERARCHY_BY_PROJECT: Dict[str, List[Dict[str, Any]]] = {}
+# Stores the JIRA_ISSUE_TYPE_META_BY_PROJECT module constant.
+JIRA_ISSUE_TYPE_META_BY_PROJECT: Dict[str, Dict[str, Any]] = {}
 # Stores the JIRA_USER_MAP module constant.
 JIRA_USER_MAP: Dict[str, str] = {
     # Space assignee -> Jira accountId
@@ -111,10 +119,33 @@ JIRA_PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+$")
 
 space_entity_cache: Dict[str, Dict[str, Any]] = {}
 jira_entity_cache: Dict[str, Dict[str, Any]] = {}
+space_hierarchy_cache: Dict[str, Dict[str, Any]] = {}
+jira_hierarchy_cache: Dict[str, Dict[str, Any]] = {}
 # Stores the JIRA_ACCOUNT_ID_BY_EMAIL module constant.
 JIRA_ACCOUNT_ID_BY_EMAIL: Dict[str, str] = {}
 # Stores the LOG_BORDER_WIDTH module constant.
 LOG_BORDER_WIDTH = 60
+
+
+# Handles the iter_space_room_ids function logic.
+# Input: none.
+# Output: List[str].
+def iter_space_room_ids() -> List[str]:
+    room_ids: Set[str] = set()
+    for path in SPACES_DIR.rglob("*.txt"):
+        if not path.is_file():
+            continue
+        try:
+            rel = path.relative_to(SPACES_DIR).as_posix()
+        except Exception:
+            continue
+        if rel.startswith("personal/"):
+            continue
+        room_id = rel[:-4].strip("/") if rel.endswith(".txt") else ""
+        if not room_id:
+            continue
+        room_ids.add(room_id)
+    return sorted(room_ids)
 
 # Handles the run_blocking_io function logic.
 # Input: func, *args: Any, **kwargs: Any.
@@ -249,6 +280,42 @@ def project_key_from_issue_key(jira_key: Optional[str]) -> Optional[str]:
     return raw.split("-", 1)[0]
 
 
+# Handles the normalize_project_key function logic.
+# Input: value: Any.
+# Output: Optional[str].
+def normalize_project_key(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().upper()
+    if not JIRA_PROJECT_KEY_RE.fullmatch(normalized):
+        return None
+    return normalized
+
+
+# Handles the normalize_project_id function logic.
+# Input: value: Any.
+# Output: Optional[str].
+def normalize_project_id(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    if not normalized:
+        return None
+    return normalized
+
+
+# Handles the extract_project_identity function logic.
+# Input: raw_project: Any.
+# Output: Tuple[Optional[str], Optional[str]].
+def extract_project_identity(raw_project: Any) -> Tuple[Optional[str], Optional[str]]:
+    if not isinstance(raw_project, dict):
+        return None, None
+    return (
+        normalize_project_key(raw_project.get("key")),
+        normalize_project_id(raw_project.get("id")),
+    )
+
+
 # Handles the extract_jira_key function logic.
 # Input: text: str.
 # Output: Optional[str].
@@ -339,6 +406,157 @@ async def publish_shared_jira_project_keys(
 # Output: List[str].
 def _normalize_list(values: List[str]) -> List[str]:
     return sorted({value.strip() for value in values if value and value.strip()})
+
+
+# Handles the normalize_type_tag function logic.
+# Input: value: str.
+# Output: str.
+def normalize_type_tag(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    if normalized.startswith("#"):
+        normalized = normalized[1:]
+    return re.sub(r"[^a-z0-9]+", "", normalized)
+
+
+# Handles the issue_type_to_tag function logic.
+# Input: issue_type: str.
+# Output: str.
+def issue_type_to_tag(issue_type: str) -> str:
+    return normalize_type_tag(issue_type)
+
+
+# Handles the resolve_default_hierarchy_depth function logic.
+# Input: hierarchy_levels: List[Dict[str, Any]].
+# Output: int.
+def resolve_default_hierarchy_depth(hierarchy_levels: List[Dict[str, Any]]) -> int:
+    if not hierarchy_levels:
+        return 0
+    for index, level in enumerate(hierarchy_levels):
+        if int(level.get("hierarchy_level", 999)) == 0:
+            return index
+    for index, level in enumerate(hierarchy_levels):
+        issue_type = str(level.get("issue_type") or "").strip().lower()
+        if issue_type in {"task", "story", "bug", "issue"}:
+            return index
+    for index, level in enumerate(hierarchy_levels):
+        if not bool(level.get("is_subtask")):
+            return index
+    return 0
+
+
+# Handles the build_issue_type_meta function logic.
+# Input: hierarchy_levels: List[Dict[str, Any]].
+# Output: Dict[str, Any].
+def build_issue_type_meta(hierarchy_levels: List[Dict[str, Any]]) -> Dict[str, Any]:
+    default_depth = resolve_default_hierarchy_depth(hierarchy_levels)
+    default_issue_type = ""
+    if 0 <= default_depth < len(hierarchy_levels):
+        default_issue_type = str(
+            hierarchy_levels[default_depth].get("issue_type") or ""
+        ).strip()
+    if not default_issue_type:
+        default_issue_type = JIRA_ISSUE_TYPE
+
+    type_depth_by_name: Dict[str, int] = {}
+    type_tag_by_name: Dict[str, str] = {}
+    issue_types_by_tag: Dict[str, List[str]] = {}
+    for depth, level in enumerate(hierarchy_levels):
+        candidates: List[str] = []
+        issue_types = level.get("issue_types")
+        if isinstance(issue_types, list):
+            for item in issue_types:
+                if not isinstance(item, str):
+                    continue
+                cleaned = item.strip()
+                if cleaned:
+                    candidates.append(cleaned)
+        chosen = str(level.get("issue_type") or "").strip()
+        if chosen:
+            candidates.insert(0, chosen)
+        unique_candidates: List[str] = []
+        seen_candidates = set()
+        for candidate in candidates:
+            lowered = candidate.lower()
+            if lowered in seen_candidates:
+                continue
+            seen_candidates.add(lowered)
+            unique_candidates.append(candidate)
+        for candidate in unique_candidates:
+            lowered = candidate.lower()
+            type_depth_by_name.setdefault(lowered, depth)
+            type_tag = issue_type_to_tag(candidate)
+            if not type_tag:
+                continue
+            type_tag_by_name[lowered] = type_tag
+            issue_types_by_tag.setdefault(type_tag, [])
+            if candidate not in issue_types_by_tag[type_tag]:
+                issue_types_by_tag[type_tag].append(candidate)
+
+    default_issue_tag = issue_type_to_tag(default_issue_type)
+    return {
+        "default_depth": default_depth,
+        "default_issue_type": default_issue_type,
+        "default_issue_tag": default_issue_tag,
+        "type_depth_by_name": type_depth_by_name,
+        "type_tag_by_name": type_tag_by_name,
+        "issue_types_by_tag": issue_types_by_tag,
+        "type_tags": set(issue_types_by_tag.keys()),
+    }
+
+
+# Handles the first_space_type_tag function logic.
+# Input: tags: List[str], type_tags: Set[str].
+# Output: Optional[str].
+def first_space_type_tag(tags: List[str], type_tags: Set[str]) -> Optional[str]:
+    for raw in tags:
+        normalized = normalize_type_tag(raw)
+        if normalized and normalized in type_tags:
+            return normalized
+    return None
+
+
+# Handles the remove_type_tags function logic.
+# Input: tags: List[str], type_tags: Set[str].
+# Output: List[str].
+def remove_type_tags(tags: List[str], type_tags: Set[str]) -> List[str]:
+    return [
+        tag
+        for tag in tags
+        if normalize_type_tag(tag) not in type_tags
+    ]
+
+
+# Handles the ensure_single_type_tag function logic.
+# Input: tags: List[str], type_tag: Optional[str], type_tags: Set[str].
+# Output: List[str].
+def ensure_single_type_tag(
+    tags: List[str], type_tag: Optional[str], type_tags: Set[str]
+) -> List[str]:
+    updated = remove_type_tags(tags, type_tags)
+    normalized_type_tag = normalize_type_tag(type_tag or "")
+    if normalized_type_tag:
+        updated.append(normalized_type_tag)
+    return _normalize_list(updated)
+
+
+# Handles the resolve_issue_type_from_tag function logic.
+# Input: type_tag: str, type_meta: Dict[str, Any], preferred_depth: Optional[int] = None.
+# Output: Optional[str].
+def resolve_issue_type_from_tag(
+    type_tag: str,
+    type_meta: Dict[str, Any],
+    preferred_depth: Optional[int] = None,
+) -> Optional[str]:
+    normalized_tag = normalize_type_tag(type_tag)
+    candidates = type_meta.get("issue_types_by_tag", {}).get(normalized_tag) or []
+    if preferred_depth is not None:
+        depth_map = type_meta.get("type_depth_by_name", {})
+        for candidate in candidates:
+            if depth_map.get(candidate.lower()) == preferred_depth:
+                return candidate
+    if candidates:
+        return candidates[0]
+    return None
 
 
 # Handles the task_snapshot function logic.
@@ -1845,6 +2063,50 @@ async def ensure_project_state_map(
     )
 
 
+# Handles the log_project_issue_hierarchy function logic.
+# Input: project_key: str, hierarchy_levels: List[Dict[str, Any]], type_meta: Dict[str, Any].
+# Output: None.
+def log_project_issue_hierarchy(
+    project_key: str,
+    hierarchy_levels: List[Dict[str, Any]],
+    type_meta: Dict[str, Any],
+) -> None:
+    if not hierarchy_levels:
+        return
+    default_depth = int(type_meta.get("default_depth", 0))
+    lines: List[str] = []
+    for index, level in enumerate(hierarchy_levels):
+        issue_type = str(level.get("issue_type") or "").strip() or JIRA_ISSUE_TYPE
+        marker = ", default" if index == default_depth else ""
+        if index == 0:
+            lines.append(f"{issue_type} (level {index}{marker})")
+            continue
+        lines.append(f"{'    ' * index}-> {issue_type} (level {index}{marker})")
+    type_tags = sorted(type_meta.get("type_tags", set()))
+    tags_line = ", ".join(f"#{tag}" for tag in type_tags) if type_tags else "(none)"
+    mapping_parts: List[str] = []
+    for index, level in enumerate(hierarchy_levels):
+        issue_type = str(level.get("issue_type") or "").strip() or JIRA_ISSUE_TYPE
+        offset = index - default_depth
+        if offset == 0:
+            label = "default"
+        elif offset > 0:
+            label = f"default+{offset}"
+        else:
+            label = f"default{offset}"
+        mapping_parts.append(f"{label}={issue_type}")
+    mapping_line = ", ".join(mapping_parts) if mapping_parts else "(none)"
+    logger.info(
+        "[JIRA %s] issue type hierarchy:\n%s\n[JIRA %s] type tags: %s\n[JIRA %s] type map: %s",
+        project_key,
+        "\n".join(lines),
+        project_key,
+        tags_line,
+        project_key,
+        mapping_line,
+    )
+
+
 # Handles the ensure_project_issue_hierarchy function logic.
 # Input: client: JiraClient, project_key: str.
 # Output: List[Dict[str, Any]].
@@ -1853,6 +2115,8 @@ async def ensure_project_issue_hierarchy(
 ) -> List[Dict[str, Any]]:
     cached = JIRA_ISSUE_HIERARCHY_BY_PROJECT.get(project_key)
     if isinstance(cached, list) and cached:
+        if project_key not in JIRA_ISSUE_TYPE_META_BY_PROJECT:
+            JIRA_ISSUE_TYPE_META_BY_PROJECT[project_key] = build_issue_type_meta(cached)
         return cached
     response = await run_blocking_io(client.get_project_issue_type_hierarchy, project_key)
     issue_types: Optional[List[Dict[str, Any]]] = None
@@ -1887,6 +2151,9 @@ async def ensure_project_issue_hierarchy(
             },
         ]
         JIRA_ISSUE_HIERARCHY_BY_PROJECT[project_key] = fallback
+        type_meta = build_issue_type_meta(fallback)
+        JIRA_ISSUE_TYPE_META_BY_PROJECT[project_key] = type_meta
+        log_project_issue_hierarchy(project_key, fallback, type_meta)
         return fallback
     levels = build_issue_type_hierarchy_levels(issue_types)
     if not levels:
@@ -1907,11 +2174,9 @@ async def ensure_project_issue_hierarchy(
             },
         ]
     JIRA_ISSUE_HIERARCHY_BY_PROJECT[project_key] = levels
-    logger.info(
-        "[JIRA %s] loaded issue hierarchy: %s",
-        project_key,
-        " -> ".join(str(level.get("issue_type") or "") for level in levels if level.get("issue_type")),
-    )
+    type_meta = build_issue_type_meta(levels)
+    JIRA_ISSUE_TYPE_META_BY_PROJECT[project_key] = type_meta
+    log_project_issue_hierarchy(project_key, levels, type_meta)
     return levels
 
 
@@ -1943,6 +2208,67 @@ def build_space_task_depth_map(tasks_by_line: Dict[int, SpaceTask]) -> Dict[int,
     for item in tasks_by_line.values():
         resolve_depth(item)
     return depth_by_line
+
+
+# Handles the build_space_task_root_map function logic.
+# Input: tasks_by_line: Dict[int, SpaceTask].
+# Output: Dict[int, int].
+def build_space_task_root_map(tasks_by_line: Dict[int, SpaceTask]) -> Dict[int, int]:
+    root_by_line: Dict[int, int] = {}
+
+    # Handles the resolve_root function logic.
+    # Input: task: SpaceTask.
+    # Output: int.
+    def resolve_root(task: SpaceTask) -> int:
+        cached = root_by_line.get(task.line_index)
+        if cached is not None:
+            return cached
+        parent = (
+            tasks_by_line.get(task.parent_index)
+            if task.parent_index is not None
+            else None
+        )
+        if not parent:
+            root_by_line[task.line_index] = task.line_index
+            return task.line_index
+        root = resolve_root(parent)
+        root_by_line[task.line_index] = root
+        return root
+
+    for task in tasks_by_line.values():
+        resolve_root(task)
+    return root_by_line
+
+
+# Handles the build_space_default_anchor_depth_by_root function logic.
+# Input: tasks_by_line: Dict[int, SpaceTask], task_depth_by_line: Dict[int, int], root_by_line: Dict[int, int].
+# Output: Dict[int, int].
+def build_space_default_anchor_depth_by_root(
+    tasks_by_line: Dict[int, SpaceTask],
+    task_depth_by_line: Dict[int, int],
+    root_by_line: Dict[int, int],
+) -> Dict[int, int]:
+    children_by_line: Dict[int, List[int]] = {line: [] for line in tasks_by_line}
+    for task in tasks_by_line.values():
+        if task.parent_index is None:
+            continue
+        if task.parent_index not in children_by_line:
+            continue
+        children_by_line[task.parent_index].append(task.line_index)
+    anchor_by_root: Dict[int, int] = {}
+    for task in tasks_by_line.values():
+        has_parent = task.parent_index is not None and task.parent_index in tasks_by_line
+        has_children = bool(children_by_line.get(task.line_index))
+        if not (has_parent and has_children):
+            continue
+        root_line = root_by_line.get(task.line_index, task.line_index)
+        task_depth = task_depth_by_line.get(task.line_index, 0)
+        previous_depth = anchor_by_root.get(root_line)
+        if previous_depth is None or task_depth < previous_depth:
+            anchor_by_root[root_line] = task_depth
+    for root_line in set(root_by_line.values()):
+        anchor_by_root.setdefault(root_line, 0)
+    return anchor_by_root
 
 
 # Handles the build_jira_parent_and_depth_maps function logic.
@@ -2012,6 +2338,53 @@ def resolve_issue_type_for_task_depth(
         issue_type = str(level.get("issue_type") or JIRA_ISSUE_TYPE)
         return issue_type, depth > 0, bool(level.get("is_subtask"))
     return fallback_issue_type_for_deep_task(hierarchy_levels), False, False
+
+
+# Handles the resolve_issue_type_for_hierarchy_depth function logic.
+# Input: hierarchy_depth: int, hierarchy_levels: List[Dict[str, Any]].
+# Output: Tuple[Optional[str], bool, bool].
+def resolve_issue_type_for_hierarchy_depth(
+    hierarchy_depth: int,
+    hierarchy_levels: List[Dict[str, Any]],
+) -> Tuple[Optional[str], bool, bool]:
+    if hierarchy_depth < 0 or hierarchy_depth >= len(hierarchy_levels):
+        return None, hierarchy_depth > 0, False
+    level = hierarchy_levels[hierarchy_depth]
+    issue_type = str(level.get("issue_type") or "").strip()
+    if not issue_type:
+        return None, hierarchy_depth > 0, bool(level.get("is_subtask"))
+    return issue_type, hierarchy_depth > 0, bool(level.get("is_subtask"))
+
+
+# Handles the resolve_space_task_hierarchy_depth function logic.
+# Input: task: SpaceTask, task_depth_by_line: Dict[int, int], root_by_line: Dict[int, int], anchor_by_root: Dict[int, int], default_depth: int.
+# Output: int.
+def resolve_space_task_hierarchy_depth(
+    task: SpaceTask,
+    task_depth_by_line: Dict[int, int],
+    root_by_line: Dict[int, int],
+    anchor_by_root: Dict[int, int],
+    default_depth: int,
+) -> int:
+    task_depth = task_depth_by_line.get(task.line_index, 0)
+    root_line = root_by_line.get(task.line_index, task.line_index)
+    anchor_depth = anchor_by_root.get(root_line, 0)
+    return default_depth + (task_depth - anchor_depth)
+
+
+# Handles the project_issue_type_meta_for_project function logic.
+# Input: project_key: str, hierarchy_levels: List[Dict[str, Any]].
+# Output: Dict[str, Any].
+def project_issue_type_meta_for_project(
+    project_key: str,
+    hierarchy_levels: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    cached = JIRA_ISSUE_TYPE_META_BY_PROJECT.get(project_key)
+    if isinstance(cached, dict) and cached:
+        return cached
+    built = build_issue_type_meta(hierarchy_levels)
+    JIRA_ISSUE_TYPE_META_BY_PROJECT[project_key] = built
+    return built
 
 
 # Handles the map_assignee_to_person function logic.
@@ -2183,6 +2556,137 @@ def is_recent_space_field_change(
     if field_ts + 0.001 < session_last_change:
         return False
     return (now - field_ts) < JIRA_SPACE_STABLE_SECONDS
+
+
+# Handles the update_space_hierarchy_cache function logic.
+# Input: space_id: str, tasks_by_key: Dict[str, SpaceTask], tasks_by_line: Dict[int, SpaceTask], task_depth_by_line: Dict[int, int], timestamp: float.
+# Output: Dict[str, float].
+def update_space_hierarchy_cache(
+    space_id: str,
+    tasks_by_key: Dict[str, SpaceTask],
+    tasks_by_line: Dict[int, SpaceTask],
+    task_depth_by_line: Dict[int, int],
+    timestamp: float,
+) -> Dict[str, float]:
+    cache = space_hierarchy_cache.setdefault(space_id, {})
+    timestamps_by_key: Dict[str, float] = {}
+    keep_keys = set(tasks_by_key.keys())
+    for key, task in tasks_by_key.items():
+        parent_key = None
+        if task.parent_index is not None:
+            parent = tasks_by_line.get(task.parent_index)
+            if parent and parent.jira_key:
+                parent_key = parent.jira_key
+        snapshot = {
+            "parent": parent_key,
+            "depth": task_depth_by_line.get(task.line_index, 0),
+        }
+        existing = cache.get(key)
+        if isinstance(existing, dict) and existing.get("snapshot") == snapshot:
+            recorded_ts = existing.get("timestamp")
+            if isinstance(recorded_ts, (int, float)):
+                field_ts = float(recorded_ts)
+            else:
+                field_ts = timestamp
+        else:
+            field_ts = timestamp
+        cache[key] = {
+            "snapshot": snapshot,
+            "timestamp": field_ts,
+        }
+        timestamps_by_key[key] = field_ts
+    for key in list(cache.keys()):
+        if key not in keep_keys:
+            del cache[key]
+    return timestamps_by_key
+
+
+# Handles the update_jira_hierarchy_cache function logic.
+# Input: space_id: str, jira_task_meta_by_key: Dict[str, Dict[str, Optional[str]]], jira_depth_by_key: Dict[str, int], timestamp: float.
+# Output: Dict[str, Dict[str, float]].
+def update_jira_hierarchy_cache(
+    space_id: str,
+    jira_task_meta_by_key: Dict[str, Dict[str, Optional[str]]],
+    jira_depth_by_key: Dict[str, int],
+    timestamp: float,
+) -> Dict[str, Dict[str, float]]:
+    cache = jira_hierarchy_cache.setdefault(space_id, {})
+    timestamps_by_key: Dict[str, Dict[str, float]] = {}
+    keep_keys = set(jira_task_meta_by_key.keys())
+    for key, meta in jira_task_meta_by_key.items():
+        snapshot = {
+            "type": str(meta.get("type") or ""),
+            "parent": str(meta.get("parent") or ""),
+            "depth": int(jira_depth_by_key.get(key, 0)),
+        }
+        existing = cache.get(key)
+        previous_snapshot = (
+            existing.get("snapshot")
+            if isinstance(existing, dict) and isinstance(existing.get("snapshot"), dict)
+            else {}
+        )
+        previous_timestamps = (
+            existing.get("timestamps")
+            if isinstance(existing, dict) and isinstance(existing.get("timestamps"), dict)
+            else {}
+        )
+        field_timestamps: Dict[str, float] = {}
+        for field in ("type", "parent", "depth"):
+            if (
+                previous_snapshot.get(field) == snapshot[field]
+                and isinstance(previous_timestamps.get(field), (int, float))
+            ):
+                field_timestamps[field] = float(previous_timestamps[field])
+            else:
+                field_timestamps[field] = timestamp
+        cache[key] = {
+            "snapshot": snapshot,
+            "timestamps": field_timestamps,
+        }
+        timestamps_by_key[key] = field_timestamps
+    for key in list(cache.keys()):
+        if key not in keep_keys:
+            del cache[key]
+    return timestamps_by_key
+
+
+# Handles the is_recent_space_hierarchy_change function logic.
+# Input: hierarchy_ts: Optional[float], now: float, session_last_change: float.
+# Output: bool.
+def is_recent_space_hierarchy_change(
+    hierarchy_ts: Optional[float],
+    now: float,
+    session_last_change: float,
+) -> bool:
+    if not hierarchy_ts or not session_last_change:
+        return False
+    if (now - session_last_change) >= JIRA_SPACE_STABLE_SECONDS:
+        return False
+    if hierarchy_ts + 0.001 < session_last_change:
+        return False
+    return (now - hierarchy_ts) < JIRA_SPACE_STABLE_SECONDS
+
+
+# Handles the resolve_sync_direction function logic.
+# Input: force_direction: Optional[str], space_ts: float, jira_ts: float, is_dirty: bool.
+# Output: str.
+def resolve_sync_direction(
+    force_direction: Optional[str],
+    space_ts: float,
+    jira_ts: float,
+    is_dirty: bool,
+) -> str:
+    if is_dirty:
+        return "dirty"
+    if force_direction == "push":
+        return "->"
+    if force_direction == "pull":
+        return "<-"
+    if space_ts > jira_ts:
+        return "->"
+    if jira_ts > space_ts:
+        return "<-"
+    return "??"
 
 
 # Handles the wrap_text function logic.
@@ -2494,14 +2998,91 @@ async def resolve_owner_account_id(
     return await resolve_account_id(client, config.mail)
 
 
+# Handles the jira_issue_parent_is_editable function logic.
+# Input: client: JiraClient, key: str.
+# Output: bool.
+async def jira_issue_parent_is_editable(client: JiraClient, key: str) -> bool:
+    editmeta, status = await run_blocking_io(client.get_issue_editmeta, key)
+    if not isinstance(editmeta, dict):
+        logger.info(
+            "[JIRA] unable to verify parent editability for %s (status: %s); proceeding with update attempt",
+            key,
+            status,
+        )
+        return True
+    fields = editmeta.get("fields")
+    if not isinstance(fields, dict):
+        logger.info(
+            "[JIRA] editmeta for %s has no fields payload (status: %s); proceeding with update attempt",
+            key,
+            status,
+        )
+        return True
+    if "parent" in fields:
+        return True
+    logger.info(
+        "[JIRA] parent field is not editable for %s (status: %s); likely screen/workflow restriction",
+        key,
+        status,
+    )
+    return False
+
+
+# Handles the wait_for_bulk_task_completion function logic.
+# Input: client: JiraClient, task_id: str, timeout_seconds: float = JIRA_BULK_TASK_TIMEOUT_SECONDS, poll_interval: float = JIRA_BULK_TASK_POLL_INTERVAL.
+# Output: Tuple[bool, Optional[str], Optional[Dict[str, Any]], Optional[int]].
+async def wait_for_bulk_task_completion(
+    client: JiraClient,
+    task_id: str,
+    timeout_seconds: float = JIRA_BULK_TASK_TIMEOUT_SECONDS,
+    poll_interval: float = JIRA_BULK_TASK_POLL_INTERVAL,
+) -> Tuple[bool, Optional[str], Optional[Dict[str, Any]], Optional[int]]:
+    deadline = time.time() + max(timeout_seconds, 0.0)
+    while True:
+        payload, status = await run_blocking_io(
+            client.get_bulk_operation_progress, task_id
+        )
+        state = ""
+        if isinstance(payload, dict):
+            raw_state = payload.get("status")
+            if isinstance(raw_state, str):
+                state = raw_state.strip().upper()
+            logger.info(
+                "[JIRA] bulk task %s progress: state=%s http=%s payload=%s",
+                task_id,
+                state or "(unknown)",
+                status if status is not None else "(none)",
+                json.dumps(payload, ensure_ascii=False),
+            )
+            if state in {"COMPLETE", "COMPLETED", "SUCCESS", "SUCCEEDED"}:
+                return True, state, payload, status
+            if state in {"FAILED", "FAILURE", "CANCELLED", "CANCELED", "ABORTED"}:
+                return False, state, payload, status
+        else:
+            logger.info(
+                "[JIRA] bulk task %s progress unavailable (http=%s); waiting",
+                task_id,
+                status if status is not None else "(none)",
+            )
+        if time.time() >= deadline:
+            logger.info(
+                "[JIRA] bulk task %s timed out after %.1fs",
+                task_id,
+                timeout_seconds,
+            )
+            return False, state or "TIMEOUT", payload if isinstance(payload, dict) else None, status
+        await asyncio.sleep(max(poll_interval, 0.1))
+
+
 # Handles the sync_space_with_jira function logic.
-# Input: client: JiraClient, session: SpaceSession, project_key: str, force_direction: Optional[str] = None,.
+# Input: client: JiraClient, session: SpaceSession, project_key: str, force_direction: Optional[str] = None, ignore_dirty: bool = False,.
 # Output: None.
 async def sync_space_with_jira(
     client: JiraClient,
     session: SpaceSession,
     project_key: str,
     force_direction: Optional[str] = None,
+    ignore_dirty: bool = False,
 ) -> None:
     content = await read_ydoc_text(session.ydoc)
     if not content.strip():
@@ -2549,6 +3130,12 @@ async def sync_space_with_jira(
     key_to_title, title_to_key = build_reference_maps(tasks)
     tasks_by_line: Dict[int, SpaceTask] = {task.line_index: task for task in tasks}
     task_depth_by_line = build_space_task_depth_map(tasks_by_line)
+    task_root_by_line = build_space_task_root_map(tasks_by_line)
+    default_anchor_depth_by_root = build_space_default_anchor_depth_by_root(
+        tasks_by_line,
+        task_depth_by_line,
+        task_root_by_line,
+    )
     hierarchy_levels_by_project: Dict[str, List[Dict[str, Any]]] = {}
     created = False
     for task in tasks:
@@ -2570,10 +3157,45 @@ async def sync_space_with_jira(
                 client, project_key_hint
             )
             hierarchy_levels_by_project[project_key_hint] = hierarchy_levels
-        depth = task_depth_by_line.get(task.line_index, 0)
-        issue_type, allow_parent_assignment, issue_is_subtask = (
-            resolve_issue_type_for_task_depth(depth, hierarchy_levels)
+        type_meta = project_issue_type_meta_for_project(
+            project_key_hint, hierarchy_levels
         )
+        default_depth = int(type_meta.get("default_depth", 0))
+        hierarchy_depth = resolve_space_task_hierarchy_depth(
+            task,
+            task_depth_by_line,
+            task_root_by_line,
+            default_anchor_depth_by_root,
+            default_depth,
+        )
+        issue_type, allow_parent_assignment, issue_is_subtask = (
+            resolve_issue_type_for_hierarchy_depth(hierarchy_depth, hierarchy_levels)
+        )
+        if not issue_type:
+            issue_type = str(type_meta.get("default_issue_type") or JIRA_ISSUE_TYPE)
+            allow_parent_assignment = False
+            issue_is_subtask = False
+        type_tags: Set[str] = set(type_meta.get("type_tags", set()))
+        space_type_tag = first_space_type_tag(task.tags, type_tags)
+        if space_type_tag:
+            preferred_depth = hierarchy_depth if 0 <= hierarchy_depth < len(hierarchy_levels) else None
+            requested_type = resolve_issue_type_from_tag(
+                space_type_tag,
+                type_meta,
+                preferred_depth=preferred_depth,
+            )
+            if requested_type:
+                issue_type = requested_type
+                requested_depth = type_meta.get("type_depth_by_name", {}).get(
+                    requested_type.lower()
+                )
+                if isinstance(requested_depth, int):
+                    hierarchy_depth = requested_depth
+                    _, allow_parent_assignment, issue_is_subtask = (
+                        resolve_issue_type_for_hierarchy_depth(
+                            requested_depth, hierarchy_levels
+                        )
+                    )
         parent_task = (
             tasks_by_line.get(task.parent_index)
             if task.parent_index is not None
@@ -2585,12 +3207,13 @@ async def sync_space_with_jira(
             else None
         )
         if issue_is_subtask and not parent_key:
-            issue_type = fallback_issue_type_for_deep_task(hierarchy_levels)
+            issue_type = str(type_meta.get("default_issue_type") or JIRA_ISSUE_TYPE)
         logger.info(
-            "[Space %s] hierarchy mapping for '%s': depth=%s type=%s parent=%s",
+            "[Space %s] hierarchy mapping for '%s': depth=%s mapped_depth=%s type=%s parent=%s",
             session.space_id,
             task_title,
-            depth,
+            task_depth_by_line.get(task.line_index, 0),
+            hierarchy_depth,
             issue_type,
             parent_key or "(none)",
         )
@@ -2616,7 +3239,7 @@ async def sync_space_with_jira(
             project_key_hint,
             task_title,
             jira_description,
-            task.tags,
+            _normalize_list(remove_type_tags(task.tags, type_tags)),
             issue_type,
             parent_key,
             assignee_id,
@@ -2639,6 +3262,14 @@ async def sync_space_with_jira(
         tasks = parse_space_tasks(lines)
         assign_space_task_parents(tasks)
         key_to_title, title_to_key = build_reference_maps(tasks)
+        tasks_by_line = {task.line_index: task for task in tasks}
+        task_depth_by_line = build_space_task_depth_map(tasks_by_line)
+        task_root_by_line = build_space_task_root_map(tasks_by_line)
+        default_anchor_depth_by_root = build_space_default_anchor_depth_by_root(
+            tasks_by_line,
+            task_depth_by_line,
+            task_root_by_line,
+        )
 
     tasks_by_key: Dict[str, SpaceTask] = {
         task.jira_key: task for task in tasks if task.jira_key
@@ -2649,7 +3280,25 @@ async def sync_space_with_jira(
     for task in tasks:
         if not task.jira_key:
             continue
+        project_for_task = (
+            task.jira_project.upper()
+            if task.jira_project
+            else project_key_from_issue_key(task.jira_key)
+        )
+        type_tags: Set[str] = set()
+        if project_for_task:
+            hierarchy_levels = hierarchy_levels_by_project.get(project_for_task)
+            if hierarchy_levels is None:
+                hierarchy_levels = await ensure_project_issue_hierarchy(
+                    client, project_for_task
+                )
+                hierarchy_levels_by_project[project_for_task] = hierarchy_levels
+            type_meta = project_issue_type_meta_for_project(
+                project_for_task, hierarchy_levels
+            )
+            type_tags = set(type_meta.get("type_tags", set()))
         entity = build_space_entity(task, key_to_title, title_to_key)
+        entity.tags = _normalize_list(remove_type_tags(task.tags, type_tags))
         entity = update_entity_cache(space_cache, entity, time.time())
         space_entities[entity.key] = entity
     prune_entity_cache(space_cache, list(space_entities.keys()))
@@ -2676,20 +3325,39 @@ async def sync_space_with_jira(
         fields = issue.get("fields")
         if isinstance(fields, dict):
             issue_type_name = ""
+            issue_type_id = None
             issue_type_obj = fields.get("issuetype")
             if isinstance(issue_type_obj, dict):
                 raw_name = issue_type_obj.get("name")
                 if isinstance(raw_name, str):
                     issue_type_name = raw_name.strip()
+                raw_issue_type_id = issue_type_obj.get("id")
+                if raw_issue_type_id is not None:
+                    normalized_issue_type_id = str(raw_issue_type_id).strip()
+                    if normalized_issue_type_id:
+                        issue_type_id = normalized_issue_type_id
+            issue_project_key, issue_project_id = extract_project_identity(
+                fields.get("project")
+            )
             parent_key = None
+            parent_project_key = None
+            parent_project_id = None
             parent_obj = fields.get("parent")
             if isinstance(parent_obj, dict):
                 raw_parent_key = parent_obj.get("key")
                 if isinstance(raw_parent_key, str) and raw_parent_key.strip():
                     parent_key = raw_parent_key.strip()
+                parent_project_key, parent_project_id = extract_project_identity(
+                    parent_obj.get("project")
+                )
             jira_task_meta_by_key[key] = {
                 "type": issue_type_name or None,
+                "issue_type_id": issue_type_id,
                 "parent": parent_key,
+                "project_key": issue_project_key,
+                "project_id": issue_project_id,
+                "parent_project_key": parent_project_key,
+                "parent_project_id": parent_project_id,
             }
         if isinstance(issue, dict):
             logger.debug(
@@ -2733,10 +3401,19 @@ async def sync_space_with_jira(
             ):
                 continue
             diff_fields.add(field)
-            if is_recent_space_field_change(
+            field_is_dirty = (not ignore_dirty) and is_recent_space_field_change(
                 space_entity, field, now, session_last_change
-            ):
-                field_dirs[field] = "dirty"
+            )
+            space_ts = get_field_timestamp(space_entity, field)
+            jira_ts = get_field_timestamp(jira_entity, field)
+            direction = resolve_sync_direction(
+                force_direction,
+                space_ts,
+                jira_ts,
+                field_is_dirty,
+            )
+            field_dirs[field] = direction
+            if direction == "dirty":
                 setattr(session, "sync_dirty", True)
                 logger.debug(
                     "[Space %s] %s field %s is dirty (<%ss), skipping comparison/sync this round",
@@ -2746,25 +3423,13 @@ async def sync_space_with_jira(
                     JIRA_SPACE_STABLE_SECONDS,
                 )
                 continue
-            if force_direction == "push":
-                field_dirs[field] = "->"
-            elif force_direction == "pull":
-                field_dirs[field] = "<-"
-            else:
-                space_ts = get_field_timestamp(space_entity, field)
-                jira_ts = get_field_timestamp(jira_entity, field)
-                if space_ts > jira_ts:
-                    field_dirs[field] = "->"
-                elif jira_ts > space_ts:
-                    field_dirs[field] = "<-"
-                else:
-                    field_dirs[field] = "??"
-                    logger.debug(
-                        "[Space %s] %s field %s has equal timestamps; skipping sync this round",
-                        session.space_id,
-                        key,
-                        field,
-                    )
+            if direction == "??":
+                logger.debug(
+                    "[Space %s] %s field %s has equal timestamps; skipping sync this round",
+                    session.space_id,
+                    key,
+                    field,
+                )
         if diff_fields:
             diff_fields_by_key[key] = diff_fields
         field_directions_by_key[key] = field_dirs
@@ -2807,8 +3472,27 @@ async def sync_space_with_jira(
         tasks_by_key = {task.jira_key: task for task in tasks if task.jira_key}
         tasks_by_line = {task.line_index: task for task in tasks}
     task_depth_by_line = build_space_task_depth_map(tasks_by_line)
+    task_root_by_line = build_space_task_root_map(tasks_by_line)
+    default_anchor_depth_by_root = build_space_default_anchor_depth_by_root(
+        tasks_by_line,
+        task_depth_by_line,
+        task_root_by_line,
+    )
+    hierarchy_ts_by_key = update_space_hierarchy_cache(
+        session.space_id,
+        tasks_by_key,
+        tasks_by_line,
+        task_depth_by_line,
+        now,
+    )
     jira_parent_by_key, jira_depth_by_key = build_jira_parent_and_depth_maps(
         {key: (meta.get("parent") if isinstance(meta, dict) else None) for key, meta in jira_task_meta_by_key.items()}
+    )
+    jira_hierarchy_ts_by_key = update_jira_hierarchy_cache(
+        session.space_id,
+        jira_task_meta_by_key,
+        jira_depth_by_key,
+        now,
     )
 
     ordered_keys = sorted(
@@ -2828,9 +3512,7 @@ async def sync_space_with_jira(
 
     for key in ordered_keys:
         logger.info("* Syncing task %s", key)
-        logger.info("* Getting data from space")
         space_entity = space_entities.get(key)
-        logger.info("* Getting data from Jira")
         jira_entity = jira_entities.get(key)
 
         field_directions = field_directions_by_key.get(key, {})
@@ -2842,12 +3524,41 @@ async def sync_space_with_jira(
         pull_fields = {
             field for field, direction in field_directions.items() if direction == "<-"
         }
+        hierarchy_dirty = is_recent_space_hierarchy_change(
+            hierarchy_ts_by_key.get(key),
+            now,
+            session_last_change,
+        )
+        if hierarchy_dirty and ignore_dirty:
+            logger.debug(
+                "[Space %s] %s hierarchy would be dirty but dirty checks are disabled for this sync run",
+                session.space_id,
+                key,
+            )
+            hierarchy_dirty = False
+        if hierarchy_dirty:
+            setattr(session, "sync_dirty", True)
+            logger.debug(
+                "[Space %s] %s hierarchy is dirty (<%ss), skipping hierarchy sync this round",
+                session.space_id,
+                key,
+                JIRA_SPACE_STABLE_SECONDS,
+            )
 
         rows: List[List[str]] = []
         task_for_key = tasks_by_key.get(key)
         space_type = ""
         space_parent_key = ""
         space_depth_value = ""
+        space_hierarchy_depth: Optional[int] = None
+        project_for_hierarchy = ""
+        hierarchy_levels: List[Dict[str, Any]] = []
+        type_meta: Dict[str, Any] = {}
+        type_tags: Set[str] = set()
+        space_requested_type_tag: Optional[str] = None
+        mapped_space_type = ""
+        requested_space_type = ""
+        requested_space_type_conflict = False
         if task_for_key:
             space_depth_number = task_depth_by_line.get(task_for_key.line_index, 0)
             space_depth_value = str(space_depth_number)
@@ -2870,51 +3581,183 @@ async def sync_space_with_jira(
                         client, project_for_hierarchy
                     )
                     hierarchy_levels_by_project[project_for_hierarchy] = hierarchy_levels
-                resolved_issue_type, _, _ = resolve_issue_type_for_task_depth(
-                    space_depth_number,
+                type_meta = project_issue_type_meta_for_project(
+                    project_for_hierarchy, hierarchy_levels
+                )
+                type_tags = set(type_meta.get("type_tags", set()))
+                space_requested_type_tag = first_space_type_tag(task_for_key.tags, type_tags)
+                default_depth = int(type_meta.get("default_depth", 0))
+                space_hierarchy_depth = resolve_space_task_hierarchy_depth(
+                    task_for_key,
+                    task_depth_by_line,
+                    task_root_by_line,
+                    default_anchor_depth_by_root,
+                    default_depth,
+                )
+                resolved_issue_type, _, _ = resolve_issue_type_for_hierarchy_depth(
+                    space_hierarchy_depth,
                     hierarchy_levels,
                 )
-                space_type = resolved_issue_type
+                if resolved_issue_type:
+                    mapped_space_type = resolved_issue_type
+                    space_type = resolved_issue_type
+                if space_requested_type_tag and space_hierarchy_depth is not None:
+                    requested_issue_type = resolve_issue_type_from_tag(
+                        space_requested_type_tag,
+                        type_meta,
+                        preferred_depth=space_hierarchy_depth,
+                    )
+                    if requested_issue_type:
+                        requested_space_type = requested_issue_type
+                        requested_depth = type_meta.get("type_depth_by_name", {}).get(
+                            requested_issue_type.lower()
+                        )
+                        if (
+                            isinstance(requested_depth, int)
+                            and requested_depth != space_hierarchy_depth
+                        ):
+                            requested_space_type_conflict = True
+                        else:
+                            space_type = requested_issue_type
 
         jira_meta = jira_task_meta_by_key.get(key, {})
         jira_type = str(jira_meta.get("type") or "")
+        jira_type_tag = normalize_type_tag(
+            type_meta.get("type_tag_by_name", {}).get(jira_type.lower(), "")
+            if jira_type and type_meta
+            else ""
+        )
+        if not jira_type_tag and jira_type:
+            jira_type_tag = issue_type_to_tag(jira_type)
+        if jira_type_tag:
+            type_tags.add(jira_type_tag)
         jira_parent_key = jira_parent_by_key.get(key) or str(jira_meta.get("parent") or "")
         jira_depth_raw = jira_depth_by_key.get(key)
         jira_depth_value = str(jira_depth_raw) if jira_depth_raw is not None else ""
+        hierarchy_structure_ts = float(hierarchy_ts_by_key.get(key) or 0.0)
+        jira_hierarchy_fields = jira_hierarchy_ts_by_key.get(key, {})
+        jira_type_ts = float(jira_hierarchy_fields.get("type") or 0.0)
+        jira_parent_ts = float(jira_hierarchy_fields.get("parent") or 0.0)
+        jira_depth_ts = float(jira_hierarchy_fields.get("depth") or 0.0)
+        jira_hierarchy_ts = max(jira_type_ts, jira_parent_ts, jira_depth_ts)
+        type_dirty = hierarchy_dirty or (
+            (not ignore_dirty)
+            and is_recent_space_field_change(
+                space_entity,
+                "tags",
+                now,
+                session_last_change,
+            )
+        )
+        if type_dirty:
+            setattr(session, "sync_dirty", True)
+        type_changed = (space_type or "") != (jira_type or "")
+        parent_changed = (space_parent_key or "") != (jira_parent_key or "")
+        depth_changed = (space_depth_value or "") != (jira_depth_value or "")
+        hierarchy_changed = {
+            "type": type_changed,
+            "parent": parent_changed,
+            "depth": depth_changed,
+        }
+        hierarchy_dirs = {
+            "type": "==",
+            "parent": "==",
+            "depth": "==",
+        }
+        if type_changed:
+            type_space_ts = max(
+                hierarchy_structure_ts,
+                get_field_timestamp(space_entity, "tags"),
+            )
+            type_jira_ts = jira_type_ts
+            hierarchy_dirs["type"] = resolve_sync_direction(
+                force_direction,
+                type_space_ts,
+                type_jira_ts,
+                type_dirty,
+            )
+        if parent_changed:
+            hierarchy_dirs["parent"] = resolve_sync_direction(
+                force_direction,
+                hierarchy_structure_ts,
+                jira_hierarchy_ts,
+                hierarchy_dirty,
+            )
+        if depth_changed:
+            hierarchy_dirs["depth"] = resolve_sync_direction(
+                force_direction,
+                hierarchy_structure_ts,
+                jira_hierarchy_ts,
+                hierarchy_dirty,
+            )
+        hierarchy_push_fields = {
+            field
+            for field, direction in hierarchy_dirs.items()
+            if hierarchy_changed[field] and direction == "->"
+        }
+        hierarchy_pull_fields = {
+            field
+            for field, direction in hierarchy_dirs.items()
+            if hierarchy_changed[field] and direction == "<-"
+        }
+        hierarchy_unknown_fields = {
+            field
+            for field, direction in hierarchy_dirs.items()
+            if hierarchy_changed[field] and direction == "??"
+        }
+        hierarchy_dirty_fields = {
+            field
+            for field, direction in hierarchy_dirs.items()
+            if hierarchy_changed[field] and direction == "dirty"
+        }
+        if hierarchy_unknown_fields:
+            logger.debug(
+                "[Space %s] %s hierarchy fields %s have equal timestamps; hierarchy resolver is undecided",
+                session.space_id,
+                key,
+                ", ".join(sorted(hierarchy_unknown_fields)),
+            )
+        if hierarchy_dirty_fields:
+            logger.debug(
+                "[Space %s] %s hierarchy fields %s are dirty (<%ss), skipping hierarchy sync this round",
+                session.space_id,
+                key,
+                ", ".join(sorted(hierarchy_dirty_fields)),
+                JIRA_SPACE_STABLE_SECONDS,
+            )
         rows.append(
             [
                 "type",
                 space_type,
-                "",
-                ""
-                if not (space_type and jira_type)
-                else ("" if space_type == jira_type else "!="),
+                format_timestamp(
+                    max(hierarchy_structure_ts, get_field_timestamp(space_entity, "tags"))
+                ),
+                format_sync_status(
+                    hierarchy_dirs["type"],
+                    status,
+                ),
                 jira_type,
-                "",
+                format_timestamp(jira_type_ts),
             ]
         )
         rows.append(
             [
                 "parent",
                 space_parent_key,
-                "",
-                ""
-                if not (space_parent_key and jira_parent_key)
-                else ("" if space_parent_key == jira_parent_key else "!="),
+                format_timestamp(hierarchy_structure_ts),
+                format_sync_status(hierarchy_dirs["parent"], status),
                 jira_parent_key,
-                "",
+                format_timestamp(jira_parent_ts),
             ]
         )
         rows.append(
             [
                 "depth",
                 space_depth_value,
-                "",
-                ""
-                if not (space_depth_value and jira_depth_value)
-                else ("" if space_depth_value == jira_depth_value else "!="),
+                format_timestamp(hierarchy_structure_ts),
+                format_sync_status(hierarchy_dirs["depth"], status),
                 jira_depth_value,
-                "",
+                format_timestamp(jira_depth_ts),
             ]
         )
         for field in field_order:
@@ -2927,9 +3770,13 @@ async def sync_space_with_jira(
                 max_lines = max(len(space_lines), len(jira_lines))
                 for idx in range(max_lines):
                     sync_value = ""
-                    if field_changed and idx == 0:
-                        sync_value = format_sync_status(
-                            field_directions.get(field, "??"), status
+                    if idx == 0:
+                        sync_value = (
+                            format_sync_status(
+                                field_directions.get(field, "??"), status
+                            )
+                            if field_changed
+                            else "=="
                         )
                     rows.append(
                         [
@@ -2946,11 +3793,11 @@ async def sync_space_with_jira(
                         ]
                     )
             else:
-                sync_value = ""
-                if field_changed:
-                    sync_value = format_sync_status(
-                        field_directions.get(field, "??"), status
-                    )
+                sync_value = (
+                    format_sync_status(field_directions.get(field, "??"), status)
+                    if field_changed
+                    else "=="
+                )
                 rows.append(
                     [
                         field,
@@ -2966,6 +3813,325 @@ async def sync_space_with_jira(
             rows,
         )
         logger.info("\n%s", table)
+
+        type_update_failed = False
+        desired_type_for_jira = space_type
+        can_push_parent_change = False
+        parent_pull_due_unmappable_hierarchy = False
+        if parent_changed and not desired_type_for_jira:
+            parent_pull_due_unmappable_hierarchy = True
+        can_attempt_hierarchy_update = (
+            bool(task_for_key)
+            and bool(desired_type_for_jira)
+            and force_direction != "pull"
+            and not hierarchy_dirty
+            and not hierarchy_pull_fields
+            and not hierarchy_dirty_fields
+        )
+        if can_attempt_hierarchy_update:
+            if requested_space_type_conflict and mapped_space_type:
+                logger.info(
+                    "[Space %s] %s type tag #%s (%s) does not fit mapped depth %s; using mapped hierarchy type %s",
+                    session.space_id,
+                    key,
+                    space_requested_type_tag or "",
+                    requested_space_type or "",
+                    space_hierarchy_depth if space_hierarchy_depth is not None else "(unknown)",
+                    mapped_space_type,
+                )
+                desired_type_for_jira = mapped_space_type
+            desired_depth = (
+                type_meta.get("type_depth_by_name", {}).get(
+                    desired_type_for_jira.lower()
+                )
+                if type_meta
+                else None
+            )
+            if not isinstance(desired_depth, int):
+                desired_depth = None
+            if desired_depth is None:
+                parent_pull_due_unmappable_hierarchy = (
+                    parent_pull_due_unmappable_hierarchy or parent_changed
+                )
+                logger.info(
+                    "[Space %s] %s type tag #%s is not valid for current hierarchy; keeping Jira type %s",
+                    session.space_id,
+                    key,
+                    space_requested_type_tag or "",
+                    jira_type,
+                )
+            else:
+                _, allow_parent_assignment, desired_is_subtask = (
+                    resolve_issue_type_for_hierarchy_depth(
+                        desired_depth, hierarchy_levels
+                    )
+                )
+                desired_parent_for_type = (
+                    (space_parent_key or None)
+                    if allow_parent_assignment
+                    else None
+                )
+                type_changed = (
+                    not jira_type
+                    or desired_type_for_jira.lower() != jira_type.lower()
+                )
+                parent_changed = (
+                    (jira_parent_key or "") != (desired_parent_for_type or "")
+                )
+                if not type_changed and not parent_changed:
+                    desired_parent_for_type = jira_parent_key or None
+                issue_project_key = normalize_project_key(
+                    jira_meta.get("project_key")
+                ) or project_key_from_issue_key(key)
+                issue_project_id = normalize_project_id(jira_meta.get("project_id"))
+                issue_type_id_for_move = normalize_project_id(
+                    jira_meta.get("issue_type_id")
+                )
+                parent_meta = (
+                    jira_task_meta_by_key.get(desired_parent_for_type, {})
+                    if desired_parent_for_type
+                    else {}
+                )
+                parent_project_key = normalize_project_key(
+                    parent_meta.get("project_key")
+                    if isinstance(parent_meta, dict)
+                    else None
+                ) or project_key_from_issue_key(desired_parent_for_type)
+                parent_project_id = normalize_project_id(
+                    parent_meta.get("project_id")
+                    if isinstance(parent_meta, dict)
+                    else None
+                )
+                if (
+                    desired_parent_for_type
+                    and jira_parent_key == desired_parent_for_type
+                    and not parent_project_key
+                ):
+                    parent_project_key = normalize_project_key(
+                        jira_meta.get("parent_project_key")
+                    ) or parent_project_key
+                if (
+                    desired_parent_for_type
+                    and jira_parent_key == desired_parent_for_type
+                    and not parent_project_id
+                ):
+                    parent_project_id = normalize_project_id(
+                        jira_meta.get("parent_project_id")
+                    )
+                project_mismatch_by_id = bool(
+                    issue_project_id
+                    and parent_project_id
+                    and issue_project_id != parent_project_id
+                )
+                project_mismatch_by_key = bool(
+                    issue_project_key
+                    and parent_project_key
+                    and issue_project_key != parent_project_key
+                )
+                if desired_is_subtask and desired_parent_for_type:
+                    logger.debug(
+                        "[Space %s] hierarchy project compare for %s -> parent %s: issue key=%s id=%s, parent key=%s id=%s",
+                        session.space_id,
+                        key,
+                        desired_parent_for_type,
+                        issue_project_key or "(unknown)",
+                        issue_project_id or "(unknown)",
+                        parent_project_key or "(unknown)",
+                        parent_project_id or "(unknown)",
+                    )
+                if (
+                    desired_is_subtask
+                    and desired_parent_for_type
+                    and (project_mismatch_by_id or project_mismatch_by_key)
+                ):
+                    parent_pull_due_unmappable_hierarchy = (
+                        parent_pull_due_unmappable_hierarchy or parent_changed
+                    )
+                    logger.info(
+                        "[Space %s] %s cannot fit hierarchy: subtask parent %s is in different project (issue key/id=%s/%s parent key/id=%s/%s); keeping Jira hierarchy",
+                        session.space_id,
+                        key,
+                        desired_parent_for_type,
+                        issue_project_key or "(unknown)",
+                        issue_project_id or "(unknown)",
+                        parent_project_key or "(unknown)",
+                        parent_project_id or "(unknown)",
+                    )
+                elif desired_is_subtask and not desired_parent_for_type:
+                    parent_pull_due_unmappable_hierarchy = (
+                        parent_pull_due_unmappable_hierarchy or parent_changed
+                    )
+                    logger.info(
+                        "[Space %s] %s cannot fit hierarchy for type %s without parent; keeping Jira hierarchy",
+                        session.space_id,
+                        key,
+                        desired_type_for_jira,
+                    )
+                elif type_changed or parent_changed:
+                    can_push_parent_change = can_push_parent_change or parent_changed
+                    clear_parent = bool(jira_parent_key) and not desired_parent_for_type
+                    previous_type = jira_type or desired_type_for_jira
+                    previous_parent = jira_parent_key or "(root)"
+                    if parent_changed and type_changed:
+                        parent_editable = await jira_issue_parent_is_editable(
+                            client, key
+                        )
+                        if not parent_editable:
+                            type_update_failed = True
+                            logger.info(
+                                "[Space %s] -> [JIRA %s] cannot reparent %s because parent field is not editable; keeping Jira hierarchy",
+                                session.space_id,
+                                project_for_hierarchy or "(unknown)",
+                                key,
+                            )
+                            continue
+                    if type_changed:
+                        update_response = await run_blocking_io(
+                            client.update_issue_type,
+                            key,
+                            desired_type_for_jira,
+                            desired_parent_for_type,
+                            clear_parent,
+                        )
+                    else:
+                        update_response = await run_blocking_io(
+                            client.update_issue_parent,
+                            key,
+                            desired_parent_for_type,
+                            clear_parent,
+                            issue_project_key=issue_project_key,
+                            issue_type_id=issue_type_id_for_move,
+                        )
+                    status = None
+                    payload = None
+                    if (
+                        isinstance(update_response, tuple)
+                        and len(update_response) >= 2
+                    ):
+                        status = update_response[0]
+                        payload = update_response[1]
+                    jira_status_by_key.setdefault(key, {})["type"] = status
+                    if status is None:
+                        type_update_failed = True
+                        logger.info(
+                            "[Space %s] -> [JIRA %s] failed to fit hierarchy for %s (type=%s parent=%s); retry next cycle",
+                            session.space_id,
+                            project_for_hierarchy or "(unknown)",
+                            key,
+                            desired_type_for_jira,
+                            desired_parent_for_type or "(root)",
+                        )
+                    else:
+                        parent_update_only = parent_changed and not type_changed
+                        hierarchy_apply_verified = True
+                        if parent_update_only:
+                            bulk_task_id = ""
+                            if isinstance(payload, dict):
+                                raw_task_id = payload.get("taskId")
+                                if isinstance(raw_task_id, str):
+                                    bulk_task_id = raw_task_id.strip()
+                            if bulk_task_id:
+                                logger.info(
+                                    "[Space %s] -> [JIRA %s] waiting for bulk move task %s for %s",
+                                    session.space_id,
+                                    project_for_hierarchy or "(unknown)",
+                                    bulk_task_id,
+                                    key,
+                                )
+                                bulk_succeeded, bulk_state, bulk_payload, bulk_http_status = await wait_for_bulk_task_completion(
+                                    client,
+                                    bulk_task_id,
+                                )
+                                logger.info(
+                                    "[Space %s] -> [JIRA %s] bulk move task %s for %s finished: state=%s http=%s payload=%s",
+                                    session.space_id,
+                                    project_for_hierarchy or "(unknown)",
+                                    bulk_task_id,
+                                    key,
+                                    bulk_state or "(unknown)",
+                                    bulk_http_status if bulk_http_status is not None else "(none)",
+                                    json.dumps(
+                                        bulk_payload, ensure_ascii=False
+                                    )
+                                    if isinstance(bulk_payload, dict)
+                                    else "(none)",
+                                )
+                                if not bulk_succeeded:
+                                    type_update_failed = True
+                                    hierarchy_apply_verified = False
+                                    logger.info(
+                                        "[Space %s] -> [JIRA %s] bulk move task %s failed for %s; retry next cycle",
+                                        session.space_id,
+                                        project_for_hierarchy or "(unknown)",
+                                        bulk_task_id,
+                                        key,
+                                    )
+                            else:
+                                verify_issue, verify_status = await run_blocking_io(
+                                    client.get_issue, key
+                                )
+                                actual_parent = jira_parent_key or None
+                                if isinstance(verify_issue, dict):
+                                    verify_fields = verify_issue.get("fields")
+                                    if isinstance(verify_fields, dict):
+                                        verify_parent = verify_fields.get("parent")
+                                        if isinstance(verify_parent, dict):
+                                            raw_parent = verify_parent.get("key")
+                                            if isinstance(raw_parent, str) and raw_parent.strip():
+                                                actual_parent = raw_parent.strip()
+                                            else:
+                                                actual_parent = None
+                                        elif verify_parent is None:
+                                            actual_parent = None
+                                parent_applied = (
+                                    (actual_parent or "") == (desired_parent_for_type or "")
+                                )
+                                if verify_status is not None and not parent_applied:
+                                    type_update_failed = True
+                                    hierarchy_apply_verified = False
+                                    jira_meta["type"] = jira_type or None
+                                    jira_meta["parent"] = actual_parent
+                                    jira_task_meta_by_key[key] = jira_meta
+                                    jira_parent_by_key[key] = actual_parent
+                                    logger.info(
+                                        "[Space %s] -> [JIRA %s] hierarchy parent update for %s returned %s but Jira stayed parent=%s (expected %s)",
+                                        session.space_id,
+                                        project_for_hierarchy or "(unknown)",
+                                        key,
+                                        status,
+                                        actual_parent or "(root)",
+                                        desired_parent_for_type or "(root)",
+                                    )
+                        if not hierarchy_apply_verified:
+                            continue
+                        jira_type = desired_type_for_jira
+                        jira_parent_key = desired_parent_for_type or ""
+                        jira_meta["type"] = desired_type_for_jira
+                        jira_meta["parent"] = desired_parent_for_type
+                        jira_task_meta_by_key[key] = jira_meta
+                        jira_parent_by_key[key] = desired_parent_for_type
+                        jira_type_tag = normalize_type_tag(
+                            type_meta.get("type_tag_by_name", {}).get(
+                                desired_type_for_jira.lower(),
+                                "",
+                            )
+                            if type_meta
+                            else ""
+                        )
+                        if not jira_type_tag:
+                            jira_type_tag = issue_type_to_tag(desired_type_for_jira)
+                        if jira_type_tag:
+                            type_tags.add(jira_type_tag)
+                        logger.info(
+                            "[Space %s] -> [JIRA %s] fitted hierarchy for %s: type %s -> %s, parent %s -> %s",
+                            session.space_id,
+                            project_for_hierarchy or "(unknown)",
+                            key,
+                            previous_type,
+                            desired_type_for_jira,
+                            previous_parent,
+                            desired_parent_for_type or "(root)",
+                        )
 
         if push_fields and space_entity and jira_entity:
             changes: Dict[str, Tuple[Any, Any]] = {}
@@ -3124,8 +4290,29 @@ async def sync_space_with_jira(
                     )
                     jira_entities[key] = updated_jira
 
-        should_pull_parent = force_direction != "push"
-        if (pull_fields or should_pull_parent) and jira_entity:
+        task_has_dirty = (
+            hierarchy_dirty
+            or bool(hierarchy_dirty_fields)
+            or any(direction == "dirty" for direction in field_directions.values())
+        )
+        parent_direction = hierarchy_dirs.get("parent", "==")
+        should_pull_parent = (
+            force_direction == "pull"
+            or (
+                force_direction != "push"
+                and not task_has_dirty
+                and not can_push_parent_change
+                and (
+                    parent_direction == "<-"
+                    or parent_pull_due_unmappable_hierarchy
+                )
+            )
+        )
+        if (
+            force_direction != "push"
+            and jira_entity
+            and (force_direction == "pull" or not task_has_dirty)
+        ):
             task = tasks_by_key.get(key)
             if not task:
                 logger.info("* Task %s done", key)
@@ -3151,6 +4338,12 @@ async def sync_space_with_jira(
                     }
                     tasks_by_line = {parsed_task.line_index: parsed_task for parsed_task in tasks}
                     task_depth_by_line = build_space_task_depth_map(tasks_by_line)
+                    task_root_by_line = build_space_task_root_map(tasks_by_line)
+                    default_anchor_depth_by_root = build_space_default_anchor_depth_by_root(
+                        tasks_by_line,
+                        task_depth_by_line,
+                        task_root_by_line,
+                    )
                     task = tasks_by_key.get(key)
                     if not task:
                         continue
@@ -3180,9 +4373,27 @@ async def sync_space_with_jira(
             desired_state = (
                 jira_entity.state if "state" in pull_fields else current_token_state
             )
-            desired_tags = (
-                jira_entity.tags if "tags" in pull_fields else current_token_tags
+            current_regular_tags = _normalize_list(
+                remove_type_tags(current_token_tags, type_tags)
             )
+            desired_regular_tags = (
+                _normalize_list(jira_entity.tags)
+                if "tags" in pull_fields
+                else list(current_regular_tags)
+            )
+            if type_update_failed:
+                current_type_tags = [
+                    normalize_type_tag(tag)
+                    for tag in current_token_tags
+                    if normalize_type_tag(tag) in type_tags
+                ]
+                desired_tags = _normalize_list(desired_regular_tags + current_type_tags)
+            else:
+                desired_tags = ensure_single_type_tag(
+                    desired_regular_tags,
+                    jira_type_tag,
+                    type_tags,
+                )
             task_story_points = (
                 task.story_points
                 if task.story_points is not None
@@ -3240,6 +4451,13 @@ async def sync_space_with_jira(
                     task.jira_key: task for task in tasks if task.jira_key
                 }
                 tasks_by_line = {task.line_index: task for task in tasks}
+                task_depth_by_line = build_space_task_depth_map(tasks_by_line)
+                task_root_by_line = build_space_task_root_map(tasks_by_line)
+                default_anchor_depth_by_root = build_space_default_anchor_depth_by_root(
+                    tasks_by_line,
+                    task_depth_by_line,
+                    task_root_by_line,
+                )
                 key_to_title, title_to_key = build_reference_maps(tasks)
                 if not task:
                     continue
@@ -3344,6 +4562,13 @@ async def sync_space_with_jira(
                     task.jira_key: task for task in tasks if task.jira_key
                 }
                 tasks_by_line = {task.line_index: task for task in tasks}
+                task_depth_by_line = build_space_task_depth_map(tasks_by_line)
+                task_root_by_line = build_space_task_root_map(tasks_by_line)
+                default_anchor_depth_by_root = build_space_default_anchor_depth_by_root(
+                    tasks_by_line,
+                    task_depth_by_line,
+                    task_root_by_line,
+                )
                 ref_key_to_title = dict(key_to_title)
                 for ref_key, entity in jira_entities.items():
                     if entity.title:
@@ -3376,6 +4601,11 @@ async def jira_sync_loop(
     one_shot: bool = False, force_direction: Optional[str] = None
 ) -> None:
     SPACES_DIR.mkdir(parents=True, exist_ok=True)
+    JIRA_ISSUE_HIERARCHY_BY_PROJECT.clear()
+    JIRA_ISSUE_TYPE_META_BY_PROJECT.clear()
+    JIRA_STATE_MAP_BY_PROJECT.clear()
+    space_hierarchy_cache.clear()
+    jira_hierarchy_cache.clear()
     logger.info("Jira worker started. Polling every %ss", JIRA_SYNC_INTERVAL)
     sessions: Dict[str, SpaceSession] = {}
     client: Optional[JiraClient] = None
@@ -3420,11 +4650,10 @@ async def jira_sync_loop(
                     except Exception:
                         logger.exception("Failed publishing Jira project keys to shared map")
 
-                for path in SPACES_DIR.glob("*.txt"):
-                    space_id = path.stem
+                for space_id in iter_space_room_ids():
                     if space_id == SYSTEM_SHARED_ROOM_ID:
                         continue
-                    logger.debug("Syncing space %s", space_id)
+                    logger.debug("Syncing space %s", format_space_label(space_id))
                     session = sessions.get(space_id)
                     if not session:
                         try:
@@ -3432,7 +4661,7 @@ async def jira_sync_loop(
                         except TimeoutError:
                             logger.warning(
                                 "Skipping space %s due to connection timeout",
-                                space_id,
+                                format_space_label(space_id),
                             )
                             continue
                         sessions[space_id] = session
@@ -3441,6 +4670,7 @@ async def jira_sync_loop(
                         session,
                         "",
                         force_direction=force_direction,
+                        ignore_dirty=one_shot,
                     )
         except ConnectionClosed:
             logger.warning("Websocket disconnected; will reconnect")

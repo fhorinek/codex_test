@@ -1883,6 +1883,61 @@ function stopIdleWatch() {
 }
 
 /**
+ * Handles the connectedSpaceDisplayPath function logic.
+ * Input: none.
+ * Output: string.
+ */
+function connectedSpaceDisplayPath(): string {
+  const currentId = typeof collab.spaceId === "string" ? collab.spaceId.trim() : "";
+  const currentPath = typeof collab.spacePath === "string" ? collab.spacePath.trim() : "";
+  if (!currentId) {
+    return currentPath;
+  }
+  if (currentPath && currentPath !== currentId) {
+    return currentPath;
+  }
+  let snapshotSpaces: any[] = [];
+  if (typeof collab.lastSpaceSnapshot === "string" && collab.lastSpaceSnapshot.trim()) {
+    try {
+      const parsed = JSON.parse(collab.lastSpaceSnapshot);
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.spaces)) {
+        snapshotSpaces = parsed.spaces;
+      }
+    } catch {
+      snapshotSpaces = [];
+    }
+  }
+  const matchingPaths = Array.from(
+    new Set(
+      snapshotSpaces
+        .filter((space: any) => {
+          if (!space || typeof space !== "object") {
+            return false;
+          }
+          const id = typeof space.id === "string" ? space.id.trim() : "";
+          return id === currentId;
+        })
+        .map((space: any) => (typeof space.path === "string" ? space.path.trim() : ""))
+        .filter((path: string) => Boolean(path))
+    )
+  );
+  if (currentPath && matchingPaths.includes(currentPath)) {
+    return currentPath;
+  }
+  if (matchingPaths.length === 1) {
+    return matchingPaths[0];
+  }
+  const folderedCandidates = matchingPaths.filter((path: string) => path.includes("/"));
+  if (!currentPath && folderedCandidates.length === 1) {
+    return folderedCandidates[0];
+  }
+  if (currentPath === currentId && folderedCandidates.length === 1) {
+    return folderedCandidates[0];
+  }
+  return currentPath || currentId;
+}
+
+/**
  * Handles the updateBoardConnectionLabel function logic.
  * Input: none.
  * Output: result produced by this function.
@@ -1917,7 +1972,7 @@ function updateBoardConnectionLabel() {
   if (collab.spaceId) {
     const status = collab.connectionStatus || "disconnected";
     const statusLabel = STATUS_LABELS[status] ?? STATUS_LABELS["disconnected"] ?? "disconnected";
-    const spaceRef = collab.spacePath || collab.spaceId;
+    const spaceRef = connectedSpaceDisplayPath();
     if (dom.boardConnection) {
       dom.boardConnection.textContent = "";
       const text = document.createElement("span");
@@ -4438,13 +4493,13 @@ async function moveSpaceToFolderRequest(spaceId: any, folder: any, spacePath: an
   const normalizedPath = typeof spacePath === "string" ? spacePath.trim() : "";
   let response;
   try {
-    response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/folder`, {
+    response = await fetch(spaceApiUrl(normalizedPath || spaceId, spaceId, "/folder"), {
       method: "PUT",
       headers: {
         ...authHeaders(),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(normalizedPath ? { folder, path: normalizedPath } : { folder }),
+      body: JSON.stringify({ folder }),
     });
   } catch {
     throw new Error("Unable to reach the backend.");
@@ -4795,6 +4850,49 @@ function buildSpacePath(spaceId: any, folder: any = "") {
   }
   const normalizedFolder = normalizeSpaceFolder(folder);
   return normalizedFolder ? `${normalizedFolder}/${id}` : id;
+}
+
+/**
+ * Handles the normalizeApiSpacePath function logic.
+ * Input: spacePath: any, fallbackSpaceId: any = "".
+ * Output: string.
+ */
+function normalizeApiSpacePath(spacePath: any, fallbackSpaceId: any = "") {
+  const candidate = typeof spacePath === "string" ? spacePath.trim() : "";
+  if (candidate) {
+    return candidate.replace(/^\/+|\/+$/g, "");
+  }
+  return buildSpacePath(fallbackSpaceId, "");
+}
+
+/**
+ * Handles the encodeSpacePathForApi function logic.
+ * Input: spacePath: any, fallbackSpaceId: any = "".
+ * Output: string.
+ */
+function encodeSpacePathForApi(spacePath: any, fallbackSpaceId: any = "") {
+  const normalized = normalizeApiSpacePath(spacePath, fallbackSpaceId);
+  if (!normalized) {
+    return "";
+  }
+  return normalized
+    .split("/")
+    .filter((segment: string) => Boolean(segment))
+    .map((segment: string) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
+ * Handles the spaceApiUrl function logic.
+ * Input: spacePath: any, fallbackSpaceId: any = "", suffix: string = "/".
+ * Output: string.
+ */
+function spaceApiUrl(spacePath: any, fallbackSpaceId: any = "", suffix: string = "/") {
+  const encodedPath = encodeSpacePathForApi(spacePath, fallbackSpaceId);
+  if (!encodedPath) {
+    throw new Error("Invalid space path.");
+  }
+  return `${REMOTE_BASE}/api/spaces/${encodedPath}${suffix}`;
 }
 
 /**
@@ -5435,8 +5533,25 @@ async function loadSpaceList({ showLoading = true } = {}) {
       const currentByPath = collab.spacePath
         ? spaces.find((space: any) => resolveSpacePath(space) === collab.spacePath)
         : null;
-      const currentById = spaces.find((space: any) => space.id === collab.spaceId);
-      const current = currentByPath || currentById || null;
+      const currentCandidatesById = spaces.filter((space: any) => space.id === collab.spaceId);
+      let current = currentByPath || null;
+      if (!current && currentCandidatesById.length === 1) {
+        current = currentCandidatesById[0];
+      }
+      if (!current && currentCandidatesById.length > 1) {
+        const currentPath = typeof collab.spacePath === "string" ? collab.spacePath.trim() : "";
+        if (currentPath) {
+          current =
+            currentCandidatesById.find((space: any) => resolveSpacePath(space) === currentPath) || null;
+        }
+        if (!current) {
+          current =
+            currentCandidatesById.find((space: any) => {
+              const path = resolveSpacePath(space);
+              return typeof path === "string" && path.includes("/");
+            }) || currentCandidatesById[0];
+        }
+      }
       const nextPath = current ? resolveSpacePath(current) : (collab.spacePath || collab.spaceId);
       if (nextPath !== collab.spacePath) {
         collab.spacePath = nextPath;
@@ -7124,7 +7239,7 @@ async function loadSpaceText(spaceId: any) {
     applyAuthFromInputs({ markDirty: false });
     disconnectSpace();
     const response = await fetch(
-      `${REMOTE_BASE}/api/spaces/${encodeURIComponent(trimmed)}`,
+      spaceApiUrl(trimmed, trimmed, "/"),
       { headers: authHeaders() }
     );
     if (!response.ok) {
@@ -7207,21 +7322,48 @@ async function restoreSessionFromCookie() {
     updateConnectButtonLabel();
     void connectSystemSharedChannel();
     const allowedSpaces = Array.isArray(me.spaces)
-      ? me.spaces.filter((spaceId: any) => typeof spaceId === "string")
+      ? me.spaces
+        .filter((spacePath: any) => typeof spacePath === "string")
+        .map((spacePath: any) => spacePath.trim())
+        .filter(Boolean)
       : [];
     const lastSpace =
       typeof me.last_space === "string" ? me.last_space.trim() : "";
     const storedLastSpace = getStoredLastSpaceRef();
     let restoreSpaceId = "";
     let restoreSpacePath = "";
-    if (lastSpace && allowedSpaces.includes(lastSpace)) {
-      restoreSpaceId = lastSpace;
-      if (storedLastSpace && storedLastSpace.id === lastSpace) {
-        restoreSpacePath = storedLastSpace.path || lastSpace;
+    const resolveAllowedPathById = (candidateId: string): string => {
+      const trimmedId = String(candidateId || "").trim();
+      if (!trimmedId) {
+        return "";
       }
-    } else if (storedLastSpace && allowedSpaces.includes(storedLastSpace.id)) {
-      restoreSpaceId = storedLastSpace.id;
-      restoreSpacePath = storedLastSpace.path || storedLastSpace.id;
+      const matches = allowedSpaces.filter((entry: string) => {
+        const leaf = entry.split("/").filter(Boolean).pop() || "";
+        return leaf === trimmedId;
+      });
+      if (matches.length === 1) {
+        return matches[0];
+      }
+      return "";
+    };
+    if (lastSpace && allowedSpaces.includes(lastSpace)) {
+      restoreSpacePath = lastSpace;
+      restoreSpaceId = lastSpace.split("/").filter(Boolean).pop() || "";
+    } else if (lastSpace) {
+      const resolvedPath = resolveAllowedPathById(lastSpace);
+      if (resolvedPath) {
+        restoreSpacePath = resolvedPath;
+        restoreSpaceId = resolvedPath.split("/").filter(Boolean).pop() || "";
+      }
+    } else if (storedLastSpace && allowedSpaces.includes(storedLastSpace.path)) {
+      restoreSpacePath = storedLastSpace.path;
+      restoreSpaceId = (storedLastSpace.path || "").split("/").filter(Boolean).pop() || storedLastSpace.id;
+    } else if (storedLastSpace && storedLastSpace.id) {
+      const resolvedPath = resolveAllowedPathById(storedLastSpace.id);
+      if (resolvedPath) {
+        restoreSpacePath = resolvedPath;
+        restoreSpaceId = resolvedPath.split("/").filter(Boolean).pop() || storedLastSpace.id;
+      }
     }
     if (restoreSpaceId) {
       try {
@@ -7336,7 +7478,7 @@ async function createSpace(name: any) {
   if (!trimmed) {
     return;
   }
-  const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(trimmed)}`, {
+  const response = await fetch(spaceApiUrl(trimmed, trimmed, "/"), {
     method: "POST",
     headers: authHeaders(),
   });
@@ -7357,8 +7499,7 @@ async function deleteSpace(name: any, spacePath: any = "") {
     return;
   }
   applyAuthFromInputs({ markDirty: false });
-  const pathQuery = normalizedSpacePath ? `?path=${encodeURIComponent(normalizedSpacePath)}` : "";
-  const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(trimmed)}${pathQuery}`, {
+  const response = await fetch(spaceApiUrl(normalizedSpacePath || trimmed, trimmed, "/"), {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -7388,14 +7529,14 @@ async function renameSpace(oldName: any, newName: any, oldPath: any = "") {
   }
   applyAuthFromInputs({ markDirty: false });
   const response = await fetch(
-    `${REMOTE_BASE}/api/spaces/${encodeURIComponent(source)}/rename`,
+    spaceApiUrl(sourcePath || source, source, "/rename"),
     {
       method: "POST",
       headers: {
         ...authHeaders(),
         "Content-Type": "application/json",
       },
-      body: JSON.stringify(sourcePath ? { name: target, path: sourcePath } : { name: target }),
+      body: JSON.stringify({ name: target }),
     }
   );
   if (!response.ok) {
@@ -7820,8 +7961,7 @@ function updateHistoryButtonState(): void {
  * Output: Promise<any[]>.
  */
 async function fetchSpaceHistoryList(spaceId: string, spacePath = ""): Promise<any[]> {
-  const pathQuery = spacePath ? `?path=${encodeURIComponent(spacePath)}` : "";
-  const response = await fetch(`${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/history${pathQuery}`, {
+  const response = await fetch(spaceApiUrl(spacePath || spaceId, spaceId, "/history"), {
     headers: authHeaders(),
   });
   if (!response.ok) {
@@ -7837,9 +7977,8 @@ async function fetchSpaceHistoryList(spaceId: string, spacePath = ""): Promise<a
  * Output: Promise<string>.
  */
 async function fetchSpaceHistoryCheckpointContent(spaceId: string, checkpointId: string, spacePath = ""): Promise<string> {
-  const pathQuery = spacePath ? `?path=${encodeURIComponent(spacePath)}` : "";
   const response = await fetch(
-    `${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/history/${encodeURIComponent(checkpointId)}${pathQuery}`,
+    `${spaceApiUrl(spacePath || spaceId, spaceId, "/history")}/${encodeURIComponent(checkpointId)}`,
     { headers: authHeaders() }
   );
   if (!response.ok) {
@@ -7860,7 +7999,7 @@ async function postSpaceHistoryRevert(
   spacePath = ""
 ): Promise<any> {
   const response = await fetch(
-    `${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/history/revert`,
+    spaceApiUrl(spacePath || spaceId, spaceId, "/history/revert"),
     {
       method: "POST",
       headers: {
@@ -7871,7 +8010,6 @@ async function postSpaceHistoryRevert(
         checkpoint_id: checkpointId,
         pre_revert_content: preRevertContent,
         pre_revert_label: "revoked",
-        path: spacePath || undefined,
       }),
     }
   );
@@ -7890,7 +8028,7 @@ async function postSpaceHistoryTag(
   spaceId: string,
   options: { checkpointId?: string; label: string; content?: string; path?: string }
 ): Promise<any> {
-  const body: { label: string; checkpoint_id?: string; content?: string; path?: string } = {
+  const body: { label: string; checkpoint_id?: string; content?: string } = {
     label: options.label,
   };
   if (typeof options.checkpointId === "string" && options.checkpointId) {
@@ -7899,11 +8037,11 @@ async function postSpaceHistoryTag(
   if (typeof options.content === "string") {
     body.content = options.content;
   }
-  if (typeof options.path === "string" && options.path.trim()) {
-    body.path = options.path.trim();
-  }
+  const targetPath = typeof options.path === "string" && options.path.trim()
+    ? options.path.trim()
+    : spaceId;
   const response = await fetch(
-    `${REMOTE_BASE}/api/spaces/${encodeURIComponent(spaceId)}/history/tag`,
+    spaceApiUrl(targetPath, spaceId, "/history/tag"),
     {
       method: "POST",
       headers: {

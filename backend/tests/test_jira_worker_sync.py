@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from contextlib import ExitStack
 from pathlib import Path
@@ -22,6 +23,11 @@ def _issue_payload(
     timeoriginalestimate=None,
     parent_key=None,
     issue_type="Task",
+    project_key=None,
+    project_id=None,
+    parent_project_key=None,
+    parent_project_id=None,
+    issue_type_id=None,
 ):
     labels = labels or []
     status = {"name": status_name} if status_name is not None else {}
@@ -38,8 +44,21 @@ def _issue_payload(
             "timeoriginalestimate": timeoriginalestimate,
         },
     }
+    if issue_type_id is not None:
+        payload["fields"]["issuetype"]["id"] = str(issue_type_id)
+    resolved_project_key = project_key or key.split("-", 1)[0]
+    if resolved_project_key:
+        payload["fields"]["project"] = {"key": resolved_project_key}
+        if project_id is not None:
+            payload["fields"]["project"]["id"] = str(project_id)
     if parent_key:
         payload["fields"]["parent"] = {"key": parent_key}
+        if parent_project_key or parent_project_id is not None:
+            payload["fields"]["parent"]["project"] = {}
+            if parent_project_key:
+                payload["fields"]["parent"]["project"]["key"] = parent_project_key
+            if parent_project_id is not None:
+                payload["fields"]["parent"]["project"]["id"] = str(parent_project_id)
     return payload
 
 
@@ -47,14 +66,30 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         worker.space_entity_cache.clear()
         worker.jira_entity_cache.clear()
+        worker.space_hierarchy_cache.clear()
+        worker.jira_hierarchy_cache.clear()
         worker.JIRA_ACCOUNT_ID_BY_EMAIL.clear()
         worker.JIRA_ISSUE_HIERARCHY_BY_PROJECT.clear()
+
+    def test_iter_space_room_ids_uses_paths_and_skips_personal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            spaces_dir = Path(tmp) / "spaces"
+            spaces_dir.mkdir(parents=True, exist_ok=True)
+            (spaces_dir / "root_space.txt").write_text("", encoding="utf-8")
+            (spaces_dir / "team").mkdir(parents=True, exist_ok=True)
+            (spaces_dir / "team" / "board.txt").write_text("", encoding="utf-8")
+            (spaces_dir / "personal").mkdir(parents=True, exist_ok=True)
+            (spaces_dir / "personal" / "admin.txt").write_text("", encoding="utf-8")
+            (spaces_dir / "notes.md").write_text("", encoding="utf-8")
+            with patch.object(worker, "SPACES_DIR", spaces_dir):
+                self.assertEqual(worker.iter_space_room_ids(), ["root_space", "team/board"])
 
     async def _run_sync(
         self,
         input_text,
         client,
         force_direction=None,
+        ignore_dirty=False,
         space_id="sync-test",
         session_overrides=None,
         time_value=None,
@@ -84,6 +119,35 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
                 getattr(hierarchy_method, "return_value", None), tuple
             ):
                 hierarchy_method.return_value = default_hierarchy
+        if hasattr(client, "update_issue_type"):
+            update_type_method = client.update_issue_type
+            if getattr(update_type_method, "side_effect", None) is None and not isinstance(
+                getattr(update_type_method, "return_value", None), tuple
+            ):
+                update_type_method.return_value = (204, {})
+        if hasattr(client, "update_issue_parent"):
+            update_parent_method = client.update_issue_parent
+            if getattr(update_parent_method, "side_effect", None) is None and not isinstance(
+                getattr(update_parent_method, "return_value", None), tuple
+            ):
+                update_parent_method.return_value = (204, {})
+        if hasattr(client, "get_issue_editmeta"):
+            editmeta_method = client.get_issue_editmeta
+            default_editmeta = ({"fields": {"parent": {"required": False}}}, 200)
+            if getattr(editmeta_method, "side_effect", None) is None and not isinstance(
+                getattr(editmeta_method, "return_value", None), tuple
+            ):
+                editmeta_method.return_value = default_editmeta
+        if hasattr(client, "get_bulk_operation_progress"):
+            bulk_progress_method = client.get_bulk_operation_progress
+            default_bulk_progress = (
+                {"taskId": "task-1", "status": "COMPLETE", "progressPercent": 100},
+                200,
+            )
+            if getattr(bulk_progress_method, "side_effect", None) is None and not isinstance(
+                getattr(bulk_progress_method, "return_value", None), tuple
+            ):
+                bulk_progress_method.return_value = default_bulk_progress
 
         async def fake_read(ydoc_obj):
             return ydoc_obj["text"]
@@ -115,6 +179,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
                 session,
                 "KAN",
                 force_direction=force_direction,
+                ignore_dirty=ignore_dirty,
             )
         return session, ydoc["text"], writes
 
@@ -142,6 +207,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-101] New task",
+                    "#task",
                     "details",
                 ]
             ),
@@ -212,7 +278,9 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-1] Parent",
+                    "#task",
                     "  % [KAN-202] Child",
+                    "  #subtask",
                 ]
             ),
         )
@@ -271,8 +339,11 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-10] Root",
+                    "#epic",
                     "  % [KAN-11] Child",
+                    "  #task",
                     "    % [KAN-12] Leaf",
+                    "    #subtask",
                 ]
             ),
         )
@@ -326,8 +397,11 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-20] Root",
+                    "#epic",
                     "  % [KAN-21] Child",
+                    "  #task",
                     "% [KAN-22] Leaf",
+                    "#task",
                 ]
             ),
         )
@@ -456,6 +530,333 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(getattr(session, "sync_dirty", False))
         client.get_issue.assert_called_once_with("KAN-1")
         client.create_issue.assert_not_called()
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_marks_recent_hierarchy_change_dirty(self):
+        client = Mock()
+        client.get_issue.side_effect = [
+            (_issue_payload("KAN-1", "Parent", parent_key=None, issue_type="Task"), 200),
+            (_issue_payload("KAN-2", "Child", parent_key=None, issue_type="Task"), 200),
+        ]
+
+        input_text = "\n".join(
+            [
+                "% [KAN-1] Parent",
+                "  % [KAN-2] Child",
+            ]
+        )
+
+        session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            space_id="sync-dirty-hierarchy",
+            session_overrides={
+                "pending_change": True,
+                "last_content": "older content",
+                "ignore_until": 0.0,
+                "last_change": 0.0,
+            },
+            time_value=100.0,
+        )
+
+        self.assertEqual(output_text, input_text)
+        self.assertEqual(writes, [])
+        self.assertEqual(session.last_change, 100.0)
+        self.assertTrue(getattr(session, "sync_dirty", False))
+        client.get_issue.assert_any_call("KAN-1")
+        client.get_issue.assert_any_call("KAN-2")
+        client.update_issue_type.assert_not_called()
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_one_shot_ignores_recent_field_dirty(self):
+        client = Mock()
+        client.get_issue.return_value = (
+            _issue_payload("KAN-1", "Remote title", "body"),
+            200,
+        )
+        client.update_issue.return_value = (204, {})
+        client.transition_issue.return_value = (204, {})
+        client.create_issue.return_value = (None, None, None)
+
+        input_text = "\n".join(
+            [
+                "% [KAN-1] Local title",
+                "body",
+            ]
+        )
+
+        session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            force_direction="push",
+            ignore_dirty=True,
+            space_id="sync-one-shot-ignore-field-dirty",
+            session_overrides={
+                "pending_change": True,
+                "last_content": "older content",
+                "ignore_until": 0.0,
+                "last_change": 0.0,
+            },
+            time_value=100.0,
+        )
+
+        self.assertEqual(output_text, input_text)
+        self.assertEqual(writes, [])
+        self.assertEqual(session.last_change, 100.0)
+        self.assertFalse(getattr(session, "sync_dirty", False))
+        client.update_issue.assert_called_once_with(
+            "KAN-1",
+            "Local title",
+            None,
+            None,
+            None,
+            False,
+            worker.JIRA_ESTIMATE_UNSET,
+        )
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_one_shot_ignores_recent_hierarchy_dirty(self):
+        client = Mock()
+        client.get_issue.side_effect = [
+            (_issue_payload("KAN-1", "Parent A"), 200),
+            (_issue_payload("KAN-2", "Child", parent_key="KAN-3"), 200),
+            (_issue_payload("KAN-3", "Parent B"), 200),
+        ]
+        client.update_issue.return_value = (204, {})
+        client.transition_issue.return_value = (204, {})
+        client.create_issue.return_value = (None, None, None)
+
+        input_text = "\n".join(
+            [
+                "% [KAN-1] Parent A",
+                "  % [KAN-2] Child",
+                "% [KAN-3] Parent B",
+            ]
+        )
+
+        session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            force_direction="pull",
+            ignore_dirty=True,
+            space_id="sync-one-shot-ignore-hierarchy-dirty",
+            session_overrides={
+                "pending_change": True,
+                "last_content": "older content",
+                "ignore_until": 0.0,
+                "last_change": 0.0,
+            },
+            time_value=100.0,
+        )
+
+        self.assertEqual(
+            output_text,
+            "\n".join(
+                [
+                    "% [KAN-1] Parent A",
+                    "#task",
+                    "% [KAN-3] Parent B",
+                    "#task",
+                    "  % [KAN-2] Child",
+                    "  #task",
+                ]
+            ),
+        )
+        self.assertEqual(writes, [output_text])
+        self.assertEqual(session.last_change, 100.0)
+        self.assertFalse(getattr(session, "sync_dirty", False))
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_skips_cross_project_subtask_parent(self):
+        client = Mock()
+        client.get_issue.side_effect = [
+            (_issue_payload("OPS-1", "Other project root", parent_key=None, issue_type="Task"), 200),
+            (_issue_payload("KAN-47", "Child", parent_key=None, issue_type="Task"), 200),
+        ]
+
+        input_text = "\n".join(
+            [
+                "% [OPS-1] Other project root",
+                "  % [KAN-47] Child",
+            ]
+        )
+
+        _session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            space_id="sync-cross-project-subtask-parent",
+        )
+
+        self.assertEqual(
+            output_text,
+            "\n".join(
+                [
+                    "% [OPS-1] Other project root",
+                    "#task",
+                    "% [KAN-47] Child",
+                    "#task",
+                ]
+            ),
+        )
+        self.assertEqual(writes, [output_text])
+        client.update_issue_type.assert_not_called()
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_skips_subtask_parent_on_project_id_mismatch(self):
+        client = Mock()
+        client.get_issue.side_effect = [
+            (
+                _issue_payload(
+                    "KAN-53",
+                    "Parent",
+                    parent_key=None,
+                    issue_type="Task",
+                    project_key="KAN",
+                    project_id="10010",
+                ),
+                200,
+            ),
+            (
+                _issue_payload(
+                    "KAN-47",
+                    "Child",
+                    parent_key=None,
+                    issue_type="Task",
+                    project_key="KAN",
+                    project_id="10011",
+                ),
+                200,
+            ),
+        ]
+
+        input_text = "\n".join(
+            [
+                "% [KAN-53] Parent",
+                "  % [KAN-47] Child",
+            ]
+        )
+
+        _session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            space_id="sync-subtask-project-id-mismatch",
+        )
+
+        self.assertEqual(
+            output_text,
+            "\n".join(
+                [
+                    "% [KAN-53] Parent",
+                    "#task",
+                    "% [KAN-47] Child",
+                    "#task",
+                ]
+            ),
+        )
+        self.assertEqual(writes, [output_text])
+        client.update_issue_type.assert_not_called()
+        client.update_issue_parent.assert_not_called()
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_detects_parent_update_noop_after_204(self):
+        client = Mock()
+        client.get_issue.side_effect = [
+            (_issue_payload("KAN-53", "Parent", parent_key=None, issue_type="Task"), 200),
+            (_issue_payload("KAN-49", "Child", parent_key="KAN-46", issue_type="Sub-task"), 200),
+            (_issue_payload("KAN-49", "Child", parent_key="KAN-46", issue_type="Sub-task"), 200),
+        ]
+        client.update_issue.return_value = (204, {})
+        client.update_issue_parent.return_value = (204, {})
+        client.update_issue_type.return_value = (204, {})
+        client.transition_issue.return_value = (204, {})
+        client.create_issue.return_value = (None, None, None)
+
+        input_text = "\n".join(
+            [
+                "% [KAN-53] Parent",
+                "  % [KAN-49] Child",
+            ]
+        )
+
+        _session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            space_id="sync-parent-noop-204",
+        )
+
+        self.assertEqual(
+            output_text,
+            "\n".join(
+                [
+                    "% [KAN-53] Parent",
+                    "#task",
+                    "  % [KAN-49] Child",
+                ]
+            ),
+        )
+        self.assertEqual(writes, [output_text])
+        client.update_issue_parent.assert_called_once_with(
+            "KAN-49",
+            "KAN-53",
+            False,
+            issue_project_key="KAN",
+            issue_type_id=None,
+        )
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_reparents_without_editmeta_check_for_parent_only(self):
+        client = Mock()
+        client.get_issue.side_effect = [
+            (_issue_payload("KAN-53", "Parent", parent_key=None, issue_type="Task", issue_type_id="10010"), 200),
+            (_issue_payload("KAN-49", "Child", parent_key="KAN-46", issue_type="Sub-task", issue_type_id="10016"), 200),
+        ]
+        client.get_issue_editmeta.return_value = ({"fields": {}}, 200)
+        client.update_issue.return_value = (204, {})
+        client.update_issue_parent.return_value = (201, {"taskId": "123"})
+        client.update_issue_type.return_value = (204, {})
+        client.transition_issue.return_value = (204, {})
+        client.create_issue.return_value = (None, None, None)
+
+        input_text = "\n".join(
+            [
+                "% [KAN-53] Parent",
+                "  % [KAN-49] Child",
+            ]
+        )
+
+        _session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            space_id="sync-parent-not-editable",
+        )
+
+        self.assertEqual(
+            output_text,
+            "\n".join(
+                [
+                    "% [KAN-53] Parent",
+                    "#task",
+                    "  % [KAN-49] Child",
+                    "  #subtask",
+                ]
+            ),
+        )
+        self.assertEqual(writes, [output_text])
+        client.get_issue_editmeta.assert_not_called()
+        client.get_bulk_operation_progress.assert_called_once_with("123")
+        client.update_issue_parent.assert_called_once_with(
+            "KAN-49",
+            "KAN-53",
+            False,
+            issue_project_key="KAN",
+            issue_type_id="10016",
+        )
         client.update_issue.assert_not_called()
         client.transition_issue.assert_not_called()
 
@@ -627,7 +1028,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-1] New title",
-                    "#newtag",
+                    "#newtag #task",
                     "new desc",
                 ]
             ),
@@ -669,8 +1070,11 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-1] Parent A",
+                    "#task",
                     "% [KAN-3] Parent B",
+                    "#task",
                     "  % [KAN-2] Child",
+                    "  #task",
                 ]
             ),
         )
@@ -709,12 +1113,221 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-1] Parent",
+                    "#task",
                     "% [KAN-3] Sibling",
+                    "#task",
                     "% [KAN-2] Child",
+                    "#task",
                 ]
             ),
         )
         self.assertEqual(writes, [output_text])
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_does_not_pull_parent_when_hierarchy_direction_is_push(self):
+        seed_client = Mock()
+        seed_client.get_issue.side_effect = [
+            (_issue_payload("KAN-45", "Parent", parent_key=None, issue_type="Task"), 200),
+            (_issue_payload("KAN-53", "Child", parent_key="KAN-45", issue_type="Sub-task"), 200),
+        ]
+        seed_client.update_issue.return_value = (204, {})
+        seed_client.update_issue_type.return_value = (204, {})
+        seed_client.transition_issue.return_value = (204, {})
+        seed_client.create_issue.return_value = (None, None, None)
+
+        seed_text = "\n".join(
+            [
+                "% [KAN-45] Parent",
+                "#task",
+                "  % [KAN-53] Child",
+                "  #subtask",
+            ]
+        )
+        await self._run_sync(
+            seed_text,
+            seed_client,
+            space_id="sync-parent-push-no-pull",
+            time_value=100.0,
+        )
+
+        client = Mock()
+        client.get_issue.side_effect = [
+            (_issue_payload("KAN-45", "Parent", parent_key=None, issue_type="Task"), 200),
+            (_issue_payload("KAN-53", "Child", parent_key="KAN-45", issue_type="Sub-task"), 200),
+        ]
+        client.update_issue.return_value = (204, {})
+        client.update_issue_type.return_value = (None, None)
+        client.transition_issue.return_value = (204, {})
+        client.create_issue.return_value = (None, None, None)
+
+        input_text = "\n".join(
+            [
+                "% [KAN-45] Parent",
+                "#task",
+                "% [KAN-53] Child",
+                "#task",
+            ]
+        )
+
+        _session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            space_id="sync-parent-push-no-pull",
+            time_value=200.0,
+        )
+
+        self.assertEqual(output_text, input_text)
+        self.assertEqual(writes, [])
+        client.update_issue_type.assert_called_once_with(
+            "KAN-53",
+            "Task",
+            None,
+            True,
+        )
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_fits_hierarchy_from_space_by_changing_type_and_parent(self):
+        client = Mock()
+        client.get_issue.side_effect = [
+            (_issue_payload("KAN-1", "Root", parent_key=None, issue_type="Task"), 200),
+            (_issue_payload("KAN-2", "Child", parent_key=None, issue_type="Task"), 200),
+        ]
+        client.update_issue.return_value = (204, {})
+        client.update_issue_type.return_value = (204, {})
+        client.transition_issue.return_value = (204, {})
+        client.create_issue.return_value = (None, None, None)
+
+        input_text = "\n".join(
+            [
+                "% [KAN-1] Root",
+                "  % [KAN-2] Child",
+            ]
+        )
+
+        _session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            space_id="sync-fit-space-hierarchy-type-parent",
+        )
+
+        self.assertEqual(
+            output_text,
+            "\n".join(
+                [
+                    "% [KAN-1] Root",
+                    "#task",
+                    "  % [KAN-2] Child",
+                    "  #subtask",
+                ]
+            ),
+        )
+        self.assertEqual(writes, [output_text])
+        client.update_issue_type.assert_called_once_with(
+            "KAN-2",
+            "Sub-task",
+            "KAN-1",
+            False,
+        )
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_overrides_conflicting_type_tag_with_mapped_type(self):
+        client = Mock()
+        client.get_issue.side_effect = [
+            (_issue_payload("KAN-1", "Root", parent_key=None, issue_type="Task"), 200),
+            (_issue_payload("KAN-2", "Child", parent_key=None, issue_type="Task"), 200),
+        ]
+        client.update_issue.return_value = (204, {})
+        client.update_issue_type.return_value = (204, {})
+        client.transition_issue.return_value = (204, {})
+        client.create_issue.return_value = (None, None, None)
+
+        input_text = "\n".join(
+            [
+                "% [KAN-1] Root",
+                "#task",
+                "  % [KAN-2] Child",
+                "  #task",
+            ]
+        )
+
+        _session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            space_id="sync-fit-space-hierarchy-conflicting-type-tag",
+        )
+
+        self.assertEqual(
+            output_text,
+            "\n".join(
+                [
+                    "% [KAN-1] Root",
+                    "#task",
+                    "  % [KAN-2] Child",
+                    "  #subtask",
+                ]
+            ),
+        )
+        self.assertEqual(writes, [output_text])
+        client.update_issue_type.assert_called_once_with(
+            "KAN-2",
+            "Sub-task",
+            "KAN-1",
+            False,
+        )
+        client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_sync_space_with_jira_fits_hierarchy_from_space_by_changing_parent_only(self):
+        client = Mock()
+        client.get_issue.side_effect = [
+            (_issue_payload("KAN-1", "Root A", parent_key=None, issue_type="Task", issue_type_id="10010"), 200),
+            (_issue_payload("KAN-2", "Root B", parent_key=None, issue_type="Task", issue_type_id="10010"), 200),
+            (_issue_payload("KAN-3", "Child", parent_key="KAN-1", issue_type="Sub-task", issue_type_id="10016"), 200),
+            (_issue_payload("KAN-3", "Child", parent_key="KAN-2", issue_type="Sub-task", issue_type_id="10016"), 200),
+        ]
+        client.update_issue.return_value = (204, {})
+        client.update_issue_type.return_value = (204, {})
+        client.transition_issue.return_value = (204, {})
+        client.create_issue.return_value = (None, None, None)
+
+        input_text = "\n".join(
+            [
+                "% [KAN-1] Root A",
+                "% [KAN-2] Root B",
+                "  % [KAN-3] Child",
+            ]
+        )
+
+        _session, output_text, writes = await self._run_sync(
+            input_text,
+            client,
+            space_id="sync-fit-space-hierarchy-parent-only",
+        )
+
+        self.assertEqual(
+            output_text,
+            "\n".join(
+                [
+                    "% [KAN-1] Root A",
+                    "#task",
+                    "% [KAN-2] Root B",
+                    "#task",
+                    "  % [KAN-3] Child",
+                    "  #subtask",
+                ]
+            ),
+        )
+        self.assertEqual(writes, [output_text])
+        client.update_issue_parent.assert_called_once_with(
+            "KAN-3",
+            "KAN-2",
+            False,
+            issue_project_key="KAN",
+            issue_type_id="10016",
+        )
         client.update_issue.assert_not_called()
         client.transition_issue.assert_not_called()
 
@@ -753,7 +1366,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-1] Task",
-                    "~2",
+                    "#task ~2",
                     "body",
                 ]
             ),
@@ -792,8 +1405,17 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             space_id="sync-pull-zero-estimate-no-token",
         )
 
-        self.assertEqual(output_text, input_text)
-        self.assertEqual(writes, [])
+        self.assertEqual(
+            output_text,
+            "\n".join(
+                [
+                    "% [KAN-1] Task",
+                    "#task",
+                    "body",
+                ]
+            ),
+        )
+        self.assertEqual(writes, [output_text])
         client.update_issue.assert_not_called()
         client.transition_issue.assert_not_called()
 
@@ -844,7 +1466,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
                     "            jira: Todo",
                     "",
                     "% [KAN-1] Task",
-                    "!todo ~0",
+                    "!todo #task ~0",
                     "body",
                 ]
             ),
@@ -901,7 +1523,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
                     "            jira: Todo",
                     "",
                     "% [KAN-1] Task",
-                    "!todo #backend ~2",
+                    "!todo #backend #task ~2",
                     "body line",
                 ]
             ),
@@ -947,6 +1569,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-1] Task",
+                    "#task",
                     "body",
                 ]
             ),
@@ -992,6 +1615,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             "\n".join(
                 [
                     "% [KAN-1] Task",
+                    "#task",
                     "body note",
                 ]
             ),
@@ -1053,7 +1677,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
                     "            mail: maya@example.com",
                     "",
                     "% [KAN-1] Task",
-                    "#tag1 @maya",
+                    "#tag1 #task @maya",
                     "body #tag1 note @maya remove @other",
                 ]
             ),

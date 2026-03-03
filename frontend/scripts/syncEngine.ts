@@ -215,8 +215,12 @@ export function createSyncEngine(options: SyncEngineOptions) {
         typeof collab.spacePath === "string" && collab.spacePath.trim()
           ? collab.spacePath.trim()
           : String(spaceId || "");
-      const pathQuery = normalizedPath ? `?path=${encodeURIComponent(normalizedPath)}` : "";
-      const response = await fetchImpl(`${remoteBase}/api/spaces/${spaceId}${pathQuery}`, {
+      const encodedPath = normalizedPath
+        .split("/")
+        .filter((segment: string) => Boolean(segment))
+        .map((segment: string) => encodeURIComponent(segment))
+        .join("/");
+      const response = await fetchImpl(`${remoteBase}/api/spaces/${encodedPath}/`, {
         headers: authHeaders(),
       });
       if (!response.ok) {

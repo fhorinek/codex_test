@@ -466,6 +466,45 @@ class JiraClient:
             "Content-Type": "application/json",
         }
 
+    # Handles the _normalize_issue_type_name function logic.
+    # Input: issue_type: str.
+    # Output: str.
+    def _normalize_issue_type_name(self, issue_type: str) -> str:
+        return re.sub(r"[^a-z0-9]+", "", (issue_type or "").strip().lower())
+
+    # Handles the _resolve_project_issue_type_id function logic.
+    # Input: project_key: str, issue_type: str.
+    # Output: Optional[str].
+    def _resolve_project_issue_type_id(
+        self, project_key: str, issue_type: str
+    ) -> Optional[str]:
+        normalized_target = self._normalize_issue_type_name(issue_type)
+        if not normalized_target:
+            return None
+        issue_types, _ = self.get_project_issue_type_hierarchy(project_key)
+        if not isinstance(issue_types, list):
+            return None
+        for entry in issue_types:
+            if not isinstance(entry, dict):
+                continue
+            issue_type_id = entry.get("id")
+            if issue_type_id is None:
+                continue
+            entry_name = entry.get("name")
+            if not isinstance(entry_name, str) or not entry_name.strip():
+                continue
+            if self._normalize_issue_type_name(entry_name) == normalized_target:
+                return str(issue_type_id).strip() or None
+        if normalized_target == "subtask":
+            for entry in issue_types:
+                if not isinstance(entry, dict) or not bool(entry.get("is_subtask")):
+                    continue
+                issue_type_id = entry.get("id")
+                if issue_type_id is None:
+                    continue
+                return str(issue_type_id).strip() or None
+        return None
+
     # Handles the _summarize_payload function logic.
     # Input: self, payload: Optional[Dict[str, Any]].
     # Output: str.
@@ -569,11 +608,50 @@ class JiraClient:
         try:
             data, status = self._request(
                 "GET",
-                f"/rest/api/3/issue/{key}?fields=summary,description,status,labels,assignee,issuetype,issuelinks,subtasks,parent,timetracking,timeoriginalestimate",
+                f"/rest/api/3/issue/{key}?fields=summary,description,status,labels,assignee,issuetype,issuelinks,subtasks,parent,project,timetracking,timeoriginalestimate",
             )
             return data, status
         except Exception:
             logger.exception("Failed to fetch Jira issue %s", key)
+            return None, None
+
+    # Handles the get_issue_editmeta function logic.
+    # Input: self, key: str.
+    # Output: Tuple[Optional[Dict[str, Any]], Optional[int]].
+    def get_issue_editmeta(
+        self, key: str
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+        try:
+            data, status = self._request(
+                "GET",
+                f"/rest/api/3/issue/{key}/editmeta",
+            )
+            if isinstance(data, dict):
+                return data, status
+            return None, status
+        except Exception:
+            logger.exception("Failed to fetch Jira editmeta for %s", key)
+            return None, None
+
+    # Handles the get_bulk_operation_progress function logic.
+    # Input: self, task_id: str.
+    # Output: Tuple[Optional[Dict[str, Any]], Optional[int]].
+    def get_bulk_operation_progress(
+        self, task_id: str
+    ) -> Tuple[Optional[Dict[str, Any]], Optional[int]]:
+        normalized_task_id = quote((task_id or "").strip())
+        try:
+            data, status = self._request(
+                "GET",
+                f"/rest/api/3/bulk/queue/{normalized_task_id}",
+            )
+            if isinstance(data, dict):
+                return data, status
+            return None, status
+        except Exception:
+            logger.exception(
+                "Failed to fetch Jira bulk operation progress for task %s", task_id
+            )
             return None, None
 
     # Handles the create_issue function logic.
@@ -682,6 +760,191 @@ class JiraClient:
             return status, result if isinstance(result, dict) else None
         except Exception:
             logger.exception("Failed to update Jira issue %s", key)
+            return None, None
+
+    # Handles the update_issue_type function logic.
+    # Input: self, key: str, issue_type: str, parent_key: Optional[str] = None, clear_parent: bool = False.
+    # Output: Tuple[Optional[int], Optional[Dict[str, Any]]].
+    def update_issue_type(
+        self,
+        key: str,
+        issue_type: str,
+        parent_key: Optional[str] = None,
+        clear_parent: bool = False,
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]]]:
+        if parent_key and not clear_parent:
+            issue_project_key = key.split("-", 1)[0].strip().upper() if "-" in key else ""
+            issue_type_id = (
+                self._resolve_project_issue_type_id(issue_project_key, issue_type)
+                if issue_project_key
+                else None
+            )
+            if issue_project_key and issue_type_id:
+                mapping_key = f"{issue_project_key},{issue_type_id},{parent_key}"
+                payload = {
+                    "sendBulkNotification": False,
+                    "targetToSourcesMapping": {
+                        mapping_key: {
+                            "issueIdsOrKeys": [key],
+                            "inferClassificationDefaults": True,
+                            "inferFieldDefaults": True,
+                            "inferStatusDefaults": True,
+                            "inferSubtaskTypeDefault": True,
+                            "targetMandatoryFields": [],
+                        }
+                    },
+                }
+                try:
+                    result, status = self._request(
+                        "POST",
+                        "/rest/api/3/bulk/issues/move",
+                        payload,
+                    )
+                    logger.info(
+                        "%s",
+                        self._format_block(
+                            "calling JIRA API",
+                            "\n".join(
+                                [
+                                    f"POST {self.base_url}/rest/api/3/bulk/issues/move",
+                                    self._format_payload(payload),
+                                    f"RESPONSE {status} - OK",
+                                    self._format_payload(result),
+                                ]
+                            ),
+                        ),
+                    )
+                    return status, result if isinstance(result, dict) else None
+                except Exception:
+                    logger.exception(
+                        "Failed to bulk move Jira issue %s with type %s under parent %s",
+                        key,
+                        issue_type,
+                        parent_key,
+                    )
+                    return None, None
+            logger.info(
+                "Bulk move context missing for %s type update (project=%s, issue_type=%s, issue_type_id=%s); using PUT fallback",
+                key,
+                issue_project_key,
+                issue_type,
+                issue_type_id or "",
+            )
+        payload: Dict[str, Any] = {
+            "fields": {
+                "issuetype": {"name": issue_type},
+            }
+        }
+        if clear_parent:
+            payload["fields"]["parent"] = None
+        elif parent_key:
+            payload["fields"]["parent"] = {"key": parent_key}
+        try:
+            result, status = self._request("PUT", f"/rest/api/3/issue/{key}", payload)
+            logger.info(
+                "%s",
+                self._format_block(
+                    "calling JIRA API",
+                    "\n".join(
+                        [
+                            f"PUT {self.base_url}/rest/api/3/issue/{key}",
+                            self._format_payload(payload),
+                            f"RESPONSE {status} - OK",
+                            self._format_payload(result),
+                        ]
+                    ),
+                ),
+            )
+            return status, result if isinstance(result, dict) else None
+        except Exception:
+            logger.exception("Failed to update Jira issue type %s to %s", key, issue_type)
+            return None, None
+
+    # Handles the update_issue_parent function logic.
+    # Input: self, key: str, parent_key: Optional[str] = None, clear_parent: bool = False, issue_project_key: Optional[str] = None, issue_type_id: Optional[str] = None.
+    # Output: Tuple[Optional[int], Optional[Dict[str, Any]]].
+    def update_issue_parent(
+        self,
+        key: str,
+        parent_key: Optional[str] = None,
+        clear_parent: bool = False,
+        issue_project_key: Optional[str] = None,
+        issue_type_id: Optional[str] = None,
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]]]:
+        if parent_key and not clear_parent and issue_project_key and issue_type_id:
+            mapping_key = f"{issue_project_key},{issue_type_id},{parent_key}"
+            payload = {
+                "sendBulkNotification": False,
+                "targetToSourcesMapping": {
+                    mapping_key: {
+                        "issueIdsOrKeys": [key],
+                        "inferClassificationDefaults": True,
+                        "inferFieldDefaults": True,
+                        "inferStatusDefaults": True,
+                        "inferSubtaskTypeDefault": True,
+                        "targetMandatoryFields": [],
+                    }
+                },
+            }
+            try:
+                result, status = self._request(
+                    "POST",
+                    "/rest/api/3/bulk/issues/move",
+                    payload,
+                )
+                logger.info(
+                    "%s",
+                    self._format_block(
+                        "calling JIRA API",
+                        "\n".join(
+                            [
+                                f"POST {self.base_url}/rest/api/3/bulk/issues/move",
+                                self._format_payload(payload),
+                                f"RESPONSE {status} - OK",
+                                self._format_payload(result),
+                            ]
+                        ),
+                    ),
+                )
+                return status, result if isinstance(result, dict) else None
+            except Exception:
+                logger.exception(
+                    "Failed to bulk move Jira issue %s under parent %s",
+                    key,
+                    parent_key,
+                )
+                return None, None
+        if parent_key and not clear_parent and (not issue_project_key or not issue_type_id):
+            logger.info(
+                "Bulk move context missing for %s (project=%s, issue_type_id=%s); using PUT parent update fallback",
+                key,
+                issue_project_key or "",
+                issue_type_id or "",
+            )
+        payload = {"fields": {}}
+        if clear_parent:
+            payload["fields"]["parent"] = None
+        elif parent_key:
+            payload["fields"]["parent"] = {"key": parent_key}
+        try:
+            result, status = self._request("PUT", f"/rest/api/3/issue/{key}", payload)
+            logger.info(
+                "%s",
+                self._format_block(
+                    "calling JIRA API",
+                    "\n".join(
+                        [
+                            f"PUT {self.base_url}/rest/api/3/issue/{key}",
+                            self._format_payload(payload),
+                            f"RESPONSE {status} - OK",
+                            self._format_payload(result),
+                        ]
+                    ),
+                ),
+            )
+            return status, result if isinstance(result, dict) else None
+        except Exception:
+            logger.exception("Failed to update Jira issue parent %s", key)
             return None, None
 
     # Handles the get_projects function logic.

@@ -37,29 +37,11 @@ hash_file() {
 compute_frontend_source_hash() {
   (
     cd "$FRONTEND_DIR"
-    local sources=(
-      "index.html"
-      "scripts"
-      "styles"
-      "assets"
-      "tsconfig.json"
-      "tsconfig.build.json"
-      "package.json"
-      "package-lock.json"
-    )
     local files=()
-    local source
-    for source in "${sources[@]}"; do
-      if [[ -f "$source" ]]; then
-        files+=("$source")
-        continue
-      fi
-      if [[ -d "$source" ]]; then
-        while IFS= read -r file; do
-          files+=("$file")
-        done < <(find "$source" -type f | LC_ALL=C sort)
-      fi
-    done
+    # Rebuild frontend only when TypeScript sources change.
+    while IFS= read -r file; do
+      files+=("$file")
+    done < <(find scripts -type f \( -name "*.ts" -o -name "*.tsx" \) | LC_ALL=C sort)
     if [[ "${#files[@]}" -eq 0 ]]; then
       echo ""
       return

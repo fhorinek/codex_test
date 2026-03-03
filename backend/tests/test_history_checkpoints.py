@@ -309,6 +309,69 @@ class HistoryCheckpointHelpersTests(unittest.TestCase):
         self.assertFalse((self.history_dir / old_key).exists())
         self.assertEqual(server.read_history_checkpoint(new_key, checkpoint["id"]), "v1")
 
+    def test_history_and_ystore_keys_use_plain_canonical_path(self):
+        self.assertEqual(
+            server.history_key_from_space_canonical_path("team/demo_space"),
+            "team/demo_space",
+        )
+        self.assertEqual(
+            server.ystore_key_for_space(
+                "demo_space",
+                users=server.load_users_store(),
+                space_path_hint="team/demo_space",
+            ),
+            "team/demo_space",
+        )
+
+    def test_personal_space_history_and_ystore_use_foldered_storage_path(self):
+        users = server.load_users_store()
+        (self.spaces_dir / "personal").mkdir(parents=True, exist_ok=True)
+        (self.spaces_dir / "personal" / "admin.txt").write_text("personal", encoding="utf-8")
+
+        self.assertEqual(
+            server.history_key_for_space("admin", users, space_path_hint="admin"),
+            "personal/admin",
+        )
+        self.assertEqual(
+            server.ystore_key_for_space("admin", users=users, space_path_hint="admin"),
+            "personal/admin",
+        )
+        self.assertEqual(
+            server.ystore_path("admin", users=users, space_path_hint="admin"),
+            self.ystore_dir / "personal" / "admin.ystore",
+        )
+
+    def test_hashed_like_space_filename_is_kept_as_literal_space_id(self):
+        source = self.spaces_dir / "amlyYV90ZXN0.txt"
+        source.write_text("content", encoding="utf-8")
+
+        entries = server.list_space_entries(server.load_users_store())
+
+        self.assertTrue(source.exists())
+        self.assertFalse((self.spaces_dir / "jira_test.txt").exists())
+        self.assertIn("amlyYV90ZXN0", {entry.get("path") for entry in entries})
+
+    def test_ystore_path_does_not_migrate_hashed_legacy_filename(self):
+        legacy_store = self.ystore_dir / "ZGVtb19zcGFjZQ.ystore"
+        legacy_store.write_text("legacy ystore marker", encoding="utf-8")
+
+        resolved = server.ystore_path("demo_space", users=server.load_users_store())
+
+        self.assertEqual(resolved, self.ystore_dir / "demo_space.ystore")
+        self.assertFalse(resolved.exists())
+        self.assertTrue(legacy_store.exists())
+
+    def test_history_space_dir_does_not_migrate_hashed_legacy_directory(self):
+        legacy_dir = self.history_dir / "ZGVtb19zcGFjZQ"
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+        (legacy_dir / "index.json").write_text('{"checkpoints":[]}', encoding="utf-8")
+
+        resolved_dir = server.history_space_dir("demo_space")
+
+        self.assertEqual(resolved_dir, self.history_dir / "demo_space")
+        self.assertFalse(resolved_dir.exists())
+        self.assertTrue(legacy_dir.exists())
+
     def test_duplicate_space_names_in_different_folders_are_listed_and_read_by_path(self):
         users = server.load_users_store()
         admin = server.user_record_to_auth("admin", users["admin"])
@@ -324,8 +387,8 @@ class HistoryCheckpointHelpersTests(unittest.TestCase):
             ["demo_space", "team/demo_space"],
         )
 
-        root_response = server.read_space("demo_space", path="demo_space", user=admin)
-        team_response = server.read_space("demo_space", path="team/demo_space", user=admin)
+        root_response = server.read_space("demo_space", user=admin)
+        team_response = server.read_space("team/demo_space", user=admin)
         self.assertEqual(root_response.body.decode("utf-8"), "root version")
         self.assertEqual(team_response.body.decode("utf-8"), "team version")
 

@@ -68,9 +68,44 @@ class JiraClientTests(unittest.TestCase):
         self.assertEqual(method, "GET")
         self.assertIn("timeoriginalestimate", path)
         self.assertIn("timetracking", path)
+        self.assertIn("project", path)
 
         with patch.object(self.client, "_request", side_effect=RuntimeError("boom")):
             data, status = self.client.get_issue("KAN-1")
+        self.assertIsNone(data)
+        self.assertIsNone(status)
+
+    def test_get_issue_editmeta_handles_success_and_failure(self):
+        with patch.object(self.client, "_request", return_value=({"fields": {}}, 200)) as mocked:
+            data, status = self.client.get_issue_editmeta("KAN-1")
+        self.assertEqual(data, {"fields": {}})
+        self.assertEqual(status, 200)
+        mocked.assert_called_once_with("GET", "/rest/api/3/issue/KAN-1/editmeta")
+
+        with patch.object(self.client, "_request", return_value=(["bad"], 200)):
+            data, status = self.client.get_issue_editmeta("KAN-1")
+        self.assertIsNone(data)
+        self.assertEqual(status, 200)
+
+        with patch.object(self.client, "_request", side_effect=RuntimeError("boom")):
+            data, status = self.client.get_issue_editmeta("KAN-1")
+        self.assertIsNone(data)
+        self.assertIsNone(status)
+
+    def test_get_bulk_operation_progress_handles_success_and_failure(self):
+        with patch.object(self.client, "_request", return_value=({"status": "COMPLETE"}, 200)) as mocked:
+            data, status = self.client.get_bulk_operation_progress("123")
+        self.assertEqual(data, {"status": "COMPLETE"})
+        self.assertEqual(status, 200)
+        mocked.assert_called_once_with("GET", "/rest/api/3/bulk/queue/123")
+
+        with patch.object(self.client, "_request", return_value=(["bad"], 200)):
+            data, status = self.client.get_bulk_operation_progress("123")
+        self.assertIsNone(data)
+        self.assertEqual(status, 200)
+
+        with patch.object(self.client, "_request", side_effect=RuntimeError("boom")):
+            data, status = self.client.get_bulk_operation_progress("123")
         self.assertIsNone(data)
         self.assertIsNone(status)
 
@@ -144,6 +179,96 @@ class JiraClientTests(unittest.TestCase):
         method, path, payload = mocked.call_args.args
         self.assertEqual((method, path), ("PUT", "/rest/api/3/issue/KAN-1"))
         self.assertEqual(payload["fields"]["timetracking"], {"originalEstimate": None})
+
+    def test_update_issue_type_builds_payload_and_handles_failure(self):
+        with patch.object(self.client, "_request", return_value=({}, 204)) as mocked:
+            status, result = self.client.update_issue_type(
+                "KAN-1",
+                "Bug",
+                parent_key="KAN-9",
+                clear_parent=False,
+            )
+        self.assertEqual(status, 204)
+        self.assertEqual(result, {})
+        method, path, payload = mocked.call_args.args
+        self.assertEqual((method, path), ("PUT", "/rest/api/3/issue/KAN-1"))
+        self.assertEqual(payload["fields"]["issuetype"], {"name": "Bug"})
+        self.assertEqual(payload["fields"]["parent"], {"key": "KAN-9"})
+
+        with patch.object(self.client, "_request", return_value=({}, 204)) as mocked:
+            status, result = self.client.update_issue_type(
+                "KAN-1",
+                "Task",
+                clear_parent=True,
+            )
+        self.assertEqual(status, 204)
+        self.assertEqual(result, {})
+        method, path, payload = mocked.call_args.args
+        self.assertEqual((method, path), ("PUT", "/rest/api/3/issue/KAN-1"))
+        self.assertEqual(payload["fields"]["issuetype"], {"name": "Task"})
+        self.assertIsNone(payload["fields"]["parent"])
+
+        with patch.object(self.client, "_request", side_effect=RuntimeError("boom")):
+            status, result = self.client.update_issue_type("KAN-1", "Task")
+        self.assertIsNone(status)
+        self.assertIsNone(result)
+
+    def test_update_issue_parent_builds_payload_and_handles_failure(self):
+        with patch.object(self.client, "_request", return_value=({}, 204)) as mocked:
+            status, result = self.client.update_issue_parent(
+                "KAN-1",
+                parent_key="KAN-9",
+                clear_parent=False,
+            )
+        self.assertEqual(status, 204)
+        self.assertEqual(result, {})
+        method, path, payload = mocked.call_args.args
+        self.assertEqual((method, path), ("PUT", "/rest/api/3/issue/KAN-1"))
+        self.assertEqual(payload["fields"]["parent"], {"key": "KAN-9"})
+
+        with patch.object(self.client, "_request", return_value=({}, 204)) as mocked:
+            status, result = self.client.update_issue_parent(
+                "KAN-1",
+                clear_parent=True,
+            )
+        self.assertEqual(status, 204)
+        self.assertEqual(result, {})
+        method, path, payload = mocked.call_args.args
+        self.assertEqual((method, path), ("PUT", "/rest/api/3/issue/KAN-1"))
+        self.assertIsNone(payload["fields"]["parent"])
+
+        with patch.object(self.client, "_request", side_effect=RuntimeError("boom")):
+            status, result = self.client.update_issue_parent("KAN-1", parent_key="KAN-9")
+        self.assertIsNone(status)
+        self.assertIsNone(result)
+
+    def test_update_issue_parent_uses_bulk_move_when_context_available(self):
+        with patch.object(self.client, "_request", return_value=({"taskId": "123"}, 201)) as mocked:
+            status, result = self.client.update_issue_parent(
+                "KAN-1",
+                parent_key="KAN-9",
+                issue_project_key="KAN",
+                issue_type_id="10008",
+            )
+        self.assertEqual(status, 201)
+        self.assertEqual(result, {"taskId": "123"})
+        method, path, payload = mocked.call_args.args
+        self.assertEqual((method, path), ("POST", "/rest/api/3/bulk/issues/move"))
+        self.assertFalse(payload["sendBulkNotification"])
+        mapping = payload["targetToSourcesMapping"]
+        self.assertEqual(
+            mapping,
+            {
+                "KAN,10008,KAN-9": {
+                    "issueIdsOrKeys": ["KAN-1"],
+                    "inferClassificationDefaults": True,
+                    "inferFieldDefaults": True,
+                    "inferStatusDefaults": True,
+                    "inferSubtaskTypeDefault": True,
+                    "targetMandatoryFields": [],
+                }
+            },
+        )
 
     def test_get_project_statuses_dedupes_and_validates_shape(self):
         api_payload = [

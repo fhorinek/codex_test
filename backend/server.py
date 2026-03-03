@@ -213,6 +213,33 @@ def normalize_folder_name(value: Any) -> str:
     return "/".join(parts)
 
 
+# Handles the normalize_canonical_space_path function logic.
+# Input: value: str.
+# Output: str.
+def normalize_canonical_space_path(value: str) -> str:
+    canonical = normalize_folder_name(value)
+    if canonical:
+        return canonical
+    try:
+        return sanitize_space(value)
+    except HTTPException:
+        pass
+    return ""
+
+
+# Handles the canonical_space_file_path function logic.
+# Input: canonical_space_path: str.
+# Output: Path.
+def canonical_space_file_path(canonical_space_path: str) -> Path:
+    canonical = normalize_canonical_space_path(canonical_space_path)
+    if not canonical:
+        raise HTTPException(status_code=400, detail="Invalid canonical space path.")
+    parts = canonical.split("/")
+    if len(parts) == 1:
+        return SPACES_DIR / f"{parts[0]}.txt"
+    return SPACES_DIR.joinpath(*parts[:-1]) / f"{parts[-1]}.txt"
+
+
 # Handles the is_personal_folder_name function logic.
 # Input: folder_name: str.
 # Output: bool.
@@ -453,8 +480,9 @@ def _cleanup_sessions(data: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], 
         last_space = payload.get("last_space")
         if isinstance(last_space, str):
             candidate = last_space.strip()
-            if candidate and re.fullmatch(SPACE_ID_RE, candidate):
-                session_payload["last_space"] = candidate
+            normalized = normalize_folder_name(candidate)
+            if normalized:
+                session_payload["last_space"] = normalized
             elif candidate:
                 changed = True
         elif last_space is not None:
@@ -580,12 +608,17 @@ def get_session_last_space(token: Optional[str], auth: AuthUser) -> str:
                 data["sessions"] = sessions
                 _save_sessions_data(data)
             return ""
-        if not re.fullmatch(SPACE_ID_RE, candidate):
+        normalized_candidate = normalize_folder_name(candidate)
+        if not normalized_candidate:
             payload.pop("last_space", None)
             data["sessions"] = sessions
             _save_sessions_data(data)
             return ""
-        if not space_path(candidate).exists() or not can_access_space(auth, candidate):
+        safe_id = normalized_candidate.split("/")[-1]
+        if (
+            not space_path(safe_id, space_path_hint=normalized_candidate).exists()
+            or not can_access_space(auth, safe_id, space_path_hint=normalized_candidate)
+        ):
             payload.pop("last_space", None)
             data["sessions"] = sessions
             _save_sessions_data(data)
@@ -593,14 +626,17 @@ def get_session_last_space(token: Optional[str], auth: AuthUser) -> str:
         if changed:
             data["sessions"] = sessions
             _save_sessions_data(data)
-        return candidate
+        return normalized_candidate
 
 
 # Handles the set_session_last_space function logic.
 # Input: token: Optional[str], space_id: str.
 # Output: None.
-def set_session_last_space(token: Optional[str], space_id: str) -> None:
+def set_session_last_space(token: Optional[str], space_path_value: str) -> None:
     if not token:
+        return
+    normalized = normalize_folder_name(space_path_value)
+    if not normalized:
         return
     with SESSIONS_LOCK:
         data = _load_sessions_data()
@@ -612,8 +648,8 @@ def set_session_last_space(token: Optional[str], space_id: str) -> None:
                 _save_sessions_data(data)
             return
         current = payload.get("last_space")
-        if current != space_id:
-            payload["last_space"] = space_id
+        if current != normalized:
+            payload["last_space"] = normalized
             changed = True
         if changed:
             data["sessions"] = sessions
@@ -623,15 +659,19 @@ def set_session_last_space(token: Optional[str], space_id: str) -> None:
 # Handles the update_last_space_for_renamed_space function logic.
 # Input: source_id: str, target_id: str.
 # Output: None.
-def update_last_space_for_renamed_space(source_id: str, target_id: str) -> None:
+def update_last_space_for_renamed_space(source_space_path: str, target_space_path: str) -> None:
+    source_path = normalize_folder_name(source_space_path)
+    target_path = normalize_folder_name(target_space_path)
+    if not source_path or not target_path or source_path == target_path:
+        return
     with SESSIONS_LOCK:
         data = _load_sessions_data()
         sessions, changed = _cleanup_sessions(data)
         for payload in sessions.values():
             if not isinstance(payload, dict):
                 continue
-            if payload.get("last_space") == source_id:
-                payload["last_space"] = target_id
+            if payload.get("last_space") == source_path:
+                payload["last_space"] = target_path
                 changed = True
         if changed:
             data["sessions"] = sessions
@@ -641,14 +681,17 @@ def update_last_space_for_renamed_space(source_id: str, target_id: str) -> None:
 # Handles the clear_last_space_for_deleted_space function logic.
 # Input: space_id: str.
 # Output: None.
-def clear_last_space_for_deleted_space(space_id: str) -> None:
+def clear_last_space_for_deleted_space(space_path_value: str) -> None:
+    normalized = normalize_folder_name(space_path_value)
+    if not normalized:
+        return
     with SESSIONS_LOCK:
         data = _load_sessions_data()
         sessions, changed = _cleanup_sessions(data)
         for payload in sessions.values():
             if not isinstance(payload, dict):
                 continue
-            if payload.get("last_space") == space_id:
+            if payload.get("last_space") == normalized:
                 payload.pop("last_space", None)
                 changed = True
         if changed:
@@ -685,15 +728,16 @@ def _normalize_users_store(raw_users: Any) -> Tuple[Dict[str, Dict[str, Any]], b
 def ensure_personal_space(username: str) -> None:
     ensure_personal_folder()
     target = personal_space_path(username)
-    existing = find_space_file(username)
-    if existing and existing != target and not target.exists():
+    # Migrate only a root-level legacy personal file; do not touch same-name spaces in folders.
+    legacy_root = SPACES_DIR / f"{sanitize_space(username)}.txt"
+    if legacy_root.exists() and legacy_root != target and not target.exists():
         try:
-            existing.rename(target)
+            legacy_root.rename(target)
         except Exception:
             logger.exception(
                 "Failed to move personal space %s from %s to %s",
                 username,
-                existing,
+                legacy_root,
                 target,
             )
     if not target.exists():
@@ -837,31 +881,6 @@ def folder_from_space_path(path: Path) -> str:
     return folder_name
 
 
-# Handles the scan_space_files function logic.
-# Input: none.
-# Output: Dict[str, Path].
-def scan_space_files() -> Dict[str, Path]:
-    mapping: Dict[str, Path] = {}
-    preferred_personal = personal_folder_path()
-    for path in iter_space_files():
-        space_id = normalize_space_id_from_filename(path)
-        if not space_id:
-            continue
-        existing = mapping.get(space_id)
-        if existing:
-            if existing.parent != preferred_personal and path.parent == preferred_personal:
-                mapping[space_id] = path
-            logger.warning(
-                "Duplicate space file for %s: keeping %s and ignoring %s",
-                space_id,
-                mapping[space_id],
-                path,
-            )
-            continue
-        mapping[space_id] = path
-    return mapping
-
-
 # Handles the canonical_space_path_for_file function logic.
 # Input: path: Path, users: Optional[Dict[str, Dict[str, Any]]] = None.
 # Output: str.
@@ -871,9 +890,9 @@ def canonical_space_path_for_file(path: Path, users: Optional[Dict[str, Dict[str
         return ""
     users = users or load_users_store()
     if space_id in users and path.parent == personal_folder_path():
-        return space_id
+        return f"{PERSONAL_FOLDER_NAME}/{space_id}"
     folder_name = folder_from_space_path(path)
-    if not folder_name or is_personal_folder_name(folder_name):
+    if not folder_name:
         return space_id
     return f"{folder_name}/{space_id}"
 
@@ -893,8 +912,6 @@ def list_space_entries(users: Optional[Dict[str, Dict[str, Any]]] = None) -> Lis
             continue
         folder_name = folder_from_space_path(path)
         personal = space_id in users and path.parent == personal_folder_path()
-        if is_personal_folder_name(folder_name):
-            folder_name = ""
         entries.append(
             {
                 "id": space_id,
@@ -943,7 +960,14 @@ def normalize_space_id_from_filename(path: Path) -> str:
 # Output: Optional[Path].
 def find_space_file(space_id: str) -> Optional[Path]:
     safe_id = sanitize_space(space_id)
-    return scan_space_files().get(safe_id)
+    matches: List[Path] = []
+    for path in iter_space_files():
+        if normalize_space_id_from_filename(path) != safe_id:
+            continue
+        matches.append(path)
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 # Handles the resolve_space_file function logic.
@@ -1184,7 +1208,7 @@ def can_access_space(
     space_path_hint: Optional[str] = None,
 ) -> bool:
     users = users or load_users_store()
-    if is_personal_space(space_id, users):
+    if is_personal_space(space_id, users, space_path_hint=space_path_hint):
         if auth.role == "admin":
             return True
         return auth.username == space_id
@@ -1246,9 +1270,17 @@ def serialize_permissions(auth: AuthUser) -> Dict[str, bool]:
 def is_personal_space(
     space_id: str,
     users: Optional[Dict[str, Dict[str, Any]]] = None,
+    *,
+    space_path_hint: Optional[str] = None,
 ) -> bool:
+    safe_id = sanitize_space(space_id)
+    normalized_hint = normalize_folder_name(space_path_hint)
+    if normalized_hint:
+        return normalized_hint == f"{PERSONAL_FOLDER_NAME}/{safe_id}"
     users = users or load_users_store()
-    return space_id in users
+    if safe_id not in users:
+        return False
+    return personal_space_path(safe_id).exists()
 
 
 # Handles the validate_user_target_permissions function logic.
@@ -1315,9 +1347,11 @@ def user_view(
 # Input: auth: AuthUser.
 # Output: List[str].
 def list_visible_spaces(auth: AuthUser) -> List[str]:
-    users = load_users_store()
-    spaces = sorted(existing_space_ids())
-    return [space_id for space_id in spaces if can_access_space(auth, space_id, users)]
+    return [
+        entry["path"]
+        for entry in list_visible_space_entries(auth)
+        if isinstance(entry.get("path"), str)
+    ]
 
 
 # Handles the list_visible_space_entries function logic.
@@ -1340,40 +1374,18 @@ def list_visible_space_entries(auth: AuthUser) -> List[Dict[str, Any]]:
 # Input: entries: List[Dict[str, Any]].
 # Output: List[Dict[str, Any]].
 def filter_history_key_alias_space_entries(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    # Hide legacy/accidental space files named with a history storage key when the real
-    # canonical space path is already present in the listing.
-    history_key_matches: Dict[str, Set[str]] = {}
-    for entry in entries:
-        path_value = entry.get("path")
-        if not isinstance(path_value, str) or not path_value.strip():
-            continue
-        canonical_path = normalize_folder_name(path_value) or sanitize_space(path_value)
-        if not canonical_path:
-            continue
-        key = history_key_from_space_canonical_path(canonical_path)
-        history_key_matches.setdefault(key, set()).add(canonical_path)
-
-    filtered: List[Dict[str, Any]] = []
-    for entry in entries:
-        space_id = entry.get("id")
-        path_value = entry.get("path")
-        canonical_path = ""
-        if isinstance(path_value, str) and path_value.strip():
-            canonical_path = normalize_folder_name(path_value) or sanitize_space(path_value)
-        if not isinstance(space_id, str) or not space_id:
-            continue
-        matching_paths = history_key_matches.get(space_id, set())
-        if any(candidate != canonical_path for candidate in matching_paths):
-            continue
-        filtered.append(entry)
-    return filtered
+    return list(entries)
 
 
 # Handles the existing_space_ids function logic.
 # Input: none.
 # Output: Set[str].
 def existing_space_ids() -> Set[str]:
-    return set(scan_space_files().keys())
+    return {
+        entry.get("id")
+        for entry in list_space_entries(load_users_store())
+        if isinstance(entry.get("id"), str)
+    }
 
 
 # Handles the ensure_space_exists function logic.
@@ -1452,38 +1464,67 @@ def space_path(
     return SPACES_DIR / f"{safe}.txt"
 
 
+# Handles the storage_path_for_space function logic.
+# Input: space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None.
+# Output: str.
+def storage_path_for_space(
+    space_id: str,
+    *,
+    users: Optional[Dict[str, Dict[str, Any]]] = None,
+    space_path_hint: Optional[str] = None,
+) -> str:
+    safe = sanitize_space(space_id)
+    users = users or load_users_store()
+    normalized_hint = normalize_folder_name(space_path_hint)
+    resolved = resolve_space_file(safe, users=users, space_path_hint=normalized_hint)
+    if resolved:
+        try:
+            rel = resolved.relative_to(SPACES_DIR).as_posix()
+        except Exception:
+            rel = ""
+        if rel.endswith(".txt"):
+            rel_stem = rel[:-4].strip("/")
+            rel_normalized = normalize_folder_name(rel_stem)
+            if rel_normalized and rel_normalized.split("/")[-1] == safe:
+                return rel_normalized
+    if normalized_hint and normalized_hint.split("/")[-1] == safe:
+        return normalized_hint
+    canonical = space_access_path(safe, users)
+    return normalize_canonical_space_path(canonical)
+
+
 # Handles the ystore_key_for_space function logic.
 # Input: space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None.
 # Output: str.
 def ystore_key_for_space(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None) -> str:
-    safe = sanitize_space(space_id)
-    normalized_hint = normalize_folder_name(space_path_hint)
-    if normalized_hint and normalized_hint.split("/")[-1] == safe:
-        return history_key_from_space_canonical_path(normalized_hint)
-    users = users or load_users_store()
-    canonical = space_access_path(safe, users)
-    return history_key_from_space_canonical_path(canonical)
+    return normalize_canonical_space_path(
+        storage_path_for_space(space_id, users=users, space_path_hint=space_path_hint)
+    )
 
 
 # Handles the ystore_path function logic.
 # Input: space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None.
 # Output: Path.
 def ystore_path(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None) -> Path:
-    key = ystore_key_for_space(space_id, users=users, space_path_hint=space_path_hint)
-    return YSTORE_DIR / f"{key}.ystore"
+    key = normalize_canonical_space_path(
+        ystore_key_for_space(space_id, users=users, space_path_hint=space_path_hint)
+    )
+    if not key:
+        raise HTTPException(status_code=400, detail="Invalid ystore key.")
+    parts = key.split("/")
+    target = YSTORE_DIR.joinpath(*parts[:-1], f"{parts[-1]}.ystore")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 # Handles the history_key_from_space_canonical_path function logic.
 # Input: space_path_value: str.
 # Output: str.
 def history_key_from_space_canonical_path(space_path_value: str) -> str:
-    canonical = normalize_folder_name(space_path_value)
+    canonical = normalize_canonical_space_path(space_path_value)
     if not canonical:
-        canonical = sanitize_space(space_path_value)
-    # Filesystem-safe and stable for a given canonical path.
-    raw = canonical.encode("utf-8")
-    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-    return encoded or "root"
+        raise HTTPException(status_code=400, detail="Invalid history key.")
+    return canonical
 
 
 # Handles the history_key_for_space function logic.
@@ -1495,13 +1536,9 @@ def history_key_for_space(
     *,
     space_path_hint: Optional[str] = None,
 ) -> str:
-    safe_id = sanitize_space(space_id)
-    normalized_hint = normalize_folder_name(space_path_hint)
-    if normalized_hint and normalized_hint.split("/")[-1] == safe_id:
-        return history_key_from_space_canonical_path(normalized_hint)
-    users = users or load_users_store()
-    canonical = space_access_path(safe_id, users)
-    return history_key_from_space_canonical_path(canonical)
+    return history_key_from_space_canonical_path(
+        storage_path_for_space(space_id, users=users, space_path_hint=space_path_hint)
+    )
 
 
 # Handles the move_history_for_space_path_change function logic.
@@ -1528,6 +1565,7 @@ def move_history_for_space_path_change(old_space_path: str, new_space_path: str)
     with HISTORY_LOCK:
         if not source_dir.exists():
             return
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
         if not target_dir.exists():
             source_dir.rename(target_dir)
             return
@@ -1567,9 +1605,11 @@ def move_history_for_space_path_change(old_space_path: str, new_space_path: str)
 # Input: space_key: str.
 # Output: Path.
 def history_space_dir(space_key: str) -> Path:
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", space_key or ""):
+    canonical = normalize_canonical_space_path(space_key)
+    if not canonical:
         raise HTTPException(status_code=400, detail="Invalid history key.")
-    return HISTORY_DIR / space_key
+    parts = canonical.split("/")
+    return HISTORY_DIR.joinpath(*parts)
 
 
 # Handles the history_index_path function logic.
@@ -1946,6 +1986,19 @@ def normalize_space_path_hint_for_id(space_id: str, value: Any) -> str:
     if normalized.split("/")[-1] != safe_id:
         raise HTTPException(status_code=400, detail="Space path does not match space id.")
     return normalized
+
+
+# Handles the parse_space_api_path function logic.
+# Input: space_path_value: Any.
+# Output: Tuple[str, str].
+def parse_space_api_path(space_path_value: Any) -> Tuple[str, str]:
+    normalized = normalize_folder_name(space_path_value)
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Invalid space path.")
+    safe_id = sanitize_space(normalized.split("/")[-1])
+    if normalized.split("/")[-1] != safe_id:
+        raise HTTPException(status_code=400, detail="Invalid space path.")
+    return safe_id, normalized
 
 
 # Handles the disconnect_space_clients function logic.
@@ -2610,9 +2663,9 @@ def delete_space_folder(
 # Handles the set_space_folder function logic.
 # Input: space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
-@app.put("/api/spaces/{space_id}/folder")
+@app.put("/api/spaces/{space_path_value:path}/folder")
 def set_space_folder(
-    space_id: str,
+    space_path_value: str,
     payload: Dict[str, Any] = Body(default={}),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
@@ -2620,11 +2673,10 @@ def set_space_folder(
         raise HTTPException(status_code=403, detail="Not allowed.")
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid folder payload.")
-    safe_id = sanitize_space(space_id)
-    space_path_hint = normalize_space_path_hint_for_id(safe_id, payload.get("path") if isinstance(payload, dict) else None)
+    safe_id, space_path_hint = parse_space_api_path(space_path_value)
     if not space_path(safe_id, space_path_hint=space_path_hint).exists():
         raise HTTPException(status_code=404, detail="Space not found.")
-    if is_personal_space(safe_id):
+    if is_personal_space(safe_id, space_path_hint=space_path_hint):
         raise HTTPException(
             status_code=400,
             detail="Personal spaces stay in the personal folder.",
@@ -2703,14 +2755,12 @@ def set_space_folder(
 # Handles the read_space_history function logic.
 # Input: space_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
-@app.get("/api/spaces/{space_id}/history")
+@app.get("/api/spaces/{space_path_value:path}/history")
 def read_space_history(
-    space_id: str,
-    path: Optional[str] = Query(default=None),
+    space_path_value: str,
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
-    safe_id = sanitize_space(space_id)
-    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    safe_id, space_path_hint = parse_space_api_path(space_path_value)
     ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
     if not space_path(safe_id, space_path_hint=space_path_hint).exists():
         raise HTTPException(status_code=404, detail="Space not found.")
@@ -2720,15 +2770,13 @@ def read_space_history(
 # Handles the read_space_history_checkpoint function logic.
 # Input: space_id: str, checkpoint_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
 # Output: Response.
-@app.get("/api/spaces/{space_id}/history/{checkpoint_id}")
+@app.get("/api/spaces/{space_path_value:path}/history/{checkpoint_id}")
 def read_space_history_checkpoint(
-    space_id: str,
+    space_path_value: str,
     checkpoint_id: str,
-    path: Optional[str] = Query(default=None),
     user: AuthUser = Depends(require_auth),
 ) -> Response:
-    safe_id = sanitize_space(space_id)
-    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    safe_id, space_path_hint = parse_space_api_path(space_path_value)
     ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
     if not space_path(safe_id, space_path_hint=space_path_hint).exists():
         raise HTTPException(status_code=404, detail="Space not found.")
@@ -2742,16 +2790,15 @@ def read_space_history_checkpoint(
 # Handles the revert_space_history_checkpoint function logic.
 # Input: space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
-@app.post("/api/spaces/{space_id}/history/revert")
+@app.post("/api/spaces/{space_path_value:path}/history/revert")
 async def revert_space_history_checkpoint(
-    space_id: str,
+    space_path_value: str,
     payload: Dict[str, Any] = Body(default={}),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid history revert payload.")
-    safe_id = sanitize_space(space_id)
-    space_path_hint = normalize_space_path_hint_for_id(safe_id, payload.get("path") if isinstance(payload, dict) else None)
+    safe_id, space_path_hint = parse_space_api_path(space_path_value)
     ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
     target_path = space_path(safe_id, space_path_hint=space_path_hint)
     if not target_path.exists():
@@ -2798,16 +2845,15 @@ async def revert_space_history_checkpoint(
 # Handles the tag_space_history_checkpoint function logic.
 # Input: space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
-@app.post("/api/spaces/{space_id}/history/tag")
+@app.post("/api/spaces/{space_path_value:path}/history/tag")
 def tag_space_history_checkpoint(
-    space_id: str,
+    space_path_value: str,
     payload: Dict[str, Any] = Body(default={}),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail="Invalid history tag payload.")
-    safe_id = sanitize_space(space_id)
-    space_path_hint = normalize_space_path_hint_for_id(safe_id, payload.get("path") if isinstance(payload, dict) else None)
+    safe_id, space_path_hint = parse_space_api_path(space_path_value)
     ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
     if not space_path(safe_id, space_path_hint=space_path_hint).exists():
         raise HTTPException(status_code=404, detail="Space not found.")
@@ -2929,14 +2975,12 @@ def write_jira_config(
 # Handles the read_space function logic.
 # Input: space_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
 # Output: Response.
-@app.get("/api/spaces/{space_id}")
+@app.get("/api/spaces/{space_path_value:path}/")
 def read_space(
-    space_id: str,
-    path: Optional[str] = Query(default=None),
+    space_path_value: str,
     user: AuthUser = Depends(require_auth),
 ) -> Response:
-    safe_id = sanitize_space(space_id)
-    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    safe_id, space_path_hint = parse_space_api_path(space_path_value)
     ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
     target_path = space_path(safe_id, space_path_hint=space_path_hint)
     if not target_path.exists():
@@ -2947,15 +2991,13 @@ def read_space(
 # Handles the write_space function logic.
 # Input: space_id: str, content: str = Body(default="", media_type="text/plain"), path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
-@app.put("/api/spaces/{space_id}")
+@app.put("/api/spaces/{space_path_value:path}/")
 async def write_space(
-    space_id: str,
+    space_path_value: str,
     content: str = Body(default="", media_type="text/plain"),
-    path: Optional[str] = Query(default=None),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
-    safe_id = sanitize_space(space_id)
-    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    safe_id, space_path_hint = parse_space_api_path(space_path_value)
     ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
     target_path = space_path(safe_id, space_path_hint=space_path_hint)
     if not target_path.exists():
@@ -2980,32 +3022,38 @@ async def write_space(
 # Handles the create_space function logic.
 # Input: space_id: str, user: AuthUser = Depends(require_auth).
 # Output: Dict[str, Any].
-@app.post("/api/spaces/{space_id}")
-def create_space(space_id: str, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+@app.post("/api/spaces/{space_path_value:path}/")
+def create_space(space_path_value: str, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     if not can_manage_spaces(user):
         raise HTTPException(status_code=403, detail="Not allowed.")
-    safe_id = sanitize_space(space_id)
-    path = space_path(safe_id)
-    if path.exists():
+    safe_id, canonical_path = parse_space_api_path(space_path_value)
+    folder_name = normalize_folder_name("/".join(canonical_path.split("/")[:-1]))
+    if folder_name and is_personal_folder_name(folder_name):
+        raise HTTPException(status_code=400, detail="The personal folder is reserved.")
+    if folder_name:
+        folder = folder_path(folder_name)
+        if not folder.exists() or not folder.is_dir():
+            raise HTTPException(status_code=404, detail="Folder not found.")
+    target_path = canonical_space_file_path(canonical_path)
+    if target_path.exists():
         raise HTTPException(status_code=409, detail="Space already exists.")
-    path.write_text("", encoding="utf-8")
-    return {"ok": True}
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text("", encoding="utf-8")
+    return {"ok": True, "id": safe_id, "path": canonical_path}
 
 
 # Handles the delete_space function logic.
 # Input: space_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
-@app.delete("/api/spaces/{space_id}")
+@app.delete("/api/spaces/{space_path_value:path}/")
 async def delete_space(
-    space_id: str,
-    path: Optional[str] = Query(default=None),
+    space_path_value: str,
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
     if not can_manage_spaces(user):
         raise HTTPException(status_code=403, detail="Not allowed.")
-    safe_id = sanitize_space(space_id)
-    request_path_hint = normalize_space_path_hint_for_id(safe_id, path)
-    if is_personal_space(safe_id):
+    safe_id, request_path_hint = parse_space_api_path(space_path_value)
+    if is_personal_space(safe_id, space_path_hint=request_path_hint):
         raise HTTPException(status_code=400, detail="Personal spaces cannot be deleted.")
     users = load_users_store()
     target_path = resolve_space_file(safe_id, users=users, space_path_hint=request_path_hint)
@@ -3029,7 +3077,7 @@ async def delete_space(
         target_path.unlink()
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Space not found.")
-    clear_last_space_for_deleted_space(safe_id)
+    clear_last_space_for_deleted_space(canonical_path)
     store_path = ystore_path(safe_id, users=users, space_path_hint=canonical_path)
     if store_path.exists():
         store_path.unlink()
@@ -3040,20 +3088,19 @@ async def delete_space(
 # Handles the rename_space function logic.
 # Input: space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
-@app.post("/api/spaces/{space_id}/rename")
+@app.post("/api/spaces/{space_path_value:path}/rename")
 def rename_space(
-    space_id: str,
+    space_path_value: str,
     payload: Dict[str, Any] = Body(default={}),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
     if not can_manage_spaces(user):
         raise HTTPException(status_code=403, detail="Not allowed.")
-    source_id = sanitize_space(space_id)
-    if is_personal_space(source_id):
+    source_id, source_path_hint = parse_space_api_path(space_path_value)
+    if is_personal_space(source_id, space_path_hint=source_path_hint):
         raise HTTPException(status_code=400, detail="Personal spaces cannot be renamed.")
     users = load_users_store()
-    source_path_hint = normalize_space_path_hint_for_id(source_id, payload.get("path") if isinstance(payload, dict) else None)
-    old_space_path = source_path_hint or space_access_path(source_id, users)
+    old_space_path = source_path_hint
 
     old_folder = folder_for_space(source_id, users, space_path_hint=source_path_hint)
     source = space_path(source_id, users=users, space_path_hint=source_path_hint)
@@ -3067,11 +3114,6 @@ def rename_space(
     if not new_name:
         raise HTTPException(status_code=400, detail="Invalid space id.")
     target_id = sanitize_space(new_name)
-    if is_personal_space(target_id):
-        raise HTTPException(
-            status_code=400,
-            detail="Space id is reserved for a personal space.",
-        )
     target = source.with_name(f"{target_id}.txt")
     if target.exists():
         raise HTTPException(status_code=409, detail="Space already exists.")
@@ -3079,7 +3121,7 @@ def rename_space(
     new_space_path = f"{old_folder}/{target_id}" if old_folder else target_id
     update_access_paths_for_space_change(old_space_path, new_space_path)
     move_history_for_space_path_change(old_space_path, new_space_path)
-    update_last_space_for_renamed_space(source_id, target_id)
+    update_last_space_for_renamed_space(old_space_path, new_space_path)
     source_store = ystore_path(source_id, users=users, space_path_hint=old_space_path)
     target_store = ystore_path(target_id, users=users, space_path_hint=new_space_path)
     if source_store.exists():
@@ -3096,19 +3138,17 @@ def rename_space(
 # Handles the update_presence function logic.
 # Input: space_id: str, request: Request, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
-@app.post("/api/spaces/{space_id}/presence")
+@app.post("/api/spaces/{space_path_value:path}/presence")
 def update_presence(
-    space_id: str,
+    space_path_value: str,
     request: Request,
-    path: Optional[str] = Query(default=None),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
-    safe_id = sanitize_space(space_id)
-    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    safe_id, space_path_hint = parse_space_api_path(space_path_value)
     ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
     if not space_path(safe_id, space_path_hint=space_path_hint).exists():
         raise HTTPException(status_code=404, detail="Space not found.")
-    set_session_last_space(request.cookies.get(SESSION_COOKIE_NAME), safe_id)
+    set_session_last_space(request.cookies.get(SESSION_COOKIE_NAME), space_path_hint)
     mark_presence(safe_id, user.username, space_path_hint=space_path_hint)
     return {"ok": True}
 
@@ -3116,14 +3156,12 @@ def update_presence(
 # Handles the clear_presence function logic.
 # Input: space_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
-@app.delete("/api/spaces/{space_id}/presence")
+@app.delete("/api/spaces/{space_path_value:path}/presence")
 def clear_presence(
-    space_id: str,
-    path: Optional[str] = Query(default=None),
+    space_path_value: str,
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
-    safe_id = sanitize_space(space_id)
-    space_path_hint = normalize_space_path_hint_for_id(safe_id, path)
+    safe_id, space_path_hint = parse_space_api_path(space_path_value)
     ensure_space_access(user, safe_id, space_path_hint=space_path_hint)
     if not space_path(safe_id, space_path_hint=space_path_hint).exists():
         raise HTTPException(status_code=404, detail="Space not found.")
