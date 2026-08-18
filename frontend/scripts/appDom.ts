@@ -12,7 +12,12 @@ type AppDomSpecific = {
   appBootLoader: HTMLElement | null;
   appBootLoaderStatus: HTMLElement | null;
   topbarActions: HTMLElement | null;
+  mobileSearchToolbarControls: HTMLElement | null;
   mobileToolbarToggle: HTMLButtonElement | null;
+  searchOccurrenceControls: HTMLElement | null;
+  searchPrev: HTMLButtonElement | null;
+  searchNext: HTMLButtonElement | null;
+  searchOccurrenceCount: HTMLElement | null;
   searchName: HTMLInputElement | null;
   searchDescription: HTMLInputElement | null;
   searchTag: HTMLInputElement | null;
@@ -64,6 +69,7 @@ type AppDomSpecific = {
   legend: HTMLElement;
   divider: HTMLElement;
   kanbanDivider: HTMLElement;
+  kanbanNoState: HTMLElement | null;
   historyButton: HTMLButtonElement | null;
   responsivePaneBar: HTMLElement | null;
   mobilePaneTabs: HTMLElement | null;
@@ -113,8 +119,13 @@ function createAppDomRaw(doc: Document = document) {
     appBootLoader: doc.getElementById("app-boot-loader"),
     appBootLoaderStatus: doc.getElementById("app-boot-loader-status"),
     topbarActions: doc.getElementById("topbar-actions"),
+    mobileSearchToolbarControls: doc.getElementById("mobile-search-toolbar-controls"),
     mobileToolbarToggle: doc.getElementById("mobile-toolbar-toggle"),
     searchInput: doc.getElementById("search-input"),
+    searchOccurrenceControls: doc.getElementById("search-occurrence-controls"),
+    searchPrev: doc.getElementById("search-prev"),
+    searchNext: doc.getElementById("search-next"),
+    searchOccurrenceCount: doc.getElementById("search-occurrence-count"),
     searchName: doc.getElementById("search-name"),
     searchDescription: doc.getElementById("search-description"),
     searchTag: doc.getElementById("search-tag"),
@@ -201,7 +212,6 @@ function createAppDomRaw(doc: Document = document) {
     userDeleteConfirm: doc.getElementById("user-delete-confirm"),
     taskEditModal: doc.getElementById("task-edit-modal"),
     taskEditTitleInput: doc.getElementById("task-edit-title-input"),
-    taskEditJiraPill: doc.getElementById("task-edit-jira-pill"),
     taskEditPreview: doc.getElementById("task-edit-preview"),
     taskEditCode: doc.getElementById("task-edit-code"),
     taskEditDelete: doc.getElementById("task-edit-delete"),
@@ -268,10 +278,11 @@ function createAppDomRaw(doc: Document = document) {
     deleteModalMessage: doc.getElementById("delete-modal-message"),
     deleteConfirm: doc.getElementById("delete-confirm"),
     deleteCancel: doc.getElementById("delete-cancel"),
-    kanbanBoard: doc.getElementById("kanban-board"),
-    kanbanContent: doc.getElementById("kanban-content"),
-    kanbanDivider: doc.getElementById("kanban-divider"),
-    kanbanGroup: doc.getElementById("kanban-group"),
+  kanbanBoard: doc.getElementById("kanban-board"),
+  kanbanContent: doc.getElementById("kanban-content"),
+  kanbanDivider: doc.getElementById("kanban-divider"),
+  kanbanNoState: doc.getElementById("kanban-no-state"),
+  kanbanGroup: doc.getElementById("kanban-group"),
     graphPanel: doc.querySelector(".graph-panel"),
     legend: doc.querySelector(".legend"),
     tagList: doc.getElementById("tag-list"),

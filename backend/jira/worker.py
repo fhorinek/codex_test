@@ -6,6 +6,7 @@ import difflib
 import json
 import logging
 import re
+import select
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,7 +28,12 @@ if __package__ in (None, ""):
         build_issue_type_hierarchy_levels,
         from_adf,
     )
-    from jira.config import JiraConfig, load_jira_config
+    from jira.config import (
+        JiraConfig,
+        load_jira_config,
+        load_jira_worker_credentials,
+        load_users_config_data,
+    )
     from jira.space import (
         SpaceSession,
         add_reference_to_description,
@@ -54,7 +60,12 @@ else:
         build_issue_type_hierarchy_levels,
         from_adf,
     )
-    from .config import JiraConfig, load_jira_config
+    from .config import (
+        JiraConfig,
+        load_jira_config,
+        load_jira_worker_credentials,
+        load_users_config_data,
+    )
     from .space import (
         SpaceSession,
         add_reference_to_description,
@@ -78,7 +89,9 @@ else:
 SPACES_DIR = BACKEND_DIR / "spaces"
 
 # Stores the JIRA_SYNC_INTERVAL module constant.
-JIRA_SYNC_INTERVAL = 10
+JIRA_SYNC_INTERVAL = 300
+# Stores the JIRA_CHANGED_QUERY_OVERLAP_SECONDS module constant.
+JIRA_CHANGED_QUERY_OVERLAP_SECONDS = 300
 # Stores the JIRA_BULK_TASK_POLL_INTERVAL module constant.
 JIRA_BULK_TASK_POLL_INTERVAL = 1.0
 # Stores the JIRA_BULK_TASK_TIMEOUT_SECONDS module constant.
@@ -116,6 +129,8 @@ JIRA_MARKER_RE = re.compile(r"\[([A-Z][A-Z0-9]+(?:-\d+)?)\]")
 JIRA_ISSUE_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+-\d+$")
 # Stores the JIRA_PROJECT_KEY_RE module constant.
 JIRA_PROJECT_KEY_RE = re.compile(r"^[A-Z][A-Z0-9]+$")
+# Stores the SPACE_ID_RE module constant.
+SPACE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 space_entity_cache: Dict[str, Dict[str, Any]] = {}
 jira_entity_cache: Dict[str, Dict[str, Any]] = {}
@@ -158,6 +173,37 @@ async def run_blocking_io(func, *args: Any, **kwargs: Any) -> Any:
     if kwargs:
         return await loop.run_in_executor(None, lambda: func(*args, **kwargs))
     return await loop.run_in_executor(None, func, *args)
+
+
+# Handles the sleep_until_next_sync function logic.
+# Input: seconds: float.
+# Output: bool.
+async def sleep_until_next_sync(seconds: float) -> bool:
+    sleep_seconds = max(0.0, float(seconds or 0.0))
+    if sleep_seconds <= 0:
+        return False
+    if not sys.stdin or not sys.stdin.isatty():
+        await asyncio.sleep(sleep_seconds)
+        return False
+    logger.info("* Sleeping for %.0fs. Press Enter to sync now.", sleep_seconds)
+    deadline = time.monotonic() + sleep_seconds
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        readable, _, _ = await run_blocking_io(
+            select.select,
+            [sys.stdin],
+            [],
+            [],
+            min(remaining, 1.0),
+        )
+        if not readable:
+            continue
+        command = sys.stdin.readline()
+        if command.strip().lower() in {"", "r"}:
+            logger.info("* Sleep cancelled by user; syncing now and ignoring dirty status")
+            return True
 
 
 # Stores the TASK_LINE_RE module constant.
@@ -342,6 +388,148 @@ def extract_jira_project_hint(text: str) -> Optional[str]:
     if not JIRA_PROJECT_KEY_RE.fullmatch(value):
         return None
     return value
+
+
+# Handles the collect_task_jira_projects function logic.
+# Input: tasks: List[SpaceTask].
+# Output: Set[str].
+def collect_task_jira_projects(tasks: List["SpaceTask"]) -> Set[str]:
+    projects: Set[str] = set()
+    for task in tasks:
+        project = normalize_project_key(task.jira_project)
+        if not project and task.jira_key:
+            project = project_key_from_issue_key(task.jira_key)
+        if project:
+            projects.add(project)
+    return projects
+
+
+# Handles the format_jira_jql_timestamp function logic.
+# Input: timestamp: float.
+# Output: str.
+def format_jira_jql_timestamp(timestamp: float) -> str:
+    safe_timestamp = max(0.0, float(timestamp or 0.0))
+    return time.strftime("%Y/%m/%d %H:%M", time.gmtime(safe_timestamp))
+
+
+# Handles the websocket_error_status_code function logic.
+# Input: exc: BaseException.
+# Output: Optional[int].
+def websocket_error_status_code(exc: BaseException) -> Optional[int]:
+    seen: Set[int] = set()
+    current: Optional[BaseException] = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        for attr in ("status_code", "status"):
+            value = getattr(current, attr, None)
+            if isinstance(value, int):
+                return value
+        response = getattr(current, "response", None)
+        value = getattr(response, "status_code", None)
+        if isinstance(value, int):
+            return value
+        value = getattr(response, "status", None)
+        if isinstance(value, int):
+            return value
+        current = current.__cause__ or current.__context__
+    return None
+
+
+# Handles the is_inaccessible_space_error function logic.
+# Input: exc: BaseException.
+# Output: bool.
+def is_inaccessible_space_error(exc: BaseException) -> bool:
+    status_code = websocket_error_status_code(exc)
+    if status_code in {403, 404}:
+        return True
+    message = str(exc).lower()
+    return (
+        "http 403" in message
+        or "http 404" in message
+        or "status code 403" in message
+        or "status code 404" in message
+        or "access denied" in message
+        or "space not found" in message
+    )
+
+
+# Handles the normalize_space_room_path function logic.
+# Input: value: Any.
+# Output: str.
+def normalize_space_room_path(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    cleaned = value.strip().replace("\\", "/")
+    cleaned = re.sub(r"/+", "/", cleaned).strip("/")
+    if not cleaned:
+        return ""
+    parts = cleaned.split("/")
+    if not parts or any(not SPACE_ID_RE.fullmatch(part) for part in parts):
+        return ""
+    return "/".join(parts)
+
+
+# Handles the space_file_for_room_id function logic.
+# Input: room_id: str.
+# Output: Optional[Path].
+def space_file_for_room_id(room_id: str) -> Optional[Path]:
+    normalized = normalize_space_room_path(room_id)
+    if not normalized:
+        return None
+    parts = normalized.split("/")
+    return SPACES_DIR.joinpath(*parts[:-1], f"{parts[-1]}.txt")
+
+
+# Handles the path_rule_allows_space function logic.
+# Input: rule: str, space_path: str.
+# Output: bool.
+def path_rule_allows_space(rule: str, space_path: str) -> bool:
+    if rule.endswith("/*"):
+        folder = rule[:-2]
+        return space_path.startswith(f"{folder}/")
+    return rule == space_path
+
+
+# Handles the worker_can_access_space function logic.
+# Input: room_id: str.
+# Output: Tuple[bool, str].
+def worker_can_access_space(room_id: str) -> Tuple[bool, str]:
+    normalized_room_id = normalize_space_room_path(room_id)
+    if not normalized_room_id:
+        return False, "invalid space path"
+    path = space_file_for_room_id(normalized_room_id)
+    if not path or not path.exists():
+        return False, "space file does not exist"
+    username, _ = load_jira_worker_credentials()
+    username = (username or "").strip()
+    users_data = load_users_config_data()
+    users = users_data.get("users") if isinstance(users_data, dict) else None
+    if not isinstance(users, dict):
+        users = {}
+    record = users.get(username)
+    if not isinstance(record, dict):
+        return False, "worker user is not configured"
+    role = str(record.get("role") or "user").strip().lower()
+    space_id = normalized_room_id.split("/")[-1]
+    is_personal = normalized_room_id.startswith("personal/")
+    if is_personal:
+        if role == "admin" or username == space_id:
+            return True, ""
+        return False, "worker user cannot access personal space"
+    if role in {"admin", "manager"}:
+        return True, ""
+    rules = record.get("spaces")
+    if not isinstance(rules, list):
+        rules = []
+    normalized_rules = [
+        str(rule).strip().replace("\\", "/").strip("/")
+        for rule in rules
+        if isinstance(rule, str) and rule.strip()
+    ]
+    for rule in normalized_rules:
+        if path_rule_allows_space(rule, normalized_room_id):
+            return True, ""
+    return False, "worker user is not assigned to space"
 
 
 # Handles the strip_jira_marker function logic.
@@ -909,8 +1097,6 @@ def parse_space_tasks(lines: List[str]) -> List[SpaceTask]:
         while body_end < len(lines):
             if TASK_LINE_RE.match(lines[body_end]):
                 break
-            if lines[body_end].strip() == "":
-                break
             body_end += 1
         token_line_indices: List[int] = []
         state: Optional[str] = None
@@ -1222,6 +1408,16 @@ def convert_description_to_jira(
     return REFERENCE_RE.sub(repl, description).rstrip()
 
 
+def prepare_space_description_for_jira(
+    description: str,
+    key_to_title: Dict[str, str],
+    title_to_key: Dict[str, str],
+) -> str:
+    normalized = normalize_description_for_space(description, key_to_title)
+    without_story_points = strip_story_points_from_description(normalized)
+    return convert_description_to_jira(without_story_points, title_to_key)
+
+
 # Handles the _clean_story_points_line function logic.
 # Input: line: str.
 # Output: str.
@@ -1257,8 +1453,10 @@ def strip_story_points_from_description(description: str) -> str:
         return ""
     lines: List[str] = []
     for line in description.split("\n"):
-        cleaned = _clean_story_points_line(line)
-        if cleaned:
+        had_text = bool(line.strip())
+        cleaned = STORY_POINTS_RE.sub(" ", line)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if cleaned or not had_text:
             lines.append(cleaned)
     return "\n".join(lines).rstrip()
 
@@ -1288,6 +1486,29 @@ def format_token_line_with_story_points(
     if not base:
         return story_token
     return f"{base} {story_token}"
+
+
+def build_space_task_body_lines(
+    indent: str,
+    state: Optional[str],
+    tags: List[str],
+    people: List[str],
+    story_points: Optional[float],
+    description: str,
+) -> List[str]:
+    body_lines: List[str] = []
+    token_line = format_token_line_with_story_points(
+        state,
+        tags,
+        people,
+        story_points,
+    )
+    if token_line:
+        body_lines.append(f"{indent}{token_line}")
+    if description:
+        for entry in description.split("\n"):
+            body_lines.append(f"{indent}{entry}" if entry else "")
+    return body_lines
 
 
 # Handles the story_points_to_estimate_minutes function logic.
@@ -1595,8 +1816,6 @@ def parse_tasks(lines: List[str]) -> List[ParsedTask]:
         desc_end = desc_start
         while desc_end < len(lines):
             if TASK_LINE_RE.match(lines[desc_end]):
-                break
-            if lines[desc_end].strip() == "":
                 break
             desc_end += 1
         description_lines = []
@@ -2111,8 +2330,12 @@ def log_project_issue_hierarchy(
 # Input: client: JiraClient, project_key: str.
 # Output: List[Dict[str, Any]].
 async def ensure_project_issue_hierarchy(
-    client: JiraClient, project_key: str
+    client: JiraClient,
+    project_key: str,
+    inaccessible_projects: Optional[Set[str]] = None,
 ) -> List[Dict[str, Any]]:
+    if inaccessible_projects is not None and project_key in inaccessible_projects:
+        return fallback_project_issue_hierarchy()
     cached = JIRA_ISSUE_HIERARCHY_BY_PROJECT.get(project_key)
     if isinstance(cached, list) and cached:
         if project_key not in JIRA_ISSUE_TYPE_META_BY_PROJECT:
@@ -2129,27 +2352,20 @@ async def ensure_project_issue_hierarchy(
         issue_types = response[0]
         status_code = response[1]
     if not issue_types:
+        if is_inaccessible_jira_status(status_code):
+            if inaccessible_projects is not None:
+                inaccessible_projects.add(project_key)
+            logger.warning(
+                "[JIRA %s] project is not accessible for this worker run (status: %s)",
+                project_key,
+                status_code,
+            )
         logger.warning(
             "[JIRA %s] failed to load issue hierarchy (status: %s); using fallback",
             project_key,
             status_code,
         )
-        fallback = [
-            {
-                "depth": 0,
-                "hierarchy_level": 0,
-                "issue_type": JIRA_ISSUE_TYPE,
-                "is_subtask": False,
-                "issue_types": [JIRA_ISSUE_TYPE],
-            },
-            {
-                "depth": 1,
-                "hierarchy_level": -1,
-                "issue_type": JIRA_SUBTASK_ISSUE_TYPE,
-                "is_subtask": True,
-                "issue_types": [JIRA_SUBTASK_ISSUE_TYPE],
-            },
-        ]
+        fallback = fallback_project_issue_hierarchy()
         JIRA_ISSUE_HIERARCHY_BY_PROJECT[project_key] = fallback
         type_meta = build_issue_type_meta(fallback)
         JIRA_ISSUE_TYPE_META_BY_PROJECT[project_key] = type_meta
@@ -2178,6 +2394,25 @@ async def ensure_project_issue_hierarchy(
     JIRA_ISSUE_TYPE_META_BY_PROJECT[project_key] = type_meta
     log_project_issue_hierarchy(project_key, levels, type_meta)
     return levels
+
+
+def fallback_project_issue_hierarchy() -> List[Dict[str, Any]]:
+    return [
+        {
+            "depth": 0,
+            "hierarchy_level": 0,
+            "issue_type": JIRA_ISSUE_TYPE,
+            "is_subtask": False,
+            "issue_types": [JIRA_ISSUE_TYPE],
+        },
+        {
+            "depth": 1,
+            "hierarchy_level": -1,
+            "issue_type": JIRA_SUBTASK_ISSUE_TYPE,
+            "is_subtask": True,
+            "issue_types": [JIRA_SUBTASK_ISSUE_TYPE],
+        },
+    ]
 
 
 # Handles the build_space_task_depth_map function logic.
@@ -3028,6 +3263,10 @@ async def jira_issue_parent_is_editable(client: JiraClient, key: str) -> bool:
     return False
 
 
+def is_inaccessible_jira_status(status_code: Optional[int]) -> bool:
+    return status_code in {401, 403, 404}
+
+
 # Handles the wait_for_bulk_task_completion function logic.
 # Input: client: JiraClient, task_id: str, timeout_seconds: float = JIRA_BULK_TASK_TIMEOUT_SECONDS, poll_interval: float = JIRA_BULK_TASK_POLL_INTERVAL.
 # Output: Tuple[bool, Optional[str], Optional[Dict[str, Any]], Optional[int]].
@@ -3074,16 +3313,59 @@ async def wait_for_bulk_task_completion(
         await asyncio.sleep(max(poll_interval, 0.1))
 
 
+# Handles the fetch_changed_jira_issue_keys function logic.
+# Input: client: JiraClient, project_keys: Set[str], since_timestamp: float.
+# Output: Optional[Set[str]].
+async def fetch_changed_jira_issue_keys(
+    client: JiraClient,
+    project_keys: Set[str],
+    since_timestamp: float,
+) -> Optional[Set[str]]:
+    normalized_projects = {
+        project
+        for project in (normalize_project_key(item) for item in project_keys)
+        if project
+    }
+    if not normalized_projects:
+        logger.info("No Jira projects discovered yet; skipping changed issue query")
+        return set()
+    since_text = format_jira_jql_timestamp(
+        since_timestamp - JIRA_CHANGED_QUERY_OVERLAP_SECONDS
+    )
+    logger.info(
+        "Pulling Jira changes since %s for projects: %s",
+        since_text,
+        ", ".join(sorted(normalized_projects)),
+    )
+    keys, status = await run_blocking_io(
+        client.search_updated_issue_keys,
+        normalized_projects,
+        since_text,
+    )
+    if keys is None:
+        logger.warning(
+            "Jira changed issue query failed (status: %s); full sync fallback required",
+            status if status is not None else "(none)",
+        )
+        return None
+    changed = {key for key in keys if JIRA_ISSUE_KEY_RE.fullmatch(key)}
+    logger.info("Jira changed issue query returned %s issue(s)", len(changed))
+    return changed
+
+
 # Handles the sync_space_with_jira function logic.
-# Input: client: JiraClient, session: SpaceSession, project_key: str, force_direction: Optional[str] = None, ignore_dirty: bool = False,.
-# Output: None.
+# Input: client: JiraClient, session: SpaceSession, project_key: str, force_direction: Optional[str] = None, ignore_dirty: bool = False, changed_issue_keys: Optional[Set[str]] = None,.
+# Output: Set[str].
 async def sync_space_with_jira(
     client: JiraClient,
     session: SpaceSession,
     project_key: str,
     force_direction: Optional[str] = None,
     ignore_dirty: bool = False,
-) -> None:
+    changed_issue_keys: Optional[Set[str]] = None,
+    inaccessible_jira_projects: Optional[Set[str]] = None,
+    inaccessible_jira_issues: Optional[Set[str]] = None,
+) -> Set[str]:
     content = await read_ydoc_text(session.ydoc)
     if not content.strip():
         for _ in range(20):
@@ -3116,9 +3398,12 @@ async def sync_space_with_jira(
     states_config, states_order, states_block = parse_states_config(lines)
     tasks = parse_space_tasks(lines)
     assign_space_task_parents(tasks)
+    used_projects = collect_task_jira_projects(tasks)
+    inaccessible_jira_projects = inaccessible_jira_projects if inaccessible_jira_projects is not None else set()
+    inaccessible_jira_issues = inaccessible_jira_issues if inaccessible_jira_issues is not None else set()
     if not tasks:
         logger.debug("No tasks found in space %s", session.space_id)
-        return
+        return used_projects - inaccessible_jira_projects
 
     pending_tasks = [task for task in tasks if task.jira_project and not task.jira_key]
     logger.info("* Scanning for new tasks")
@@ -3142,6 +3427,13 @@ async def sync_space_with_jira(
         if task.jira_key or not task.jira_project:
             continue
         project_key_hint = task.jira_project.upper()
+        if project_key_hint in inaccessible_jira_projects:
+            logger.debug(
+                "[Space %s] skipping Jira create in inaccessible project %s",
+                session.space_id,
+                project_key_hint,
+            )
+            continue
         task_title = (task.title or "").strip()
         if not task_title:
             logger.warning(
@@ -3154,9 +3446,11 @@ async def sync_space_with_jira(
         hierarchy_levels = hierarchy_levels_by_project.get(project_key_hint)
         if hierarchy_levels is None:
             hierarchy_levels = await ensure_project_issue_hierarchy(
-                client, project_key_hint
+                client, project_key_hint, inaccessible_jira_projects
             )
             hierarchy_levels_by_project[project_key_hint] = hierarchy_levels
+        if project_key_hint in inaccessible_jira_projects:
+            continue
         type_meta = project_issue_type_meta_for_project(
             project_key_hint, hierarchy_levels
         )
@@ -3222,8 +3516,9 @@ async def sync_space_with_jira(
             if task.story_points is not None
             else extract_story_points_from_description(task.description)
         )
-        jira_description = convert_description_to_jira(
-            strip_story_points_from_description(task.description),
+        jira_description = prepare_space_description_for_jira(
+            task.description,
+            key_to_title,
             title_to_key,
         )
         original_estimate_minutes = story_points_to_estimate_minutes(
@@ -3247,6 +3542,8 @@ async def sync_space_with_jira(
         )
         logger.info("* Assigned key %s", issue_key or "(none)")
         if not issue_key:
+            if is_inaccessible_jira_status(status):
+                inaccessible_jira_projects.add(project_key_hint)
             logger.warning(
                 "[Space %s] -> [JIRA %s] failed to create issue for '%s'",
                 session.space_id,
@@ -3287,12 +3584,16 @@ async def sync_space_with_jira(
         )
         type_tags: Set[str] = set()
         if project_for_task:
+            if project_for_task in inaccessible_jira_projects:
+                continue
             hierarchy_levels = hierarchy_levels_by_project.get(project_for_task)
             if hierarchy_levels is None:
                 hierarchy_levels = await ensure_project_issue_hierarchy(
-                    client, project_for_task
+                    client, project_for_task, inaccessible_jira_projects
                 )
                 hierarchy_levels_by_project[project_for_task] = hierarchy_levels
+            if project_for_task in inaccessible_jira_projects:
+                continue
             type_meta = project_issue_type_meta_for_project(
                 project_for_task, hierarchy_levels
             )
@@ -3309,10 +3610,32 @@ async def sync_space_with_jira(
     states_changed = False
     people_changed = False
 
+    changed_issue_keys_normalized = (
+        {key.strip().upper() for key in changed_issue_keys if key.strip()}
+        if changed_issue_keys is not None
+        else None
+    )
     for key in space_entities:
+        cached_jira_entity = jira_cache.get(key)
+        project_for_key = project_key_from_issue_key(key) or project_key
+        if key in inaccessible_jira_issues or (
+            project_for_key and project_for_key in inaccessible_jira_projects
+        ):
+            logger.debug(
+                "[Space %s] skipping inaccessible Jira issue %s for this worker run",
+                session.space_id,
+                key,
+            )
+            continue
+        if (
+            changed_issue_keys_normalized is not None
+            and key not in changed_issue_keys_normalized
+            and cached_jira_entity is not None
+        ):
+            jira_entities[key] = copy_entity(cached_jira_entity)
+            continue
         logger.debug("Fetching Jira issue %s for space %s", key, session.space_id)
         issue, status = await run_blocking_io(client.get_issue, key)
-        project_for_key = project_key_from_issue_key(key) or project_key
         logger.debug(
             "[Space %s] <- [JIRA %s] fetch response for %s: %s",
             session.space_id,
@@ -3321,6 +3644,14 @@ async def sync_space_with_jira(
             summarize_jira_response(status, issue if isinstance(issue, dict) else None),
         )
         if not issue or not isinstance(issue, dict):
+            if is_inaccessible_jira_status(status):
+                inaccessible_jira_issues.add(key)
+                logger.warning(
+                    "[Space %s] skipping inaccessible Jira issue %s for this worker run (status: %s)",
+                    session.space_id,
+                    key,
+                    status,
+                )
             continue
         fields = issue.get("fields")
         if isinstance(fields, dict):
@@ -3511,6 +3842,21 @@ async def sync_space_with_jira(
     }
 
     for key in ordered_keys:
+        task_for_key = tasks_by_key.get(key)
+        project_for_key = project_key_from_issue_key(key) or (
+            task_for_key.jira_project.upper()
+            if task_for_key and task_for_key.jira_project
+            else ""
+        )
+        if key in inaccessible_jira_issues or (
+            project_for_key and project_for_key in inaccessible_jira_projects
+        ):
+            logger.debug(
+                "[Space %s] skipping sync for inaccessible Jira issue %s",
+                session.space_id,
+                key,
+            )
+            continue
         logger.info("* Syncing task %s", key)
         space_entity = space_entities.get(key)
         jira_entity = jira_entities.get(key)
@@ -3546,7 +3892,6 @@ async def sync_space_with_jira(
             )
 
         rows: List[List[str]] = []
-        task_for_key = tasks_by_key.get(key)
         space_type = ""
         space_parent_key = ""
         space_depth_value = ""
@@ -3578,9 +3923,11 @@ async def sync_space_with_jira(
                 hierarchy_levels = hierarchy_levels_by_project.get(project_for_hierarchy)
                 if hierarchy_levels is None:
                     hierarchy_levels = await ensure_project_issue_hierarchy(
-                        client, project_for_hierarchy
+                        client, project_for_hierarchy, inaccessible_jira_projects
                     )
                     hierarchy_levels_by_project[project_for_hierarchy] = hierarchy_levels
+                if project_for_hierarchy in inaccessible_jira_projects:
+                    continue
                 type_meta = project_issue_type_meta_for_project(
                     project_for_hierarchy, hierarchy_levels
                 )
@@ -4507,18 +4854,14 @@ async def sync_space_with_jira(
                 description = base_description
                 if description != task.description:
                     updated_description = description
-                    token_lines = [
-                        lines[index]
-                        for index in task.token_line_indices
-                        if index < len(lines)
-                    ]
-                    new_body_lines: List[str] = []
-                    new_body_lines.extend(token_lines)
-                    if description:
-                        for entry in description.split("\n"):
-                            new_body_lines.append(
-                                f"{task.indent}{entry}" if entry else ""
-                            )
+                    new_body_lines = build_space_task_body_lines(
+                        task.indent,
+                        desired_state,
+                        desired_tags,
+                        desired_owner,
+                        desired_story_points,
+                        description,
+                    )
                     lines[task.body_start:task.body_end] = new_body_lines
                     task_changed = True
 
@@ -4592,6 +4935,15 @@ async def sync_space_with_jira(
         session.ignore_until = time.time() + 0.2
         replace_ydoc_text(session.ydoc, content)
         await asyncio.sleep(0.1)
+        written_content = await read_ydoc_text(session.ydoc)
+        if written_content != content:
+            logger.error(
+                "[Space %s] Yjs write verification failed: expected %s chars, got %s chars",
+                session.space_id,
+                len(content),
+                len(written_content),
+            )
+    return used_projects - inaccessible_jira_projects
 
 
 # Handles the jira_sync_loop function logic.
@@ -4612,6 +4964,13 @@ async def jira_sync_loop(
     active_config = JiraConfig()
     config_missing_logged = False
     shared_session: Optional[SpaceSession] = None
+    used_jira_projects: Set[str] = set()
+    inaccessible_space_ids: Set[str] = set()
+    inaccessible_jira_projects: Set[str] = set()
+    inaccessible_jira_issues: Set[str] = set()
+    boot_full_scan_complete = False
+    last_jira_pull_at = 0.0
+    manual_sync_requested = False
     while True:
         try:
             logger.info("-" * 40 + " tick")
@@ -4630,6 +4989,12 @@ async def jira_sync_loop(
                     client = JiraClient(
                         config.base_url, config.email, config.token
                     )
+                    used_jira_projects.clear()
+                    inaccessible_space_ids.clear()
+                    inaccessible_jira_projects.clear()
+                    inaccessible_jira_issues.clear()
+                    boot_full_scan_complete = False
+                    last_jira_pull_at = 0.0
             if enabled and client:
                 if shared_session is None:
                     try:
@@ -4650,8 +5015,43 @@ async def jira_sync_loop(
                     except Exception:
                         logger.exception("Failed publishing Jira project keys to shared map")
 
+                changed_issue_keys: Optional[Set[str]] = None
+                force_full_scan = one_shot or not boot_full_scan_complete
+                if force_full_scan:
+                    logger.info("Running Jira full space scan")
+                else:
+                    changed_issue_keys = await fetch_changed_jira_issue_keys(
+                        client,
+                        used_jira_projects - inaccessible_jira_projects,
+                        last_jira_pull_at or time.time(),
+                    )
+                    if changed_issue_keys is None:
+                        force_full_scan = True
+                    else:
+                        last_jira_pull_at = time.time()
+
+                discovered_projects: Set[str] = set()
+                ignore_dirty_for_tick = one_shot or manual_sync_requested
+                if manual_sync_requested:
+                    logger.info("Manual sync requested; ignoring dirty status for this tick")
+                manual_sync_requested = False
                 for space_id in iter_space_room_ids():
                     if space_id == SYSTEM_SHARED_ROOM_ID:
+                        continue
+                    if space_id in inaccessible_space_ids:
+                        logger.debug(
+                            "Skipping inaccessible space %s for this worker run",
+                            format_space_label(space_id),
+                        )
+                        continue
+                    has_space_access, access_reason = worker_can_access_space(space_id)
+                    if not has_space_access:
+                        inaccessible_space_ids.add(space_id)
+                        logger.warning(
+                            "Skipping inaccessible space %s for this worker run: %s",
+                            format_space_label(space_id),
+                            access_reason,
+                        )
                         continue
                     logger.debug("Syncing space %s", format_space_label(space_id))
                     session = sessions.get(space_id)
@@ -4664,14 +5064,62 @@ async def jira_sync_loop(
                                 format_space_label(space_id),
                             )
                             continue
+                        except Exception as exc:
+                            if is_inaccessible_space_error(exc):
+                                inaccessible_space_ids.add(space_id)
+                                logger.warning(
+                                    "Skipping inaccessible space %s for this worker run",
+                                    format_space_label(space_id),
+                                )
+                                continue
+                            raise
                         sessions[space_id] = session
-                    await sync_space_with_jira(
-                        client,
-                        session,
-                        "",
-                        force_direction=force_direction,
-                        ignore_dirty=one_shot,
+                    try:
+                        space_projects = await sync_space_with_jira(
+                            client,
+                            session,
+                            "",
+                            force_direction=force_direction,
+                            ignore_dirty=ignore_dirty_for_tick,
+                            changed_issue_keys=None if force_full_scan else changed_issue_keys,
+                            inaccessible_jira_projects=inaccessible_jira_projects,
+                            inaccessible_jira_issues=inaccessible_jira_issues,
+                        )
+                    except Exception as exc:
+                        if is_inaccessible_space_error(exc):
+                            inaccessible_space_ids.add(space_id)
+                            sessions.pop(space_id, None)
+                            try:
+                                await session.close()
+                            except Exception:
+                                logger.debug("Failed closing inaccessible space session")
+                            logger.warning(
+                                "Skipping inaccessible space %s for this worker run",
+                                format_space_label(space_id),
+                            )
+                            continue
+                        raise
+                    discovered_projects.update(space_projects)
+                if discovered_projects:
+                    used_jira_projects.update(discovered_projects - inaccessible_jira_projects)
+                    logger.info(
+                        "Jira projects used by spaces: %s",
+                        ", ".join(sorted(used_jira_projects)),
                     )
+                if inaccessible_jira_projects:
+                    used_jira_projects.difference_update(inaccessible_jira_projects)
+                    logger.info(
+                        "Skipping inaccessible Jira projects this worker run: %s",
+                        ", ".join(sorted(inaccessible_jira_projects)),
+                    )
+                if inaccessible_jira_issues:
+                    logger.info(
+                        "Skipping inaccessible Jira issues this worker run: %s",
+                        ", ".join(sorted(inaccessible_jira_issues)),
+                    )
+                if force_full_scan:
+                    boot_full_scan_complete = True
+                    last_jira_pull_at = time.time()
         except ConnectionClosed:
             logger.warning("Websocket disconnected; will reconnect")
             for session in sessions.values():
@@ -4687,8 +5135,7 @@ async def jira_sync_loop(
             logger.exception("Jira sync loop failed")
         if one_shot:
             break
-        logger.info("* Sleeping")
-        await asyncio.sleep(JIRA_SYNC_INTERVAL)
+        manual_sync_requested = await sleep_until_next_sync(JIRA_SYNC_INTERVAL)
 
     for session in sessions.values():
         try:

@@ -82,6 +82,15 @@ async function copyBuiltIndex(buildId) {
 }
 
 /**
+ * Generates PWA icons before copying assets into dist.
+ * Input: none.
+ * Output: Promise<void>.
+ */
+async function generatePwaIcons() {
+  await import("./generate-pwa-icons.mjs");
+}
+
+/**
  * Runs dist assembly by validating build output and copying required runtime assets.
  * Input: none.
  * Output: Promise<void>.
@@ -89,9 +98,12 @@ async function copyBuiltIndex(buildId) {
 async function main() {
   await verifyBuiltEntry();
   const buildInfo = createBuildInfo();
+  await generatePwaIcons();
   await copyBuiltIndex(buildInfo.buildId);
   await copyEntry("styles");
   await copyEntry("assets");
+  await copyEntry("manifest.webmanifest");
+  await copyEntry("sw.js");
   await writeBuildInfo(buildInfo);
   console.log("Built frontend dist output in ./dist for backend static serving.");
 }

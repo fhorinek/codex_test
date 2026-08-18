@@ -128,6 +128,8 @@ export function createCanvas({
     return pill;
   };
 
+  const isArchivedTask = (task: any): boolean => Boolean(task?.archived);
+
   const copyToClipboard = async (text: string): Promise<void> => {
     if (!text) {
       return;
@@ -1214,6 +1216,9 @@ export function createCanvas({
     if (state.collapsed.has(task.id)) {
       node.classList.add("collapsed");
     }
+    if (isArchivedTask(task)) {
+      node.classList.add("archived");
+    }
     if (!matchesFiltersTask(task)) {
       node.classList.add("dimmed");
     }
@@ -1224,17 +1229,6 @@ export function createCanvas({
 
     const title = document.createElement("h4");
     const displayTitle = task.name || "Untitled task";
-    if (task.jiraKey) {
-      const pill = document.createElement("span");
-      pill.className = "pill jira-pill";
-      pill.textContent = task.jiraKey;
-      pill.title = `Copy ${task.jiraKey}`;
-      pill.addEventListener("click", (event: any) => {
-        event.stopPropagation();
-        copyToClipboard(task.jiraKey);
-      });
-      title.appendChild(pill);
-    }
     title.append(displayTitle);
     const referenceIndicator = createReferenceIndicator(task);
     if (referenceIndicator) {
@@ -1243,6 +1237,14 @@ export function createCanvas({
     const header = document.createElement("div");
     header.className = "task-header";
     header.appendChild(title);
+    if (isArchivedTask(task)) {
+      const archivedPill = document.createElement("span");
+      archivedPill.className = "pill archived-pill";
+      archivedPill.textContent = "Archived";
+      header.appendChild(archivedPill);
+      node.appendChild(header);
+      return;
+    }
     const ownStoryPoints = Number.isFinite(task.storyPoints) ? task.storyPoints : null;
     const subtaskStoryPoints = Number.isFinite(task.storyPointsSubtasksTotal)
       ? task.storyPointsSubtasksTotal
@@ -1282,7 +1284,6 @@ export function createCanvas({
       });
       header.appendChild(statePill);
     }
-
     const descriptionOptions: any = {
       task,
       className: "description",
@@ -1431,6 +1432,17 @@ export function createCanvas({
       }
       node.appendChild(cornerMeta);
     }
+    if (task.jiraKey) {
+      const pill = document.createElement("span");
+      pill.className = "task-jira-corner";
+      pill.textContent = task.jiraKey;
+      pill.title = `Copy ${task.jiraKey}`;
+      pill.addEventListener("click", (event: any) => {
+        event.stopPropagation();
+        copyToClipboard(task.jiraKey);
+      });
+      node.appendChild(pill);
+    }
   };
 
   /**
@@ -1462,6 +1474,22 @@ export function createCanvas({
     const nodesById = new Map();
     const heightsById = new Map();
     const widthsById = new Map();
+    const parentIdByChildId = new Map();
+    const zIndexByTaskId = new Map();
+    const assignZIndexes = (tasks: any[], zIndex: number): void => {
+      tasks.forEach((task: any) => {
+        zIndexByTaskId.set(task.id, zIndex);
+        if (!state.collapsed.has(task.id) && Array.isArray(task.children) && task.children.length) {
+          assignZIndexes(task.children, zIndex - 1);
+        }
+      });
+    };
+    assignZIndexes(state.tasks, 1000);
+    visibleTasks.forEach((task: any) => {
+      (task.children || []).forEach((child: any) => {
+        parentIdByChildId.set(child.id, task.id);
+      });
+    });
 
     // First pass: build nodes to measure real sizes before layout.
     visibleTasks.forEach((task: any) => {
@@ -1549,15 +1577,42 @@ export function createCanvas({
     graphLines.style.height = `${viewHeight}px`;
     graphLines.setAttribute("viewBox", `0 0 ${viewWidth} ${viewHeight}`);
 
+    const newlyVisibleFromParent: any[] = [];
     nodesById.forEach((node: any, taskId: any) => {
       const pos = positions.get(taskId);
       if (!pos) {
         return;
       }
-      node.style.left = `${pos.x}px`;
-      node.style.top = `${pos.y}px`;
+      node.style.zIndex = `${zIndexByTaskId.get(taskId) || 1000}`;
+      const parentId = parentIdByChildId.get(taskId);
+      const parentPos = parentId ? positions.get(parentId) : null;
+      const shouldAnimateFromParent = (
+        parentPos
+        && !existingNodes.has(taskId)
+        && lastNodesById.has(parentId)
+      );
+      if (shouldAnimateFromParent) {
+        node.style.transition = "none";
+        node.style.left = `${parentPos.x}px`;
+        node.style.top = `${parentPos.y}px`;
+        newlyVisibleFromParent.push({ node, pos });
+      } else {
+        node.style.left = `${pos.x}px`;
+        node.style.top = `${pos.y}px`;
+      }
       node.style.visibility = "";
     });
+
+    if (newlyVisibleFromParent.length) {
+      requestAnimationFrame(() => {
+        newlyVisibleFromParent.forEach(({ node, pos }: any) => {
+          node.style.transition = "";
+          node.style.left = `${pos.x}px`;
+          node.style.top = `${pos.y}px`;
+        });
+        scheduleLineAnimation();
+      });
+    }
 
     updateMinimap({
       visibleTasks,
@@ -1592,7 +1647,7 @@ export function createCanvas({
   function gatherVisible(tasks: any[], result: any[] = []): any[] {
     tasks.forEach((task: any) => {
       result.push(task);
-      if (!state.collapsed.has(task.id)) {
+      if (!isArchivedTask(task) && !state.collapsed.has(task.id)) {
         gatherVisible(task.children, result);
       }
     });
@@ -1753,6 +1808,9 @@ export function createCanvas({
    */
   function matchesSearch(task: any): boolean {
     if (!state.searchQuery) {
+      return false;
+    }
+    if (isArchivedTask(task)) {
       return false;
     }
     const query = state.searchQuery.toLowerCase();

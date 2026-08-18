@@ -39,17 +39,18 @@ class JiraWorkerParsingTests(unittest.TestCase):
         self.assertEqual(task.story_points, 2.0)
         self.assertEqual(task.description, "!todo #backend ~2 @maya\ndetails {KAN-2}")
 
-    def test_parse_space_tasks_stops_at_blank_line_and_finds_by_key(self):
+    def test_parse_space_tasks_allows_blank_lines_and_finds_by_key(self):
         lines = [
             "% [KAN-1] First",
             "line one",
             "",
+            "line after blank",
             "% [KAN-2] Second",
             "line two",
         ]
         tasks = parse_space_tasks(lines)
         self.assertEqual([task.jira_key for task in tasks], ["KAN-1", "KAN-2"])
-        self.assertEqual(tasks[0].description, "line one")
+        self.assertEqual(tasks[0].description, "line one\n\nline after blank")
         self.assertEqual(tasks[1].description, "line two")
         self.assertEqual(find_space_task_by_key(tasks, "KAN-2"), tasks[1])
         self.assertIsNone(find_space_task_by_key(tasks, "KAN-9"))

@@ -82,6 +82,8 @@ const SPELLCHECK_STORAGE_KEY = "taskScript.spellcheckEnabled.v1";
 const LAST_SPACE_STORAGE_KEY = "taskScript.lastSpace.v1";
 // Stores the MOBILE_PANE_STORAGE_KEY module constant.
 const MOBILE_PANE_STORAGE_KEY = "taskScript.mobilePane.v1";
+// Stores the KANBAN_NO_STATE_STORAGE_KEY module constant.
+const KANBAN_NO_STATE_STORAGE_KEY = "kanbanNoStateMode";
 // Stores the TABLET_PANE_STORAGE_KEY module constant.
 const TABLET_PANE_STORAGE_KEY = "taskScript.tabletPane.v1";
 // Stores the TABLET_PANE_LAYOUT_STORAGE_KEY module constant.
@@ -242,26 +244,6 @@ function ensureSecretVisibilityToggle(input: any): void {
   input.addEventListener("blur", refresh);
   input.dataset.secretToggle = "true";
   refresh();
-}
-
-/**
- * Handles the updateTaskEditJiraPill function logic.
- * Input: key: any.
- * Output: void.
- */
-function updateTaskEditJiraPill(key: any): void {
-  if (!dom.taskEditJiraPill) {
-    return;
-  }
-  if (!key) {
-    dom.taskEditJiraPill.classList.add("hidden");
-    dom.taskEditJiraPill.textContent = "";
-    dom.taskEditJiraPill.title = "";
-    return;
-  }
-  dom.taskEditJiraPill.textContent = key;
-  dom.taskEditJiraPill.title = `Copy ${key}`;
-  dom.taskEditJiraPill.classList.remove("hidden");
 }
 
 /**
@@ -611,12 +593,14 @@ const state: any = {
   selectedTaskId: null,
   selectedLine: null,
   searchQuery: "",
+  searchOccurrenceIndex: -1,
   transform: { x: 40, y: 40, scale: 1 },
   animateTransform: false,
   positions: new Map(),
   suggestionIndex: 0,
   suggestionItems: [],
   kanbanGroupBy: "none",
+  kanbanNoStateMode: "show",
   taskPathMaps: new Map(),
   incomingReferenceCountByName: new Map(),
   spellcheckEnabled: getStoredSpellcheckEnabled(),
@@ -633,6 +617,8 @@ const state: any = {
 
 // Stores the KANBAN_GROUPS module constant.
 const KANBAN_GROUPS = new Set(["none", "person", "tag"]);
+// Stores the KANBAN_NO_STATE_MODES module constant.
+const KANBAN_NO_STATE_MODES = new Set(["show", "hide"]);
 
 /**
  * Handles the normalizeKanbanGroup function logic.
@@ -654,6 +640,28 @@ function normalizeKanbanGroup(value: any): string {
  */
 function getStoredKanbanGroup() {
   return normalizeKanbanGroup(safeLocalStorageGet("kanbanGroupBy"));
+}
+
+/**
+ * Handles the normalizeKanbanNoStateMode function logic.
+ * Input: value: any.
+ * Output: string.
+ */
+function normalizeKanbanNoStateMode(value: any): string {
+  if (typeof value !== "string") {
+    return "show";
+  }
+  const trimmed = value.trim().toLowerCase();
+  return KANBAN_NO_STATE_MODES.has(trimmed) ? trimmed : "show";
+}
+
+/**
+ * Handles the getStoredKanbanNoStateMode function logic.
+ * Input: none.
+ * Output: result produced by this function.
+ */
+function getStoredKanbanNoStateMode() {
+  return normalizeKanbanNoStateMode(safeLocalStorageGet(KANBAN_NO_STATE_STORAGE_KEY));
 }
 
 /**
@@ -815,15 +823,25 @@ function applyStoredLayoutForCurrentViewport(): void {
  */
 function updateKanbanGroupButtons() {
   if (!dom.kanbanGroup) {
-    return;
+    // Keep the no-state control in sync even if grouping controls are absent.
+  } else {
+    const buttons = dom.kanbanGroup.querySelectorAll("button[data-kanban-group]");
+    buttons.forEach((button: any) => {
+      const groupButton = /** @type {HTMLButtonElement} */ (button);
+      const isActive = groupButton.dataset.kanbanGroup === state.kanbanGroupBy;
+      groupButton.classList.toggle("active", isActive);
+      groupButton.setAttribute("aria-checked", isActive ? "true" : "false");
+    });
   }
-  const buttons = dom.kanbanGroup.querySelectorAll("button[data-kanban-group]");
-  buttons.forEach((button: any) => {
-    const groupButton = /** @type {HTMLButtonElement} */ (button);
-    const isActive = groupButton.dataset.kanbanGroup === state.kanbanGroupBy;
-    groupButton.classList.toggle("active", isActive);
-    groupButton.setAttribute("aria-checked", isActive ? "true" : "false");
-  });
+  if (dom.kanbanNoState) {
+    const noStateButtons = dom.kanbanNoState.querySelectorAll("button[data-kanban-no-state]");
+    noStateButtons.forEach((button: any) => {
+      const noStateButton = /** @type {HTMLButtonElement} */ (button);
+      const isActive = noStateButton.dataset.kanbanNoState === state.kanbanNoStateMode;
+      noStateButton.classList.toggle("active", isActive);
+      noStateButton.setAttribute("aria-checked", isActive ? "true" : "false");
+    });
+  }
 }
 
 /**
@@ -840,6 +858,24 @@ function setKanbanGroupBy(value: any, { persist = true }: { persist?: boolean } 
   updateKanbanGroupButtons();
   if (persist) {
     safeLocalStorageSet("kanbanGroupBy", nextValue);
+  }
+  buildKanban();
+}
+
+/**
+ * Handles the setKanbanNoStateMode function logic.
+ * Input: value: any, { persist = true }: { persist?: boolean } = {}.
+ * Output: result produced by this function.
+ */
+function setKanbanNoStateMode(value: any, { persist = true }: { persist?: boolean } = {}) {
+  const nextValue = normalizeKanbanNoStateMode(value);
+  if (nextValue === state.kanbanNoStateMode) {
+    return;
+  }
+  state.kanbanNoStateMode = nextValue;
+  updateKanbanGroupButtons();
+  if (persist) {
+    safeLocalStorageSet(KANBAN_NO_STATE_STORAGE_KEY, nextValue);
   }
   buildKanban();
 }
@@ -909,15 +945,37 @@ function updateResponsiveSearchPlacement(): void {
   if (!(searchRoot instanceof HTMLElement) || !dom.topbarActions) {
     return;
   }
+  const searchInputWrap = dom.searchInput?.closest?.(".graph-search-input-wrap");
+  const mobileSearchControls = dom.mobileSearchToolbarControls;
   const topbarCenter = dom.taskTrash?.parentElement;
   if (!(topbarCenter instanceof HTMLElement)) {
     return;
   }
   if (state.viewportMode === "mobile") {
+    if (mobileSearchControls instanceof HTMLElement) {
+      if (dom.searchOccurrenceControls && !mobileSearchControls.contains(dom.searchOccurrenceControls)) {
+        mobileSearchControls.appendChild(dom.searchOccurrenceControls);
+      }
+      if (dom.clearFilters && !mobileSearchControls.contains(dom.clearFilters)) {
+        mobileSearchControls.appendChild(dom.clearFilters);
+      }
+    }
     if (!dom.topbarActions.contains(searchRoot)) {
       dom.topbarActions.prepend(searchRoot);
     }
     return;
+  }
+  if (searchInputWrap instanceof HTMLElement) {
+    if (dom.searchOccurrenceControls && !searchInputWrap.contains(dom.searchOccurrenceControls)) {
+      if (dom.clearFilters && searchInputWrap.contains(dom.clearFilters)) {
+        searchInputWrap.insertBefore(dom.searchOccurrenceControls, dom.clearFilters);
+      } else {
+        searchInputWrap.appendChild(dom.searchOccurrenceControls);
+      }
+    }
+    if (dom.clearFilters && !searchInputWrap.contains(dom.clearFilters)) {
+      searchInputWrap.appendChild(dom.clearFilters);
+    }
   }
   if (topbarCenter.contains(searchRoot)) {
     return;
@@ -1010,6 +1068,7 @@ function flushResponsiveDeferredRenders(): void {
   if (state.pendingResponsiveKanbanBuild && isResponsiveKanbanVisible()) {
     state.pendingResponsiveKanbanBuild = false;
     buildKanban();
+    scrollFocusedTaskIntoKanban();
   }
 }
 
@@ -1255,7 +1314,11 @@ function updateResponsiveLayoutOffsets(): void {
     }
   }
   let tabletLegendHeight = 0;
-  if (state.viewportMode === "tablet" && dom.legend && !dom.legend.hidden) {
+  if (
+    (state.viewportMode === "tablet" || state.viewportMode === "mobile")
+    && dom.legend
+    && !dom.legend.hidden
+  ) {
     const legendVisible = getComputedStyle(dom.legend).display !== "none";
     if (legendVisible) {
       tabletLegendHeight = Math.ceil(dom.legend.getBoundingClientRect().height || 0);
@@ -2463,6 +2526,22 @@ function dispatchEditorInput() {
 }
 
 /**
+ * Handles the foldArchivedTasksInEditor function logic.
+ * Input: none.
+ * Output: void.
+ */
+function foldArchivedTasksInEditor(): void {
+  if (typeof editorController.foldTaskLines !== "function") {
+    return;
+  }
+  const archivedLineIndexes = (state.allTasks || [])
+    .filter((task: any) => task?.archived && !task?.archivedByParent)
+    .map((task: any) => task.lineIndex)
+    .filter((lineIndex: any) => Number.isInteger(lineIndex));
+  editorController.foldTaskLines(archivedLineIndexes);
+}
+
+/**
  * Handles the forceEditorRefresh function logic.
  * Input: value: string, { collapseSelection = false }: { collapseSelection?: boolean } = {}.
  * Output: void.
@@ -2498,7 +2577,9 @@ function handleEditorSelection(line: any): void {
     canvasController.focusOnTask(task);
     canvasController.renderGraph();
     buildKanban();
+    scrollFocusedTaskIntoKanban();
     renderStoryPointsSummary();
+    updateSearchOccurrenceControls();
   } else {
     editorController.updateSelectedLine();
   }
@@ -2509,7 +2590,8 @@ function handleEditorSelection(line: any): void {
  * Input: task: any.
  * Output: void.
  */
-function selectTask(task: any): void {
+function selectTask(task: any, options: { focusEditor?: boolean } = {}): void {
+  const focusEditor = options.focusEditor !== false;
   state.selectedTaskId = task.id;
   state.selectedLine = task.lineIndex;
   let current = task.parent;
@@ -2522,14 +2604,66 @@ function selectTask(task: any): void {
   const caretPosition = lines
     .slice(0, targetLine)
     .reduce((sum: number, line: string) => sum + line.length + 1, 0);
-  editorController.focus();
+  if (focusEditor) {
+    editorController.focus();
+  }
   editorController.setSelectionRange(caretPosition, caretPosition);
   editorController.updateSelectedLine();
   editorController.highlightText(lines);
   canvasController.focusOnTask(task);
   canvasController.renderGraph();
   buildKanban();
+  scrollFocusedTaskIntoKanban();
   renderStoryPointsSummary();
+  updateSearchOccurrenceControls();
+}
+
+/**
+ * Handles the getKanbanCardForTask function logic.
+ * Input: taskId: any.
+ * Output: HTMLElement | null.
+ */
+function getKanbanCardForTask(taskId: any): HTMLElement | null {
+  const id = String(taskId || "");
+  if (!id || !dom.kanbanBoard) {
+    return null;
+  }
+  const cards = dom.kanbanBoard.querySelectorAll<HTMLElement>(".kanban-card[data-task-id]");
+  for (const card of cards) {
+    if (card.dataset["taskId"] === id && !card.classList.contains("kanban-hidden")) {
+      return card;
+    }
+  }
+  return null;
+}
+
+/**
+ * Handles the scrollFocusedTaskIntoKanban function logic.
+ * Input: none.
+ * Output: void.
+ */
+function scrollFocusedTaskIntoKanban(): void {
+  const selectedTaskId = state.selectedTaskId;
+  if (!selectedTaskId || !isResponsiveKanbanVisible()) {
+    return;
+  }
+  const reveal = () => {
+    const card = getKanbanCardForTask(selectedTaskId);
+    if (!card || !isResponsiveKanbanVisible()) {
+      return;
+    }
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    card.scrollIntoView({
+      block: "nearest",
+      inline: "nearest",
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  };
+  if (typeof window.requestAnimationFrame === "function") {
+    window.requestAnimationFrame(reveal);
+    return;
+  }
+  reveal();
 }
 
 /**
@@ -2745,6 +2879,7 @@ function sync(): void {
     state.selectedLine = 0;
   }
   editorController.highlightText(lines);
+  foldArchivedTasksInEditor();
   buildTagPersonLists();
   buildKanban();
   canvasController.renderGraph();
@@ -2782,6 +2917,7 @@ function buildKanban(): void {
       updateTaskState,
       onToggleCheckbox: toggleCheckboxAtLine,
       groupBy: state.kanbanGroupBy,
+      noStateMode: state.kanbanNoStateMode,
     });
   });
 }
@@ -3066,7 +3202,6 @@ function updateTaskEditPreviewFromText(text: any): void {
   const titleValue = dom.taskEditTitleInput?.value.trim() || "Untitled task";
   const { token: jiraToken, title: jiraTitle } = parseJiraTitle(titleValue);
   const displayKey = jiraToken || editingTaskJiraKey;
-  updateTaskEditJiraPill(displayKey);
   const displayTitle = jiraTitle || "Untitled task";
   /**
    * Handles the formatStoryPoints function logic.
@@ -3080,9 +3215,6 @@ function updateTaskEditPreviewFromText(text: any): void {
   const header = document.createElement("div");
   header.className = "task-header";
   const title = document.createElement("h4");
-  if (displayKey) {
-    title.appendChild(createJiraTitlePill(displayKey));
-  }
   title.append(displayTitle);
   header.appendChild(title);
   if (parsed.state) {
@@ -3123,6 +3255,17 @@ function updateTaskEditPreviewFromText(text: any): void {
     storyPill.textContent = `★ ${formatStoryPoints(parsed.storyPoints)}`;
     storyPill.title = "Story points";
     card.appendChild(storyPill);
+  }
+  if (displayKey) {
+    const jiraText = document.createElement("span");
+    jiraText.className = "task-jira-corner";
+    jiraText.textContent = displayKey;
+    jiraText.title = `Copy ${displayKey}`;
+    jiraText.addEventListener("click", (event) => {
+      event.stopPropagation();
+      copyToClipboard(displayKey);
+    });
+    card.appendChild(jiraText);
   }
   const descriptionLines = (parsed.descriptionText || "").replace(/\r/g, "").split("\n");
   const lineIndexes = descriptionLines.map((_, index) => index);
@@ -3370,7 +3513,6 @@ function openTaskEditModal(task: any): void {
     editingTaskJiraKey = draft.jiraKey;
     dom.taskEditTitleInput.value = draft.title;
   }
-  updateTaskEditJiraPill(editingTaskJiraKey);
   const modalEditor = ensureTaskEditEditor();
   if (modalEditor) {
     if (dom.taskEditCode) {
@@ -3410,7 +3552,6 @@ function openTaskCreateModal() {
   if (dom.taskEditTitleInput) {
     dom.taskEditTitleInput.value = draft.title;
   }
-  updateTaskEditJiraPill(null);
   const modalEditor = ensureTaskEditEditor();
   if (modalEditor) {
     if (dom.taskEditCode) {
@@ -3441,7 +3582,6 @@ function closeTaskEditModal() {
   editingTaskRef = null;
   creatingTask = false;
   updateTaskEditDeleteButtonVisibility();
-  updateTaskEditJiraPill(null);
 }
 
 /**
@@ -4034,6 +4174,9 @@ function matchesSearchTask(task: any): boolean {
   if (!state.searchQuery) {
     return false;
   }
+  if (task?.archived) {
+    return false;
+  }
   const query = state.searchQuery.toLowerCase();
   const searchNameEnabled = Boolean(dom.searchName?.checked);
   const searchDescriptionEnabled = Boolean(dom.searchDescription?.checked);
@@ -4058,6 +4201,63 @@ function matchesSearchTask(task: any): boolean {
   return false;
 }
 
+function getSearchOccurrenceMatches(): any[] {
+  if (!state.searchQuery || !state.searchQuery.trim()) {
+    return [];
+  }
+  return state.allTasks.filter((task: any) => matchesSearchTask(task));
+}
+
+function updateSearchOccurrenceControls(matches: any[] | null = null): any[] {
+  const searchMatches = matches || getSearchOccurrenceMatches();
+  const hasSearch = Boolean(state.searchQuery && state.searchQuery.trim());
+  const total = searchMatches.length;
+  const selectedIndex = searchMatches.findIndex((task: any) => task.id === state.selectedTaskId);
+  if (selectedIndex >= 0) {
+    state.searchOccurrenceIndex = selectedIndex;
+  } else if (!hasSearch || total === 0) {
+    state.searchOccurrenceIndex = -1;
+  } else {
+    state.searchOccurrenceIndex = Math.min(Math.max(state.searchOccurrenceIndex, 0), total - 1);
+  }
+  const current = state.searchOccurrenceIndex >= 0 ? state.searchOccurrenceIndex + 1 : 0;
+  if (dom.searchOccurrenceControls) {
+    dom.searchOccurrenceControls.hidden = !hasSearch;
+  }
+  if (dom.searchOccurrenceCount) {
+    dom.searchOccurrenceCount.textContent = `${current}/${total}`;
+  }
+  const disabled = !hasSearch || total === 0;
+  if (dom.searchPrev) {
+    dom.searchPrev.disabled = disabled;
+  }
+  if (dom.searchNext) {
+    dom.searchNext.disabled = disabled;
+  }
+  return searchMatches;
+}
+
+function activateSearchOccurrence(index: number): void {
+  const matches = getSearchOccurrenceMatches();
+  if (!matches.length) {
+    updateSearchOccurrenceControls(matches);
+    return;
+  }
+  const normalizedIndex = ((index % matches.length) + matches.length) % matches.length;
+  state.searchOccurrenceIndex = normalizedIndex;
+  selectTask(matches[normalizedIndex], { focusEditor: false });
+  updateSearchOccurrenceControls(matches);
+}
+
+function cycleSearchOccurrence(direction: number): void {
+  const matches = updateSearchOccurrenceControls();
+  if (!matches.length) {
+    return;
+  }
+  const baseIndex = state.searchOccurrenceIndex >= 0 ? state.searchOccurrenceIndex : 0;
+  activateSearchOccurrence(baseIndex + direction);
+}
+
 /**
  * Handles the filtersActive function logic.
  * Input: none.
@@ -4079,6 +4279,7 @@ function updateClearFiltersVisibility() {
   const hasFilters = filtersActive();
   const hasSearch = Boolean(state.searchQuery && state.searchQuery.trim());
   dom.clearFilters.hidden = !(hasFilters || hasSearch);
+  updateSearchOccurrenceControls();
 }
 
 /**
@@ -9202,17 +9403,7 @@ if (dom.taskEditTitleInput) {
     if (parsedTitle.token) {
       editingTaskJiraKey = parsedTitle.token;
     }
-    updateTaskEditJiraPill(editingTaskJiraKey);
     updateTaskEditPreviewFromText(modalEditorController.getValue());
-  });
-}
-
-if (dom.taskEditJiraPill) {
-  dom.taskEditJiraPill.addEventListener("click", (event: any) => {
-    event.stopPropagation();
-    if (editingTaskJiraKey) {
-      copyToClipboard(editingTaskJiraKey);
-    }
   });
 }
 
@@ -9533,13 +9724,26 @@ if (dom.searchInput) {
   const searchInput = dom.searchInput;
   searchInput.addEventListener("input", () => {
     state.searchQuery = searchInput.value;
+    state.searchOccurrenceIndex = -1;
     canvasController.renderGraph();
     buildKanban();
     updateClearFiltersVisibility();
     renderStoryPointsSummary();
+    const matches = updateSearchOccurrenceControls();
+    if (matches.length) {
+      activateSearchOccurrence(0);
+    }
   });
 
   searchInput.addEventListener("keydown", (event: any) => {
+    if (event.key === "Enter") {
+      if (!state.searchQuery || !state.searchQuery.trim()) {
+        return;
+      }
+      event.preventDefault();
+      cycleSearchOccurrence(event.shiftKey ? -1 : 1);
+      return;
+    }
     if (event.key !== "Escape") {
       return;
     }
@@ -9550,10 +9754,23 @@ if (dom.searchInput) {
     event.stopPropagation();
     searchInput.value = "";
     state.searchQuery = "";
+    state.searchOccurrenceIndex = -1;
     canvasController.renderGraph();
     buildKanban();
     updateClearFiltersVisibility();
     renderStoryPointsSummary();
+  });
+}
+
+if (dom.searchPrev) {
+  dom.searchPrev.addEventListener("click", () => {
+    cycleSearchOccurrence(-1);
+  });
+}
+
+if (dom.searchNext) {
+  dom.searchNext.addEventListener("click", () => {
+    cycleSearchOccurrence(1);
   });
 }
 
@@ -9569,14 +9786,31 @@ if (dom.searchInput) {
   });
 });
 
+[dom.kanbanNoState].filter(Boolean).forEach((group: any) => {
+  group.addEventListener("click", (event: any) => {
+    const target = event.target instanceof Element
+      ? event.target.closest("button[data-kanban-no-state]")
+      : null;
+    if (!target) {
+      return;
+    }
+    setKanbanNoStateMode((/** @type {HTMLButtonElement} */ (target)).dataset.kanbanNoState);
+  });
+});
+
 [dom.searchName, dom.searchDescription, dom.searchTag, dom.searchPerson]
   .filter((checkbox): checkbox is HTMLInputElement => Boolean(checkbox))
   .forEach((checkbox) => {
   checkbox.addEventListener("change", () => {
+    state.searchOccurrenceIndex = -1;
     canvasController.renderGraph();
     buildKanban();
     updateClearFiltersVisibility();
     renderStoryPointsSummary();
+    const matches = updateSearchOccurrenceControls();
+    if (matches.length) {
+      activateSearchOccurrence(0);
+    }
   });
 });
 
@@ -9585,6 +9819,7 @@ if (dom.clearFilters) {
     state.selectedTags.clear();
     state.selectedPeople.clear();
     state.searchQuery = "";
+    state.searchOccurrenceIndex = -1;
     if (dom.searchInput) {
       dom.searchInput.value = "";
     }
@@ -10061,6 +10296,7 @@ window.addEventListener("resize", () => {
 });
 
 state.kanbanGroupBy = getStoredKanbanGroup();
+state.kanbanNoStateMode = getStoredKanbanNoStateMode();
 updateKanbanGroupButtons();
 
 /**

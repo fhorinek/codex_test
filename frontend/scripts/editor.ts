@@ -7,7 +7,7 @@ import { Decoration, EditorView, ViewPlugin, WidgetType, highlightActiveLine, hi
 import { defaultKeymap, history, historyKeymap, indentLess, indentMore, redo, undo, } from "@codemirror/commands";
 import { autocompletion, completionKeymap } from "@codemirror/autocomplete";
 import { search, searchKeymap } from "@codemirror/search";
-import { foldGutter, foldKeymap, foldService, indentUnit } from "@codemirror/language";
+import { foldEffect, foldedRanges, foldGutter, foldKeymap, foldService, indentUnit } from "@codemirror/language";
 import { indentationMarkers } from "@replit/codemirror-indentation-markers";
 // Stores the taskLineDecoration module constant.
 const taskLineDecoration = Decoration.line({ class: "cm-task-line" });
@@ -257,7 +257,7 @@ function parseTaskTitleFromLine(text: any) {
     if (typeof text !== "string") {
         return "";
     }
-    const taskMatch = text.match(/^\s*%\s+(.*)$/);
+    const taskMatch = text.match(/^\s*%\.?\s+(.*)$/);
     if (!taskMatch) {
         return "";
     }
@@ -276,7 +276,7 @@ function taskTitleRangeFromLine(line: any) {
         return null;
     }
     const text = line.text;
-    const taskMatch = text.match(/^(\s*)%\s+/);
+    const taskMatch = text.match(/^(\s*)%\.?\s+/);
     if (!taskMatch) {
         return null;
     }
@@ -311,7 +311,7 @@ function collectIncomingReferenceData(doc: any) {
     let currentTask = null;
     for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
         const text = doc.line(lineNumber).text;
-        if (/^\s*%\s+/.test(text)) {
+        if (/^\s*%\.?\s+/.test(text)) {
             currentTask = {
                 lineIndex: lineNumber - 1,
                 title: parseTaskTitleFromLine(text),
@@ -361,7 +361,7 @@ function collectTaskTitleLookup(doc: any) {
     const lowercase = new Set();
     for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
         const text = doc.line(lineNumber).text;
-        if (!/^\s*%\s+/.test(text)) {
+        if (!/^\s*%\.?\s+/.test(text)) {
             continue;
         }
         const title = parseTaskTitleFromLine(text);
@@ -421,7 +421,7 @@ function buildDecorations(view: any, appState: any, incomingReferenceSources = n
                     decoration: errorLineDecoration,
                 });
             }
-            const taskMatch = text.match(/^(\s*)%\s+/);
+            const taskMatch = text.match(/^(\s*)%\.?\s+/);
             if (taskMatch) {
                 const indent = taskMatch[1].length;
                 ranges.push({
@@ -1013,7 +1013,7 @@ function getTaskContextForLine(doc: any, lineNumber: number) {
     const safeLine = Math.max(1, Math.min(lineNumber, doc.lines));
     for (let current = safeLine; current >= 1; current -= 1) {
         const text = doc.line(current).text;
-        const taskMatch = text.match(/^(\s*)%\s+/);
+        const taskMatch = text.match(/^(\s*)%\.?\s+/);
         if (taskMatch) {
             return {
                 taskLineNumber: current,
@@ -1439,7 +1439,7 @@ function findTaskLineByTitle(doc: any, title: any) {
     let fuzzyMatch = null;
     for (let lineNumber = 1; lineNumber <= doc.lines; lineNumber += 1) {
         const text = doc.line(lineNumber).text;
-        if (!/^\s*%\s+/.test(text)) {
+        if (!/^\s*%\.?\s+/.test(text)) {
             continue;
         }
         const parsedTitle = parseTaskTitleFromLine(text);
@@ -2286,6 +2286,46 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
             }
             if (typeof left === "number") {
                 view.scrollDOM.scrollLeft = left;
+            }
+        },
+        /**
+         * Handles the foldTaskLines function logic.
+         * Input: lineIndexes: number[].
+         * Output: void.
+         */
+        foldTaskLines: (lineIndexes: number[]) => {
+            if (!Array.isArray(lineIndexes) || !lineIndexes.length) {
+                return;
+            }
+            const effects: any[] = [];
+            const seen = new Set();
+            const currentFolds = foldedRanges(view.state);
+            lineIndexes.forEach((lineIndex: number) => {
+                if (!Number.isInteger(lineIndex) || lineIndex < 0 || seen.has(lineIndex)) {
+                    return;
+                }
+                seen.add(lineIndex);
+                if (lineIndex >= view.state.doc.lines) {
+                    return;
+                }
+                const line = view.state.doc.line(lineIndex + 1);
+                const range = foldTaskBlock(view.state, line);
+                if (!range || range.to <= range.from) {
+                    return;
+                }
+                let alreadyFolded = false;
+                currentFolds.between(range.from, range.to, (from: number, to: number) => {
+                    if (from === range.from && to === range.to) {
+                        alreadyFolded = true;
+                    }
+                });
+                if (alreadyFolded) {
+                    return;
+                }
+                effects.push(foldEffect.of(range));
+            });
+            if (effects.length) {
+                view.dispatch({ effects });
             }
         },
         /**

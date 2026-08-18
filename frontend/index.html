@@ -5,6 +5,11 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Task Script Board</title>
+  <meta name="theme-color" content="#2f54eb" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Task Script" />
+  <link rel="manifest" href="manifest.webmanifest" />
   <script>
     (function () {
       function applyViewportMode() {
@@ -23,6 +28,7 @@
   <link rel="stylesheet" href="styles/styles.css" />
   <link rel="stylesheet" href="node_modules/@fortawesome/fontawesome-free/css/all.min.css" />
   <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png" />
 </head>
 
 <body>
@@ -49,6 +55,15 @@
         <div class="graph-search">
           <div class="graph-search-input-wrap">
             <input id="search-input" type="text" placeholder="Search tasks" />
+            <div id="search-occurrence-controls" class="search-occurrence-controls" hidden>
+              <button id="search-prev" class="search-occurrence-button" type="button" aria-label="Previous search occurrence" title="Previous occurrence">
+                <i class="fa-solid fa-chevron-left" aria-hidden="true"></i>
+              </button>
+              <span id="search-occurrence-count" class="search-occurrence-count" aria-live="polite">0/0</span>
+              <button id="search-next" class="search-occurrence-button" type="button" aria-label="Next search occurrence" title="Next occurrence">
+                <i class="fa-solid fa-chevron-right" aria-hidden="true"></i>
+              </button>
+            </div>
             <button id="clear-filters" class="graph-search-clear" type="button" title="Clear highlights">Clear Highlights</button>
           </div>
           <div class="search-options">
@@ -64,6 +79,7 @@
         </div>
       </div>
       <div class="app-topbar-right">
+        <div id="mobile-search-toolbar-controls" class="mobile-search-toolbar-controls" aria-label="Search controls"></div>
         <button id="mobile-toolbar-toggle" class="toolbar-icon mobile-toolbar-toggle" type="button" aria-label="Open toolbar menu" aria-controls="topbar-actions" aria-expanded="false">
           <i class="fa-solid fa-bars" aria-hidden="true"></i>
         </button>
@@ -165,6 +181,14 @@
           <span id="story-points-summary-kanban" class="pill story-points-summary" aria-live="polite" hidden></span>
         </div>
         <div class="kanban-group-float" aria-label="Kanban swimlane grouping">
+          <div id="kanban-no-state" class="kanban-group kanban-no-state-toggle" role="radiogroup" aria-label="No state column visibility">
+            <button type="button" class="kanban-group-button" data-kanban-no-state="show" role="radio" aria-checked="true">
+              No state
+            </button>
+            <button type="button" class="kanban-group-button" data-kanban-no-state="hide" role="radio" aria-checked="false">
+              Hide
+            </button>
+          </div>
           <div id="kanban-group" class="kanban-group" role="radiogroup" aria-label="Kanban swimlane grouping">
             <button type="button" class="kanban-group-button" data-kanban-group="none" role="radio" aria-checked="true">
               No grouping
@@ -535,7 +559,6 @@
         <label class="modal-field task-edit-title-field">
           <span id="task-edit-title-label">Title</span>
           <div class="task-edit-title-row">
-            <span id="task-edit-jira-pill" class="pill jira-pill hidden" role="button" tabindex="0"></span>
             <input id="task-edit-title-input" type="text" />
           </div>
         </label>
@@ -778,6 +801,15 @@
   </script>
   <script>
     window.__taskScriptFrontendBuildId = "__TASKSCRIPT_FRONTEND_BUILD_ID__";
+  </script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", function () {
+        navigator.serviceWorker.register("/sw.js").catch(function (error) {
+          console.warn("Service worker registration failed.", error);
+        });
+      });
+    }
   </script>
   <script type="module" src="scripts/app.js"></script>
 </body>

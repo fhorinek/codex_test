@@ -2045,12 +2045,23 @@ async def disconnect_space_clients(space_id: str) -> int:
 # Output: str.
 def ydoc_to_text(ydoc: Y.YDoc) -> str:
     text = ydoc.get_text("content")
-    raw = text.to_json()
-    if isinstance(raw, str):
-        if len(raw) >= 2 and raw[0] == raw[-1] == '"':
-            return raw[1:-1]
-        return raw
-    return str(raw)
+    return unwrap_json_encoded_text(str(text))
+
+
+def unwrap_json_encoded_text(value: str) -> str:
+    text = value
+    for _ in range(3):
+        candidate = text.strip()
+        if not (len(candidate) >= 2 and candidate[0] == candidate[-1] == '"'):
+            break
+        try:
+            decoded = json.loads(candidate)
+        except Exception:
+            break
+        if not isinstance(decoded, str) or decoded == text:
+            break
+        text = decoded
+    return text
 
 
 # Handles the replace_ydoc_text function logic.
@@ -2058,6 +2069,10 @@ def ydoc_to_text(ydoc: Y.YDoc) -> str:
 # Output: None.
 def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
     text = ydoc.get_text("content")
+    content = unwrap_json_encoded_text(content)
+    current = ydoc_to_text(ydoc)
+    if current == content and len(text) == len(content):
+        return
 
     # Handles the apply function logic.
     # Input: txn.
@@ -2129,6 +2144,11 @@ async def hydrate_room_from_storage(space_id: str, room, *, space_path_hint: Opt
         try:
             await room.ystore.apply_updates(room.ydoc)
             loaded_from_ystore = True
+            replace_ydoc_text(room.ydoc, ydoc_to_text(room.ydoc))
+            try:
+                await room.ystore.encode_state_as_update(room.ydoc)
+            except Exception:
+                logger.exception("Failed to repair ystore text for %s", space_id)
         except Exception:
             logger.exception(
                 "Failed to apply ystore for %s; falling back to snapshot",
@@ -3474,9 +3494,23 @@ class _SuppressBenignShutdownASGI:
                 elif message_type == "http.response.body" and not message.get("more_body", False):
                     response_completed = True
             elif scope.get("type") == "websocket":
+                if response_completed and message_type == "websocket.send":
+                    logger.debug(
+                        "Suppressed websocket.send after websocket.close during ASGI shutdown."
+                    )
+                    return None
                 if message_type == "websocket.close":
                     response_completed = True
-            return await send(message)
+            try:
+                return await send(message)
+            except BaseException as exc:
+                if scope.get("type") == "websocket" and _is_benign_shutdown_error(exc):
+                    response_completed = True
+                    logger.info(
+                        "Suppressed benign websocket send during ASGI request shutdown."
+                    )
+                    return None
+                raise
 
         try:
             return await self._app(scope, receive, tracked_send)

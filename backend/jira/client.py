@@ -3,6 +3,9 @@
 import base64
 import json
 import logging
+import random
+import threading
+import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -18,6 +21,18 @@ logger = logging.getLogger("server")
 LOG_BORDER_WIDTH = 60
 # Stores the JIRA_ESTIMATE_UNSET module constant.
 JIRA_ESTIMATE_UNSET = object()
+# Stores the JIRA_RATE_LIMIT_MIN_INTERVAL_SECONDS module constant.
+JIRA_RATE_LIMIT_MIN_INTERVAL_SECONDS = 0.5
+# Stores the JIRA_RATE_LIMIT_MAX_RETRIES module constant.
+JIRA_RATE_LIMIT_MAX_RETRIES = 5
+# Stores the JIRA_RATE_LIMIT_MAX_BACKOFF_SECONDS module constant.
+JIRA_RATE_LIMIT_MAX_BACKOFF_SECONDS = 60.0
+
+
+class JiraRequestError(RuntimeError):
+    def __init__(self, status_code: int, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 # Stores the _BOLD_RE module constant.
 _BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
@@ -454,6 +469,10 @@ def build_issue_type_hierarchy_levels(
 
 # Defines the JiraClient structure used by this module.
 class JiraClient:
+    _rate_lock = threading.Lock()
+    _next_request_at = 0.0
+    _dynamic_delay_seconds = JIRA_RATE_LIMIT_MIN_INTERVAL_SECONDS
+
     # Handles the __init__ function logic.
     # Input: self, base_url: str, email: str, token: str.
     # Output: None.
@@ -545,61 +564,145 @@ class JiraClient:
     # Handles the _request function logic.
     # Input: self, method: str, path: str, payload: Optional[Dict[str, Any]] = None.
     # Output: Tuple[Any, int].
-    def _request(
+    def _wait_for_rate_limit_slot(self) -> None:
+        with JiraClient._rate_lock:
+            now = time.monotonic()
+            wait_seconds = max(0.0, JiraClient._next_request_at - now)
+            if wait_seconds > 0:
+                time.sleep(wait_seconds)
+                now = time.monotonic()
+            JiraClient._next_request_at = now + max(
+                JIRA_RATE_LIMIT_MIN_INTERVAL_SECONDS,
+                JiraClient._dynamic_delay_seconds,
+            )
+
+    def _apply_near_limit_slowdown(self, headers: Any) -> None:
+        near_limit = ""
+        try:
+            near_limit = str(headers.get("X-RateLimit-NearLimit") or "").lower()
+        except Exception:
+            near_limit = ""
+        with JiraClient._rate_lock:
+            if near_limit == "true":
+                JiraClient._dynamic_delay_seconds = min(
+                    JIRA_RATE_LIMIT_MAX_BACKOFF_SECONDS,
+                    max(JiraClient._dynamic_delay_seconds * 2.0, 2.0),
+                )
+            else:
+                JiraClient._dynamic_delay_seconds = max(
+                    JIRA_RATE_LIMIT_MIN_INTERVAL_SECONDS,
+                    JiraClient._dynamic_delay_seconds * 0.9,
+                )
+
+    def _parse_retry_after_seconds(self, headers: Any) -> Optional[float]:
+        try:
+            raw_value = headers.get("Retry-After")
+        except Exception:
+            raw_value = None
+        if raw_value is None:
+            return None
+        try:
+            value = float(str(raw_value).strip())
+        except Exception:
+            return None
+        if not value or value < 0:
+            return None
+        return min(value, JIRA_RATE_LIMIT_MAX_BACKOFF_SECONDS)
+
+    def _request_once(
         self, method: str, path: str, payload: Optional[Dict[str, Any]] = None
     ) -> Tuple[Any, int]:
         url = f"{self.base_url}{path}"
         data = json.dumps(payload).encode("utf-8") if payload is not None else None
         request = Request(url, data=data, headers=self.headers, method=method)
-        try:
-            with urlopen(request, timeout=20) as response:
-                status = response.getcode()
-                raw = response.read().decode("utf-8")
-        except HTTPError as exc:
-            try:
-                error_body = exc.read().decode("utf-8")
-            except Exception:
-                error_body = ""
-            preview = error_body
-            if len(preview) > 2000:
-                preview = preview[:1997] + "..."
-            logger.error(
-                "Jira API error %s %s -> %s: %s",
-                method,
-                path,
-                exc.code,
-                preview,
-            )
-            logger.error(
-                "Jira API request failed: method=%s url=%s payload=%s",
-                method,
-                url,
-                self._summarize_payload(payload),
-            )
-            error_payload: Any = None
-            if error_body:
-                try:
-                    error_payload = json.loads(error_body)
-                except Exception:
-                    error_payload = error_body
-            logger.error(
-                "%s",
-                self._format_block(
-                    "calling JIRA API",
-                    "\n".join(
-                        [
-                            f"{method} {url}",
-                            self._format_payload(payload),
-                            f"RESPONSE {exc.code} - ERROR",
-                            self._format_payload(error_payload),
-                        ]
-                    ),
-                ),
-            )
-            raise RuntimeError(f"Jira API error {exc.code}: {preview}") from exc
+        self._wait_for_rate_limit_slot()
+        with urlopen(request, timeout=20) as response:
+            status = response.getcode()
+            raw = response.read().decode("utf-8")
+            self._apply_near_limit_slowdown(response.headers)
         if not raw:
             return None, status
         return json.loads(raw), status
+
+    def _request(
+        self, method: str, path: str, payload: Optional[Dict[str, Any]] = None
+    ) -> Tuple[Any, int]:
+        url = f"{self.base_url}{path}"
+        attempt = 0
+        last_rate_limit_error: Optional[HTTPError] = None
+        while attempt <= JIRA_RATE_LIMIT_MAX_RETRIES:
+            try:
+                return self._request_once(method, path, payload)
+            except HTTPError as exc:
+                if exc.code == 429:
+                    last_rate_limit_error = exc
+                    retry_after = self._parse_retry_after_seconds(exc.headers)
+                    backoff = retry_after if retry_after is not None else min(
+                        JIRA_RATE_LIMIT_MAX_BACKOFF_SECONDS,
+                        (2.0 ** attempt) + random.uniform(0.0, 1.0),
+                    )
+                    with JiraClient._rate_lock:
+                        JiraClient._dynamic_delay_seconds = min(
+                            JIRA_RATE_LIMIT_MAX_BACKOFF_SECONDS,
+                            max(JiraClient._dynamic_delay_seconds * 2.0, backoff),
+                        )
+                    logger.warning(
+                        "Jira API rate limited %s %s; retrying in %.1fs",
+                        method,
+                        path,
+                        backoff,
+                    )
+                    time.sleep(backoff)
+                    attempt += 1
+                    continue
+                try:
+                    error_body = exc.read().decode("utf-8")
+                except Exception:
+                    error_body = ""
+                preview = error_body
+                if len(preview) > 2000:
+                    preview = preview[:1997] + "..."
+                logger.error(
+                    "Jira API error %s %s -> %s: %s",
+                    method,
+                    path,
+                    exc.code,
+                    preview,
+                )
+                logger.error(
+                    "Jira API request failed: method=%s url=%s payload=%s",
+                    method,
+                    url,
+                    self._summarize_payload(payload),
+                )
+                error_payload: Any = None
+                if error_body:
+                    try:
+                        error_payload = json.loads(error_body)
+                    except Exception:
+                        error_payload = error_body
+                logger.error(
+                    "%s",
+                    self._format_block(
+                        "calling JIRA API",
+                        "\n".join(
+                            [
+                                f"{method} {url}",
+                                self._format_payload(payload),
+                                f"RESPONSE {exc.code} - ERROR",
+                                self._format_payload(error_payload),
+                            ]
+                        ),
+                    ),
+                )
+                raise JiraRequestError(
+                    exc.code, f"Jira API error {exc.code}: {preview}"
+                ) from exc
+        if last_rate_limit_error is not None:
+            raise RuntimeError(
+                f"Jira API rate limited after {JIRA_RATE_LIMIT_MAX_RETRIES} retries"
+            ) from last_rate_limit_error
+        raise RuntimeError(f"Jira API request failed: {method} {url}")
 
     # Handles the get_issue function logic.
     # Input: self, key: str.
@@ -611,9 +714,79 @@ class JiraClient:
                 f"/rest/api/3/issue/{key}?fields=summary,description,status,labels,assignee,issuetype,issuelinks,subtasks,parent,project,timetracking,timeoriginalestimate",
             )
             return data, status
+        except JiraRequestError as exc:
+            logger.exception("Failed to fetch Jira issue %s", key)
+            return None, exc.status_code
         except Exception:
             logger.exception("Failed to fetch Jira issue %s", key)
             return None, None
+
+    # Handles the search_updated_issue_keys function logic.
+    # Input: self, project_keys: Iterable[str], updated_since: str, max_results: int = 100.
+    # Output: Tuple[Optional[List[str]], Optional[int]].
+    def search_updated_issue_keys(
+        self,
+        project_keys: Iterable[str],
+        updated_since: str,
+        max_results: int = 100,
+    ) -> Tuple[Optional[List[str]], Optional[int]]:
+        normalized_projects = sorted({
+            str(project).strip().upper()
+            for project in project_keys
+            if str(project).strip()
+        })
+        if not normalized_projects:
+            return [], 200
+        safe_max = max(1, min(int(max_results or 100), 100))
+        project_clause = ", ".join(normalized_projects)
+        jql = (
+            f"project in ({project_clause}) "
+            f"AND updated >= \"{updated_since}\" "
+            "ORDER BY updated ASC"
+        )
+        next_page_token: Optional[str] = None
+        keys: List[str] = []
+        last_status: Optional[int] = None
+        try:
+            while True:
+                payload: Dict[str, Any] = {
+                    "jql": jql,
+                    "fields": ["key", "updated"],
+                    "maxResults": safe_max,
+                }
+                if next_page_token:
+                    payload["nextPageToken"] = next_page_token
+                data, status = self._request(
+                    "POST",
+                    "/rest/api/3/search/jql",
+                    payload,
+                )
+                last_status = status
+                if not isinstance(data, dict):
+                    return None, status
+                issues = data.get("issues")
+                if not isinstance(issues, list):
+                    return None, status
+                for issue in issues:
+                    if not isinstance(issue, dict):
+                        continue
+                    key = issue.get("key")
+                    if isinstance(key, str) and key.strip():
+                        keys.append(key.strip().upper())
+                raw_next_page_token = data.get("nextPageToken")
+                if isinstance(raw_next_page_token, str) and raw_next_page_token.strip():
+                    next_page_token = raw_next_page_token.strip()
+                    continue
+                total = data.get("total")
+                fetched = len(issues)
+                if not fetched:
+                    break
+                if not isinstance(total, int):
+                    break
+            return sorted(set(keys)), last_status
+        except Exception:
+            logger.exception("Failed to search Jira updated issues for %s", jql)
+            return None, last_status
 
     # Handles the get_issue_editmeta function logic.
     # Input: self, key: str.
@@ -1067,6 +1240,9 @@ class JiraClient:
             if normalized:
                 return normalized, fallback_status
             return None, fallback_status
+        except JiraRequestError as exc:
+            logger.exception("Failed to fetch Jira issue type hierarchy for %s", project_key)
+            return None, exc.status_code
         except Exception:
             logger.exception("Failed to fetch Jira issue type hierarchy for %s", project_key)
             return None, None

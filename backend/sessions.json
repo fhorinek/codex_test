@@ -1,62 +1,34 @@
 {
   "sessions": {
-    "LMNkqd87nJ-5eDA5zpp8nvQX553jQt4w0sYUrwuWeZg": {
-      "username": "user",
-      "created_at": 1770926750,
-      "expires_at": 1773518750
-    },
-    "D-CA0EFn0PWW93nMj-Oeg8S8jGN0mE9dMbLJnPySyLU": {
+    "sgBNUM0hAXVXClJ5jGaVoogpvPUAWAEXf2AkVsDGGW4": {
       "username": "admin",
-      "created_at": 1771023982,
-      "expires_at": 1773615982
+      "created_at": 1785325707,
+      "expires_at": 1787917707
     },
-    "PCnRk9Z5ncnBKm8VsoeIiRYCH2W2XDkKd7tg-pEkhUc": {
+    "s4n2l4hAbVIfjnlnotx4-ZvzUBUvWsT124tGYTGm0mo": {
       "username": "admin",
-      "created_at": 1771786243,
-      "expires_at": 1774378243
+      "created_at": 1785325707,
+      "expires_at": 1787917707
     },
-    "oi3N6z7lplUi7yBUHUAmfrgU-pRW9hqycqp7Gqv7mG8": {
+    "dvZ7N1Yu7EEvXzywK4PKx9HgTUllQEAKUlhXN-KoQxc": {
       "username": "admin",
-      "created_at": 1771786343,
-      "expires_at": 1774378343,
-      "last_space": "jira_test"
+      "created_at": 1785325925,
+      "expires_at": 1787917925
     },
-    "KupDv09YSMJBI4VRBGSvN-BuZt0c26jZ2O6GSbue4as": {
+    "5r0FAdu3LpUtZBjSUv4LgzzjbHvBBP8PzUTwk4Xorbg": {
       "username": "admin",
-      "created_at": 1771786397,
-      "expires_at": 1774378397,
-      "last_space": "jira_test"
+      "created_at": 1785337640,
+      "expires_at": 1787929640
     },
-    "vYNRc4a2bc15Ois3iqqaEp4ilYh8BD-TVB0vvmTdjRc": {
+    "R0Jp0MlN-sMwpbKoTcekSp1YCBI-FukiD8nO1Nvsj58": {
+      "username": "huszarova",
+      "created_at": 1785390618,
+      "expires_at": 1787982618
+    },
+    "QxS_QuS5aWKTfWTxagadFVs7BPnZFRIHRz4GuXU-WOk": {
       "username": "admin",
-      "created_at": 1771792210,
-      "expires_at": 1774384210,
-      "last_space": "jira_test"
-    },
-    "JSJFVE5y3LyLxKEfsq1AEPuIEeb2-qSgJ6IMFnSzCmQ": {
-      "username": "admin",
-      "created_at": 1771795569,
-      "expires_at": 1774387569
-    },
-    "JP93j3TbsU7RrbkJE9TcUGqWjw4XJ3VZsOO4TjoKiTc": {
-      "username": "test",
-      "created_at": 1771800872,
-      "expires_at": 1774392872
-    },
-    "T1sktVTmE-DNg_4vX_mPkV5raNsDVhgmX_YsdOCxJbY": {
-      "username": "admin",
-      "created_at": 1771855938,
-      "expires_at": 1774447938
-    },
-    "foBWLXk97grcAZL4lI7AsoMprs8P8Q7_rw2Yf3jV--s": {
-      "username": "test",
-      "created_at": 1771928850,
-      "expires_at": 1774520850
-    },
-    "rmcobH8ZXhnZBt-3NyXwXB--5upal77CNTVwzwcgh4k": {
-      "username": "admin",
-      "created_at": 1772153183,
-      "expires_at": 1774745183
+      "created_at": 1786436686,
+      "expires_at": 1789028686
     }
   }
 }

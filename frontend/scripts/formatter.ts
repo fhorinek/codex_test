@@ -167,7 +167,7 @@ export function formatTaskScript(text: string): string {
   };
 
   for (let i = 0; i < lines.length; i += 1) {
-    const taskMatch = getLine(lines, i).match(/^(\s*)%\s+/);
+    const taskMatch = getLine(lines, i).match(/^(\s*)%\.?\s+/);
     if (!taskMatch) {
       continue;
     }

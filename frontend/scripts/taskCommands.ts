@@ -25,6 +25,7 @@ type TaskEditDraftTask = {
   name?: string;
   jiraKey?: string | null;
   jiraToken?: string | null;
+  archived?: boolean;
 };
 // Defines the TaskEditDraft type structure for this module.
 type TaskEditDraft = {
@@ -131,7 +132,7 @@ function escapeRegExp(value: string): string {
  */
 export function parseTaskTitleFromLine(line: string): string {
   const raw = typeof line === "string" ? line : "";
-  const match = raw.match(/^\s*%\s*(.*)$/);
+  const match = raw.match(/^\s*%\.?\s*(.*)$/);
   if (!match) {
     return "";
   }
@@ -754,13 +755,15 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     if (!title) {
       return { ok: false, error: "Title is required." };
     }
+    const lines = getEditorValue().split("\n");
+    const currentTaskLine = creatingTask ? "" : lineAt(lines, taskRange.start);
+    const taskMarker = !creatingTask && /^\s*%\./.test(currentTaskLine) ? "%." : "%";
     const bodyLines = String(bodyText || "")
       .replace(/\r/g, "")
       .split("\n")
       .map((line) => (line.trim() === "" ? "" : `${indent}${line}`));
     const jiraPrefix = jiraKey ? ` [${jiraKey}]` : "";
-    const nextLines = [`${indent}%${jiraPrefix} ${title}`, ...bodyLines];
-    const lines = getEditorValue().split("\n");
+    const nextLines = [`${indent}${taskMarker}${jiraPrefix} ${title}`, ...bodyLines];
     const oldTitle = creatingTask ? "" : parseTaskTitleFromLine(lines[taskRange.start] || "");
     lines.splice(taskRange.start, taskRange.end - taskRange.start, ...nextLines);
     renameTaskReferencesInLines(lines, oldTitle, title);

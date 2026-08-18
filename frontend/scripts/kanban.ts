@@ -16,6 +16,8 @@ import {
 
 // Defines the KanbanGroupBy type structure for this module.
 type KanbanGroupBy = "none" | "person" | "tag";
+// Defines the KanbanNoStateMode type structure for this module.
+type KanbanNoStateMode = "show" | "hide";
 
 // Defines the BuildKanbanOptions type structure for this module.
 type BuildKanbanOptions = {
@@ -55,6 +57,7 @@ type BuildKanbanOptions = {
   updateTaskState: (task: any, nextState: string) => void;
   onToggleCheckbox?: ((lineIndex: number, checked: boolean) => void) | null;
   groupBy?: string;
+  noStateMode?: string;
 };
 
 // Defines the UpdateTaskStateOptions type structure for this module.
@@ -260,6 +263,8 @@ function removeLeadingBlankLines(lines: string[], start: number, end: number): n
 
 // Stores the UNASSIGNED_GROUP module constant.
 const UNASSIGNED_GROUP = "__unassigned__";
+// Stores the NO_STATE_COLUMN module constant.
+const NO_STATE_COLUMN = "";
 // Stores the lastKanbanClickAt module constant.
 let lastKanbanClickAt = 0;
 // Stores the lastKanbanClickId module constant.
@@ -315,6 +320,15 @@ function ensureReferenceDropdownHandlers() {
  */
 function normalizeGroupBy(value: any): KanbanGroupBy {
   return value === "person" || value === "tag" ? value : "none";
+}
+
+/**
+ * Handles the normalizeNoStateMode function logic.
+ * Input: value: any.
+ * Output: KanbanNoStateMode.
+ */
+function normalizeNoStateMode(value: any): KanbanNoStateMode {
+  return value === "hide" ? "hide" : "show";
 }
 
 /**
@@ -784,33 +798,6 @@ function renderKanbanCardContent({
   titleNode.className = "kanban-card-title";
   const displayTitle = task.name || "Untitled task";
   const jiraKey = task.jiraKey || parseJiraTitle(task.name || "").key;
-  if (jiraKey) {
-    const pill = document.createElement("span");
-    pill.className = "pill jira-pill";
-    pill.textContent = jiraKey;
-    pill.title = `Copy ${jiraKey}`;
-    pill.addEventListener("click", (event) => {
-      event.stopPropagation();
-      if (navigator.clipboard?.writeText) {
-        navigator.clipboard.writeText(jiraKey);
-      } else {
-        const textarea = document.createElement("textarea");
-        textarea.value = jiraKey;
-        textarea.setAttribute("readonly", "true");
-        textarea.style.position = "fixed";
-        textarea.style.opacity = "0";
-        document.body.appendChild(textarea);
-        textarea.select();
-        try {
-          document.execCommand("copy");
-        } catch {
-          // Ignore copy failures.
-        }
-        document.body.removeChild(textarea);
-      }
-    });
-    titleNode.appendChild(pill);
-  }
   titleNode.append(displayTitle);
   const referenceIndicator = createReferenceIndicator(task, { selectTask, getTaskById });
   if (referenceIndicator) {
@@ -868,6 +855,33 @@ function renderKanbanCardContent({
     storyPill.className = "pill story-points-pill task-story-points-corner";
     storyPill.textContent = storyPointsLabel;
     card.appendChild(storyPill);
+  }
+  if (jiraKey) {
+    const pill = document.createElement("span");
+    pill.className = "task-jira-corner";
+    pill.textContent = jiraKey;
+    pill.title = `Copy ${jiraKey}`;
+    pill.addEventListener("click", (event) => {
+      event.stopPropagation();
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(jiraKey);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = jiraKey;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+          document.execCommand("copy");
+        } catch {
+          // Ignore copy failures.
+        }
+        document.body.removeChild(textarea);
+      }
+    });
+    card.appendChild(pill);
   }
   if (matchesSearchTask(task)) {
     card.classList.add("kanban-search");
@@ -1133,9 +1147,12 @@ function createKanbanColumn({
     column.style.borderColor = lightenColor(metaColor, 0.5);
   }
   const title = document.createElement("h3");
-  title.textContent =
-    state.stateMeta?.get(stateTag)?.name ||
-    stateTag.replace(/^!/, "").replace(/^\w/, (char: string) => char.toUpperCase());
+  title.textContent = stateTag === NO_STATE_COLUMN
+    ? "No state"
+    : (
+      state.stateMeta?.get(stateTag)?.name ||
+      stateTag.replace(/^!/, "").replace(/^\w/, (char: string) => char.toUpperCase())
+    );
   column.appendChild(title);
   const list = document.createElement("div");
   list.className = "kanban-list";
@@ -1198,13 +1215,64 @@ function createKanbanColumn({
     if (!task) {
       return;
     }
-    const nextState = column.dataset["stateTag"];
+    const nextState = column.dataset["stateTag"] || "";
     if (task.state === nextState) {
       return;
     }
     updateTaskState(task, nextState);
   });
   return column;
+}
+
+/**
+ * Keeps each grouped swimlane's same state column at the same width.
+ */
+function syncGroupedKanbanColumnWidths(content: HTMLElement): void {
+  const laneColumns = Array.from(
+    content.querySelectorAll<HTMLElement>(".kanban-lane-columns")
+  );
+  if (!laneColumns.length) {
+    content.style.removeProperty("--kanban-grouped-column-template");
+    return;
+  }
+
+  content.style.removeProperty("--kanban-grouped-column-template");
+  laneColumns.forEach((columns) => {
+    columns.style.gridTemplateColumns = `repeat(${columns.children.length}, minmax(180px, max-content))`;
+  });
+
+  const widths: number[] = [];
+  laneColumns.forEach((columns) => {
+    Array.from(columns.children).forEach((column, index) => {
+      if (!(column instanceof HTMLElement)) {
+        return;
+      }
+      const rectWidth = column.getBoundingClientRect().width;
+      const measuredWidth = Math.ceil(Math.max(
+        column.scrollWidth,
+        column.offsetWidth,
+        Number.isFinite(rectWidth) ? rectWidth : 0,
+        180
+      ));
+      widths[index] = Math.max(widths[index] || 0, measuredWidth);
+    });
+  });
+
+  if (!widths.length) {
+    content.style.removeProperty("--kanban-grouped-column-template");
+    laneColumns.forEach((columns) => {
+      columns.style.removeProperty("grid-template-columns");
+    });
+    return;
+  }
+
+  content.style.setProperty(
+    "--kanban-grouped-column-template",
+    widths.map((width) => `minmax(${width}px, ${width}px)`).join(" ")
+  );
+  laneColumns.forEach((columns) => {
+    columns.style.removeProperty("grid-template-columns");
+  });
 }
 
 /**
@@ -1224,6 +1292,7 @@ export function buildKanban({
   updateTaskState,
   onToggleCheckbox,
   groupBy = "none",
+  noStateMode = "show",
 }: BuildKanbanOptions): void {
   if (!dom.kanbanBoard) {
     return;
@@ -1238,6 +1307,7 @@ export function buildKanban({
   const getTaskById = (taskId: string) =>
     state.allTasks.find((item: any) => item.id === taskId) || null;
   const normalizedGroupBy = normalizeGroupBy(groupBy);
+  const normalizedNoStateMode = normalizeNoStateMode(noStateMode);
   const reuseCards = normalizedGroupBy === "none";
   const existingCards = reuseCards ? new Map() : null;
   if (reuseCards) {
@@ -1263,13 +1333,17 @@ export function buildKanban({
   if (groupFloat) {
     content.appendChild(groupFloat);
   }
+  content.style.removeProperty("--kanban-grouped-column-template");
   dom.kanbanBoard.classList.toggle("kanban-grouped", normalizedGroupBy !== "none");
   const stateOrder = state.config?.states?.map((stateItem: any) => `!${stateItem.key}`) || [];
   const extraStates = Array.from(state.states)
     .filter((stateTag: any) => !stateOrder.includes(stateTag))
     .sort((a, b) => String(a).localeCompare(String(b)));
-  const states = [...stateOrder, ...extraStates];
-  const stateSet = new Set(states);
+  const configuredStates = [...stateOrder, ...extraStates];
+  const states = normalizedNoStateMode === "show"
+    ? [NO_STATE_COLUMN, ...configuredStates]
+    : configuredStates;
+  const configuredStateSet = new Set(configuredStates);
   const filterEnabled = filtersActive();
   /**
    * Handles the shouldIncludeTask function logic.
@@ -1277,16 +1351,28 @@ export function buildKanban({
    * Output: result produced by this function.
    */
   const shouldIncludeTask = (task: any) => !filterEnabled || matchesFilters(task);
+  const isArchivedTask = (task: any): boolean => Boolean(task?.archived);
+  const getTaskStateKey = (task: any): string | null => {
+    if (task.state && configuredStateSet.has(task.state)) {
+      return task.state;
+    }
+    return normalizedNoStateMode === "show" ? NO_STATE_COLUMN : null;
+  };
   if (normalizedGroupBy === "none") {
     const tasksByState = new Map();
     states.forEach((stateTag) => tasksByState.set(stateTag, []));
     state.allTasks.forEach((task: any) => {
-      if (task.state && tasksByState.has(task.state)) {
-        if (!shouldIncludeTask(task)) {
-          return;
-        }
-        tasksByState.get(task.state)?.push(task);
+      if (isArchivedTask(task)) {
+        return;
       }
+      const stateKey = getTaskStateKey(task);
+      if (stateKey === null || !tasksByState.has(stateKey)) {
+        return;
+      }
+      if (!shouldIncludeTask(task)) {
+        return;
+      }
+      tasksByState.get(stateKey)?.push(task);
     });
     states.forEach((stateTag) => {
       const column = createKanbanColumn({
@@ -1319,7 +1405,10 @@ export function buildKanban({
   });
 
   const needsUnassigned = state.allTasks.some((task: any) => {
-    if (!task.state || !stateSet.has(task.state)) {
+    if (isArchivedTask(task)) {
+      return false;
+    }
+    if (getTaskStateKey(task) === null) {
       return false;
     }
     if (!shouldIncludeTask(task)) {
@@ -1334,11 +1423,16 @@ export function buildKanban({
     return false;
   });
   if (needsUnassigned) {
-    groups.push({
+    const unassignedGroup = {
       key: UNASSIGNED_GROUP,
       label: getGroupLabel(normalizedGroupBy, UNASSIGNED_GROUP, null),
       color: "",
-    });
+    };
+    if (normalizedGroupBy === "person") {
+      groups.unshift(unassignedGroup);
+    } else {
+      groups.push(unassignedGroup);
+    }
   }
 
   const groupedTasks = new Map();
@@ -1349,7 +1443,11 @@ export function buildKanban({
   });
 
   state.allTasks.forEach((task: any) => {
-    if (!task.state || !stateSet.has(task.state)) {
+    if (isArchivedTask(task)) {
+      return;
+    }
+    const stateKey = getTaskStateKey(task);
+    if (stateKey === null) {
       return;
     }
     if (!shouldIncludeTask(task)) {
@@ -1361,7 +1459,7 @@ export function buildKanban({
       if (!groupBucket) {
         return;
       }
-      groupBucket.get(task.state)?.push(task);
+      groupBucket.get(stateKey)?.push(task);
     });
   });
 
@@ -1419,6 +1517,7 @@ export function buildKanban({
     lane.appendChild(columns);
     content.appendChild(lane);
   });
+  syncGroupedKanbanColumnWidths(content);
 }
 
 /**

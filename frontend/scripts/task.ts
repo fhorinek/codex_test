@@ -49,6 +49,8 @@ type ParsedTaskRecord = {
   name: string;
   jiraKey: string | null;
   jiraToken?: string | null;
+  archived: boolean;
+  archivedByParent: boolean;
   depth: number;
   indent: number;
   parent: ParsedTaskRecord | null;
@@ -556,9 +558,10 @@ export function parseTasks(text: string): ParsedTaskDocument {
       return;
     }
     const raw = line;
-    const taskMatch = raw.match(/^(\s*)%\s+(.*)$/);
+    const taskMatch = raw.match(/^(\s*)%(\.)?\s+(.*)$/);
     if (taskMatch) {
       const indent = (taskMatch[1] ?? "").length;
+      const ownArchived = Boolean(taskMatch[2]);
       let lastStackEntry = stack.length ? stack[stack.length - 1] : null;
       while (lastStackEntry && lastStackEntry.indent >= indent) {
         stack.pop();
@@ -566,7 +569,8 @@ export function parseTasks(text: string): ParsedTaskDocument {
       }
       const parentEntry = stack.length ? stack[stack.length - 1] : null;
       const depth = parentEntry ? parentEntry.task.depth + 1 : 0;
-      const rawName = (taskMatch[2] ?? "").trim();
+      const parentArchived = Boolean(parentEntry?.task?.archived);
+      const rawName = (taskMatch[3] ?? "").trim();
       const parsedTitle = parseJiraTitle(rawName);
       const name = parsedTitle.title || "";
       const baseName = name || rawName || "task";
@@ -576,6 +580,8 @@ export function parseTasks(text: string): ParsedTaskDocument {
         name,
         jiraKey: parsedTitle.key,
         jiraToken: parsedTitle.token,
+        archived: ownArchived || parentArchived,
+        archivedByParent: parentArchived,
         depth,
         indent,
         parent: null,

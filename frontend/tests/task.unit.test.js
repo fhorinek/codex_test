@@ -232,6 +232,26 @@ test("parseTasks parses story points and computes recursive totals", async () =>
   assert.equal(parsed.totalStoryPoints, 6);
 });
 
+test("parseTasks marks %. tasks and descendants as archived", async () => {
+  const { parseTasks } = await loadTaskModule();
+  const parsed = parseTasks(
+    "%. Archived Parent\n~3\n    % Hidden Child\n    ~2\n% Active\n"
+  );
+
+  assert.equal(parsed.tasks.length, 2);
+  const archived = parsed.tasks[0];
+  const child = archived.children[0];
+  const active = parsed.tasks[1];
+
+  assert.equal(archived.name, "Archived Parent");
+  assert.equal(archived.archived, true);
+  assert.equal(archived.archivedByParent, false);
+  assert.equal(child.archived, true);
+  assert.equal(child.archivedByParent, true);
+  assert.equal(active.archived, false);
+  assert.equal(archived.storyPointsTotal, 5);
+});
+
 // Verifies hierarchy parsing uses relative indentation, not fixed 4-space steps:
 // any increase in leading spaces creates a child level.
 test("parseTasks treats any positive indent increase as child depth", async () => {

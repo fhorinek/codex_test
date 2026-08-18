@@ -31,6 +31,8 @@ export interface TaskNode {
   estimate?: number | string | null;
   jira?: string | null;
   jiraToken?: string | null;
+  archived?: boolean;
+  archivedByParent?: boolean;
   tags?: string[];
   people?: string[];
   depth?: number;

@@ -1,12 +1,11 @@
 # Module: Jira space synchronization helpers and websocket space session integration.
 
 import asyncio
-import difflib
 import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Dict
 
 import y_py as Y
 import websockets
@@ -481,6 +480,7 @@ async def open_space_session(space_id: str) -> SpaceSession:
         raise
     logger.info("Yjs provider started for space %s", space_label)
     await asyncio.sleep(0.2)
+    replace_ydoc_text(ydoc, ydoc_to_text(ydoc))
     session = SpaceSession(
         space_id=space_id,
         websocket=ws,
@@ -505,12 +505,23 @@ async def open_space_session(space_id: str) -> SpaceSession:
 # Output: str.
 def ydoc_to_text(ydoc: Y.YDoc) -> str:
     text = ydoc.get_text("content")
-    raw = text.to_json()
-    if isinstance(raw, str):
-        if len(raw) >= 2 and raw[0] == raw[-1] == '"':
-            return raw[1:-1]
-        return raw
-    return str(raw)
+    return unwrap_json_encoded_text(str(text))
+
+
+def unwrap_json_encoded_text(value: str) -> str:
+    text = value
+    for _ in range(3):
+        candidate = text.strip()
+        if not (len(candidate) >= 2 and candidate[0] == candidate[-1] == '"'):
+            break
+        try:
+            decoded = json.loads(candidate)
+        except Exception:
+            break
+        if not isinstance(decoded, str) or decoded == text:
+            break
+        text = decoded
+    return text
 
 
 # Handles the replace_ydoc_text function logic.
@@ -519,24 +530,18 @@ def ydoc_to_text(ydoc: Y.YDoc) -> str:
 def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
     text = ydoc.get_text("content")
     current = ydoc_to_text(ydoc)
-    if current == content:
+    content = unwrap_json_encoded_text(content)
+    if current == content and len(text) == len(content):
         return
-    matcher = difflib.SequenceMatcher(a=current, b=content)
-    opcodes = matcher.get_opcodes()
 
     # Handles the apply function logic.
     # Input: txn.
     # Output: value produced by this function.
     def apply(txn):
-        for tag, i1, i2, j1, j2 in reversed(opcodes):
-            if tag == "equal":
-                continue
-            if tag in ("delete", "replace"):
-                if i2 > i1:
-                    text.delete_range(txn, i1, i2 - i1)
-            if tag in ("insert", "replace"):
-                if j2 > j1:
-                    text.insert(txn, i1, content[j1:j2])
+        if len(text):
+            text.delete_range(txn, 0, len(text))
+        if content:
+            text.insert(txn, 0, content)
 
     ydoc.transact(apply)
 
@@ -568,9 +573,9 @@ def _encode_shared_map_value(value: Any) -> str:
 
 
 # Handles the set_shared_map_values function logic.
-# Input: ydoc: Y.YDoc, values: dict[str, Any].
+# Input: ydoc: Y.YDoc, values: Dict[str, Any].
 # Output: bool.
-def set_shared_map_values(ydoc: Y.YDoc, values: dict[str, Any]) -> bool:
+def set_shared_map_values(ydoc: Y.YDoc, values: Dict[str, Any]) -> bool:
     if not isinstance(values, dict) or not values:
         return False
     shared_map = ydoc.get_map(SYSTEM_SHARED_MAP_NAME)
