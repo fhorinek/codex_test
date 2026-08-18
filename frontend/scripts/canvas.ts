@@ -1216,8 +1216,22 @@ export function createCanvas({
     if (state.collapsed.has(task.id)) {
       node.classList.add("collapsed");
     }
+    node.style.removeProperty("--archived-stack-depth");
     if (isArchivedTask(task)) {
       node.classList.add("archived");
+      const archivedStackSize = Number(task?._archivedStackSize || 0);
+      const archivedStackIndex = Number(task?._archivedStackIndex || 0);
+      if (archivedStackSize > 1) {
+        node.classList.add("archived-stack");
+        if (archivedStackIndex === 0) {
+          node.classList.add("archived-stack-first");
+        } else if (archivedStackIndex >= archivedStackSize - 1) {
+          node.classList.add("archived-stack-last");
+        } else {
+          node.classList.add("archived-stack-middle");
+        }
+        node.style.setProperty("--archived-stack-depth", String(Math.min(archivedStackIndex, 4)));
+      }
     }
     if (!matchesFiltersTask(task)) {
       node.classList.add("dimmed");
@@ -1476,6 +1490,33 @@ export function createCanvas({
     const widthsById = new Map();
     const parentIdByChildId = new Map();
     const zIndexByTaskId = new Map();
+    const archivedStackByTaskId = new Map();
+    const markArchivedStacks = (tasks: any[]): void => {
+      let run: any[] = [];
+      const flushRun = (): void => {
+        if (run.length > 1) {
+          run.forEach((task: any, index: number) => {
+            archivedStackByTaskId.set(task.id, {
+              index,
+              runIndex: index,
+              size: run.length,
+            });
+          });
+        }
+        run = [];
+      };
+      tasks.forEach((task: any) => {
+        if (isArchivedTask(task)) {
+          run.push(task);
+        } else {
+          flushRun();
+        }
+        if (Array.isArray(task.children) && task.children.length) {
+          markArchivedStacks(task.children);
+        }
+      });
+      flushRun();
+    };
     const assignZIndexes = (tasks: any[], zIndex: number): void => {
       tasks.forEach((task: any) => {
         zIndexByTaskId.set(task.id, zIndex);
@@ -1484,8 +1525,17 @@ export function createCanvas({
         }
       });
     };
+    markArchivedStacks(state.tasks);
     assignZIndexes(state.tasks, 1000);
     visibleTasks.forEach((task: any) => {
+      const archivedStack = archivedStackByTaskId.get(task.id) || null;
+      if (archivedStack) {
+        task._archivedStackIndex = archivedStack.index;
+        task._archivedStackSize = archivedStack.size;
+      } else {
+        delete task._archivedStackIndex;
+        delete task._archivedStackSize;
+      }
       (task.children || []).forEach((child: any) => {
         parentIdByChildId.set(child.id, task.id);
       });
@@ -1531,41 +1581,64 @@ export function createCanvas({
     const spacingX = maxNodeWidth + 80;
 
     // Second pass: compute positions using measured heights to avoid overlaps.
+    const getArchivedStackMeta = (task: any): any => archivedStackByTaskId.get(task.id) || null;
+    const getArchivedStackYStep = (task: any): number => {
+      const height = nodeHeightFor(task.id);
+      return Math.max(14, Math.min(22, height * 0.22));
+    };
+    const getArchivedStackBottom = (run: any[], yPos: number): number => {
+      const maxHeight = run.reduce((max: number, task: any) => Math.max(max, nodeHeightFor(task.id)), 0);
+      const step = run.reduce((max: number, task: any) => Math.max(max, getArchivedStackYStep(task)), 0);
+      return yPos + maxHeight + Math.max(0, run.length - 1) * step;
+    };
+    let placeSiblingTasks: (tasks: any[], startYPos: number) => number;
     const placeTask = (task: any, yPos: number): number => {
       if (!nodesById.has(task.id)) {
         return yPos;
       }
-      const x = startX + task.depth * spacingX;
+      const archivedStack = getArchivedStackMeta(task);
+      const stackIndex = archivedStack ? archivedStack.index : 0;
+      const stackXOffset = archivedStack ? Math.min(stackIndex, 4) * 8 : 0;
+      const stackYOffset = archivedStack ? stackIndex * getArchivedStackYStep(task) : 0;
+      const x = startX + task.depth * spacingX + stackXOffset;
       const height = nodeHeightFor(task.id);
       const width = nodeWidthFor(task.id);
-      positions.set(task.id, { x, y: yPos });
+      positions.set(task.id, { x, y: yPos + stackYOffset });
       maxX = Math.max(maxX, x + width);
-      maxY = Math.max(maxY, yPos + height);
+      maxY = Math.max(maxY, yPos + stackYOffset + height);
       if (state.collapsed.has(task.id) || !task.children.length) {
-        return yPos + height;
+        return yPos + stackYOffset + height;
       }
-      let currentBottom = yPos + height;
-      let childStackBottom = yPos;
-      task.children.forEach((child: any, index: number) => {
-        if (!nodesById.has(child.id)) {
-          return;
-        }
-        const childY = index === 0 ? yPos : childStackBottom + gapY;
-        const childBottom = placeTask(child, childY);
-        childStackBottom = Math.max(childStackBottom, childBottom);
-        currentBottom = Math.max(currentBottom, childBottom);
-      });
+      const childStackBottom = placeSiblingTasks(task.children, yPos + stackYOffset);
+      const currentBottom = Math.max(yPos + stackYOffset + height, childStackBottom - gapY);
       return currentBottom;
     };
 
-    let currentY = 40;
-    state.tasks.forEach((task: any) => {
-      if (!nodesById.has(task.id)) {
-        return;
+    placeSiblingTasks = (tasks: any[], startYPos: number): number => {
+      let currentSiblingY = startYPos;
+      for (let index = 0; index < tasks.length; index += 1) {
+        const task = tasks[index];
+        if (!nodesById.has(task.id)) {
+          continue;
+        }
+        const archivedStack = getArchivedStackMeta(task);
+        if (archivedStack && archivedStack.runIndex === 0 && archivedStack.size > 1) {
+          const run = tasks.slice(index, index + archivedStack.size).filter((item: any) => nodesById.has(item.id));
+          run.forEach((runTask: any) => {
+            placeTask(runTask, currentSiblingY);
+          });
+          currentSiblingY = getArchivedStackBottom(run, currentSiblingY) + gapY;
+          index += archivedStack.size - 1;
+          continue;
+        }
+        const bottomY = placeTask(task, currentSiblingY);
+        currentSiblingY = bottomY + gapY;
       }
-      const bottomY = placeTask(task, currentY);
-      currentY = bottomY + gapY;
-    });
+      return currentSiblingY;
+    };
+
+    let currentY = 40;
+    currentY = placeSiblingTasks(state.tasks, currentY);
 
     state.positions = positions;
     const viewWidth = Math.max(1, Math.floor(Math.max(canvasRect.width, maxX + 60)));
@@ -1584,6 +1657,12 @@ export function createCanvas({
         return;
       }
       node.style.zIndex = `${zIndexByTaskId.get(taskId) || 1000}`;
+      const task = getTaskById(taskId);
+      const archivedStack = task ? archivedStackByTaskId.get(task.id) : null;
+      if (archivedStack && archivedStack.size > 1) {
+        const baseZIndex = zIndexByTaskId.get(taskId) || 1000;
+        node.style.zIndex = `${baseZIndex + archivedStack.size - archivedStack.index}`;
+      }
       const parentId = parentIdByChildId.get(taskId);
       const parentPos = parentId ? positions.get(parentId) : null;
       const shouldAnimateFromParent = (
