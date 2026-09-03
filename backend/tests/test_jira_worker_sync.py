@@ -84,6 +84,95 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(worker, "SPACES_DIR", spaces_dir):
                 self.assertEqual(worker.iter_space_room_ids(), ["root_space", "team/board"])
 
+    def test_apply_people_config_rewrites_existing_people_block(self):
+        lines = [
+            "Board:",
+            "    states:",
+            "        closed:",
+            "            name: Closed",
+            "            jira: Closed",
+            "    people:",
+            "        old:",
+            "            name: Old User",
+            "",
+            "% [KAN-1] Task",
+        ]
+        people = {
+            "maya": worker.PersonConfig(
+                slug="maya",
+                name="Maya Rivera",
+                mail="maya@example.com",
+            )
+        }
+        _, _, people_block = worker.parse_people_config(lines)
+
+        updated, next_block = worker.apply_people_config(
+            lines,
+            people,
+            ["maya"],
+            people_block,
+        )
+
+        self.assertEqual(
+            updated,
+            [
+                "Board:",
+                "    states:",
+                "        closed:",
+                "            name: Closed",
+                "            jira: Closed",
+                "    people:",
+                "        maya:",
+                "            name: Maya Rivera",
+                "            mail: maya@example.com",
+                "",
+                "% [KAN-1] Task",
+            ],
+        )
+        self.assertEqual(next_block, (5, 10, "    "))
+
+    def test_jira_status_matches_space_state_uses_name_and_jira_aliases(self):
+        states = {
+            "inprogress": worker.StateConfig(
+                slug="inprogress",
+                name="In progress",
+                jira=[],
+            ),
+            "ready": worker.StateConfig(
+                slug="ready",
+                name="Ready",
+                jira=["Ready for Test"],
+            ),
+        }
+
+        self.assertTrue(
+            worker.jira_status_matches_space_state(
+                "In Progress",
+                "inprogress",
+                states,
+            )
+        )
+        self.assertTrue(
+            worker.jira_status_matches_space_state(
+                "ready for test",
+                "ready",
+                states,
+            )
+        )
+        self.assertFalse(
+            worker.jira_status_matches_space_state(
+                "Ready for Test",
+                "inprogress",
+                states,
+            )
+        )
+        self.assertEqual(
+            worker.extract_jira_issue_status_summary(
+                {"fields": {"status": {"id": "10017", "name": "To Do"}}}
+            ),
+            ("To Do", "10017"),
+        )
+
     async def _run_sync(
         self,
         input_text,
@@ -148,6 +237,18 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
                 getattr(bulk_progress_method, "return_value", None), tuple
             ):
                 bulk_progress_method.return_value = default_bulk_progress
+        if hasattr(client, "bulk_edit_issue_status"):
+            bulk_edit_status_method = client.bulk_edit_issue_status
+            if getattr(bulk_edit_status_method, "side_effect", None) is None and not isinstance(
+                getattr(bulk_edit_status_method, "return_value", None), tuple
+            ):
+                bulk_edit_status_method.return_value = (None, None)
+        if hasattr(client, "transition_issue_via_path"):
+            transition_path_method = client.transition_issue_via_path
+            if getattr(transition_path_method, "side_effect", None) is None and not isinstance(
+                getattr(transition_path_method, "return_value", None), tuple
+            ):
+                transition_path_method.return_value = (None, None)
 
         async def fake_read(ydoc_obj):
             return ydoc_obj["text"]
@@ -456,16 +557,28 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sync_space_with_jira_pushes_state_via_transition(self):
         client = Mock()
-        client.get_issue.return_value = (
-            _issue_payload(
-                "KAN-1",
-                "Task",
-                "",
-                labels=[],
-                status_name="To Do",
+        client.get_issue.side_effect = [
+            (
+                _issue_payload(
+                    "KAN-1",
+                    "Task",
+                    "",
+                    labels=[],
+                    status_name="To Do",
+                ),
+                200,
             ),
-            200,
-        )
+            (
+                _issue_payload(
+                    "KAN-1",
+                    "Task",
+                    "",
+                    labels=[],
+                    status_name="Done",
+                ),
+                200,
+            ),
+        ]
         client.update_issue.return_value = (204, {})
         client.transition_issue.return_value = (204, {})
         client.create_issue.return_value = (None, None, None)
@@ -493,7 +606,7 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(output_text, input_text)
         self.assertEqual(writes, [])
-        client.get_issue.assert_called_once_with("KAN-1")
+        self.assertEqual([call.args for call in client.get_issue.call_args_list], [("KAN-1",), ("KAN-1",)])
         client.update_issue.assert_not_called()
         client.transition_issue.assert_called_once_with("KAN-1", "Done")
 

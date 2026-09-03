@@ -237,13 +237,90 @@ function foldConfigBlock(state: any, line: any) {
     }
     return { from: line.to, to: state.doc.line(endLine).to };
 }
+/**
+ * Handles the isHeaderConfigHeading function logic.
+ * Input: state: any, line: any.
+ * Output: boolean.
+ */
+function isHeaderConfigHeading(state: any, line: any): boolean {
+    const text = line?.text || "";
+    const trimmed = text.trim();
+    if (!trimmed || !trimmed.endsWith(":") || /^\s*%/.test(text)) {
+        return false;
+    }
+    return line.number < findFirstTaskLineNumber(state.doc);
+}
+/**
+ * Handles the lineHasNestedConfigSection function logic.
+ * Input: state: any, line: any, firstTaskLineNumber: number.
+ * Output: boolean.
+ */
+function lineHasNestedConfigSection(state: any, line: any, firstTaskLineNumber: number): boolean {
+    const baseIndent = getIndent(line.text);
+    for (let i = line.number + 1; i < firstTaskLineNumber; i += 1) {
+        const current = state.doc.line(i);
+        const text = current.text;
+        if (text.trim() === "") {
+            continue;
+        }
+        const indent = getIndent(text);
+        if (indent <= baseIndent) {
+            return false;
+        }
+        const key = text.trim().replace(/:$/, "").toLowerCase();
+        if (indent > baseIndent && (key === "states" || key === "people" || key === "tags")) {
+            return true;
+        }
+    }
+    return false;
+}
+/**
+ * Handles the findInitialBoardConfigFoldRange function logic.
+ * Input: state: any.
+ * Output: fold range or null.
+ */
+function findInitialBoardConfigFoldRange(state: any) {
+    const firstTaskLineNumber = findFirstTaskLineNumber(state.doc);
+    for (let lineNumber = 1; lineNumber < firstTaskLineNumber; lineNumber += 1) {
+        const line = state.doc.line(lineNumber);
+        const trimmed = line.text.trim();
+        if (!trimmed || getIndent(line.text) !== 0 || !trimmed.endsWith(":")) {
+            continue;
+        }
+        if (!lineHasNestedConfigSection(state, line, firstTaskLineNumber)) {
+            continue;
+        }
+        return foldConfigBlock(state, line);
+    }
+    return null;
+}
+/**
+ * Handles the foldInitialBoardConfig function logic.
+ * Input: view: any.
+ * Output: void.
+ */
+function foldInitialBoardConfig(view: any): void {
+    const range = findInitialBoardConfigFoldRange(view.state);
+    if (!range || range.to <= range.from) {
+        return;
+    }
+    let alreadyFolded = false;
+    foldedRanges(view.state).between(range.from, range.to, (from: number, to: number) => {
+        if (from === range.from && to === range.to) {
+            alreadyFolded = true;
+        }
+    });
+    if (!alreadyFolded) {
+        view.dispatch({ effects: foldEffect.of(range) });
+    }
+}
 const taskScriptFoldService = foldService.of((state, lineStart) => {
     const line = state.doc.lineAt(lineStart);
     const text = line.text;
     if (/^\s*%/.test(text)) {
         return foldTaskBlock(state, line);
     }
-    if (/^\s*[a-zA-Z][\w-]*:\s*$/.test(text)) {
+    if (/^\s*[a-zA-Z][\w-]*:\s*$/.test(text) || isHeaderConfigHeading(state, line)) {
         return foldConfigBlock(state, line);
     }
     return null;
@@ -1995,6 +2072,7 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
         textarea.scrollLeft = view.scrollDOM.scrollLeft;
         syncTextareaOverlayMetrics();
     }
+    foldInitialBoardConfig(view);
     textarea.addEventListener("input", () => {
         if (suppressTextareaInput) {
             return;
@@ -2168,6 +2246,7 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
             view.dispatch({
                 changes: { from: 0, to: view.state.doc.length, insert: nextValue },
             });
+            foldInitialBoardConfig(view);
         },
         /**
          * Handles the setValueFromRemote function logic.

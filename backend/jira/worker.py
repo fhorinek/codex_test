@@ -1009,6 +1009,7 @@ def apply_people_config(
 ) -> Tuple[List[str], Tuple[int, int, str]]:
     if block:
         start, end, indent = block
+        new_block = render_people_config(indent, people, order)
     else:
         header_index, config_end, header_indent = find_config_bounds(lines)
         if header_index is None:
@@ -1729,6 +1730,66 @@ def map_space_state_to_jira(
     if config.name:
         return config.name
     return None
+
+
+# Handles the extract_jira_issue_status_name function logic.
+# Input: issue: Optional[Dict[str, Any]].
+# Output: Optional[str].
+def extract_jira_issue_status_name(issue: Optional[Dict[str, Any]]) -> Optional[str]:
+    if not isinstance(issue, dict):
+        return None
+    fields = issue.get("fields")
+    if not isinstance(fields, dict):
+        return None
+    status = fields.get("status")
+    if not isinstance(status, dict):
+        return None
+    name = status.get("name")
+    if not isinstance(name, str):
+        return None
+    normalized = name.strip()
+    return normalized or None
+
+
+# Handles the extract_jira_issue_status_summary function logic.
+# Input: issue: Optional[Dict[str, Any]].
+# Output: Tuple[Optional[str], Optional[str]].
+def extract_jira_issue_status_summary(
+    issue: Optional[Dict[str, Any]]
+) -> Tuple[Optional[str], Optional[str]]:
+    if not isinstance(issue, dict):
+        return None, None
+    fields = issue.get("fields")
+    if not isinstance(fields, dict):
+        return None, None
+    status = fields.get("status")
+    if not isinstance(status, dict):
+        return None, None
+    raw_name = status.get("name")
+    raw_status_id = status.get("id")
+    name = raw_name.strip() if isinstance(raw_name, str) else None
+    status_id = str(raw_status_id).strip() if raw_status_id is not None else None
+    return name or None, status_id or None
+
+
+# Handles the jira_status_matches_space_state function logic.
+# Input: status_name: Optional[str], state: Optional[str], states: Dict[str, StateConfig].
+# Output: bool.
+def jira_status_matches_space_state(
+    status_name: Optional[str],
+    state: Optional[str],
+    states: Dict[str, StateConfig],
+) -> bool:
+    if not status_name or not state:
+        return False
+    normalized_state = state.strip()
+    config = states.get(normalized_state)
+    if not config:
+        return False
+    status_key = status_name.strip().lower()
+    if config.name and config.name.strip().lower() == status_key:
+        return True
+    return any(item.strip().lower() == status_key for item in config.jira)
 
 
 # Handles the resolve_assignee_slug function logic.
@@ -2965,10 +3026,13 @@ def format_sync_status(
     parts: List[str] = []
     update = status.get("update")
     transition = status.get("transition")
+    bulk = status.get("bulk")
     if update is not None:
         parts.append(f"u={update}")
     if transition is not None:
         parts.append(f"t={transition}")
+    if bulk is not None:
+        parts.append(f"b={bulk}")
     if not parts:
         return direction
     return f"{direction}({','.join(parts)})"
@@ -4607,6 +4671,8 @@ async def sync_space_with_jira(
                     jira_status = map_space_state_to_jira(
                         space_entity.state, states_config
                     )
+                    transition_status = None
+                    transition_payload = None
                     if jira_status:
                         project_for_key = project_key_from_issue_key(key) or project_key
                         logger.info(
@@ -4616,19 +4682,162 @@ async def sync_space_with_jira(
                             key,
                             jira_status,
                         )
-                        status, payload = await run_blocking_io(
+                        transition_status, transition_payload = await run_blocking_io(
                             client.transition_issue, key, jira_status
                         )
-                        jira_status_by_key.setdefault(key, {})["transition"] = status
+                        jira_status_by_key.setdefault(key, {})["transition"] = transition_status
                         project_for_key = project_key_from_issue_key(key) or project_key
                         logger.debug(
                             "[Space %s] -> [JIRA %s] transition response for %s: %s",
                             session.space_id,
                             project_for_key or "(unknown)",
                             key,
-                            summarize_jira_response(status, payload),
+                            summarize_jira_response(transition_status, transition_payload),
                         )
-                    if status is not None:
+                    else:
+                        project_for_key = project_key_from_issue_key(key) or project_key
+                        logger.warning(
+                            "[Space %s] -> [JIRA %s] state %s for %s is not mapped to a Jira status; skipping transition",
+                            session.space_id,
+                            project_for_key or "(unknown)",
+                            space_entity.state or "(none)",
+                            key,
+                        )
+                    transition_verified = False
+                    if jira_status and transition_status is None:
+                        bulk_edit_status = None
+                        bulk_edit_payload = None
+                        project_for_key = project_key_from_issue_key(key) or project_key
+                        logger.warning(
+                            "[Space %s] -> [JIRA %s] transition %s -> %s returned no status; trying transition path",
+                            session.space_id,
+                            project_for_key or "(unknown)",
+                            key,
+                            jira_status,
+                        )
+                        path_status, path_payload = await run_blocking_io(
+                            client.transition_issue_via_path, key, jira_status
+                        )
+                        jira_status_by_key.setdefault(key, {})["path"] = path_status
+                        logger.debug(
+                            "[Space %s] -> [JIRA %s] transition path response for %s: %s",
+                            session.space_id,
+                            project_for_key or "(unknown)",
+                            key,
+                            summarize_jira_response(path_status, path_payload),
+                        )
+                        if path_status is not None:
+                            transition_status = path_status
+                        else:
+                            logger.warning(
+                                "[Space %s] -> [JIRA %s] transition path %s -> %s returned no status; trying bulk edit status",
+                                session.space_id,
+                                project_for_key or "(unknown)",
+                                key,
+                                jira_status,
+                            )
+                            bulk_edit_status, bulk_edit_payload = await run_blocking_io(
+                                client.bulk_edit_issue_status, key, jira_status
+                            )
+                            jira_status_by_key.setdefault(key, {})["bulk"] = bulk_edit_status
+                            logger.debug(
+                                "[Space %s] -> [JIRA %s] bulk edit status response for %s: %s",
+                                session.space_id,
+                                project_for_key or "(unknown)",
+                                key,
+                                summarize_jira_response(bulk_edit_status, bulk_edit_payload),
+                            )
+                        if (
+                            transition_status is None
+                            and bulk_edit_status == 201
+                            and isinstance(bulk_edit_payload, dict)
+                        ):
+                            raw_task_id = bulk_edit_payload.get("taskId")
+                            task_id = str(raw_task_id).strip() if raw_task_id is not None else ""
+                            if task_id:
+                                completed, bulk_state, bulk_payload, bulk_status = await wait_for_bulk_task_completion(
+                                    client, task_id
+                                )
+                                processed_count = (
+                                    len(bulk_payload.get("processedAccessibleIssues") or [])
+                                    if isinstance(bulk_payload, dict)
+                                    else 0
+                                )
+                                invalid_count = (
+                                    bulk_payload.get("invalidOrInaccessibleIssueCount")
+                                    if isinstance(bulk_payload, dict)
+                                    else None
+                                )
+                                failed_count = (
+                                    len(bulk_payload.get("failedAccessibleIssues") or {})
+                                    if isinstance(bulk_payload, dict)
+                                    else 0
+                                )
+                                logger.info(
+                                    "[Space %s] -> [JIRA %s] bulk edit status %s task %s finished=%s state=%s status=%s processed=%s invalid=%s failed=%s",
+                                    session.space_id,
+                                    project_for_key or "(unknown)",
+                                    key,
+                                    task_id,
+                                    completed,
+                                    bulk_state or "(unknown)",
+                                    bulk_status if bulk_status is not None else "(none)",
+                                    processed_count,
+                                    invalid_count if invalid_count is not None else "(unknown)",
+                                    failed_count,
+                                )
+                                if not completed:
+                                    logger.warning(
+                                        "[Space %s] -> [JIRA %s] bulk edit status %s task %s did not complete: %s",
+                                        session.space_id,
+                                        project_for_key or "(unknown)",
+                                        key,
+                                        task_id,
+                                        summarize_jira_response(bulk_status, bulk_payload),
+                                    )
+                            if bulk_edit_status is not None:
+                                transition_status = bulk_edit_status
+                    if jira_status and transition_status is not None:
+                        for attempt in range(3):
+                            try:
+                                verify_issue, verify_status = await run_blocking_io(
+                                    client.get_issue, key
+                                )
+                            except Exception:
+                                logger.exception(
+                                    "[Space %s] -> [JIRA %s] failed to verify transition for %s",
+                                    session.space_id,
+                                    project_for_key or "(unknown)",
+                                    key,
+                                )
+                                break
+                            actual_status, actual_status_id = extract_jira_issue_status_summary(verify_issue)
+                            logger.info(
+                                "[Space %s] -> [JIRA %s] transition verify %s: target=%s actual=%s actual_id=%s fetch_status=%s",
+                                session.space_id,
+                                project_for_key or "(unknown)",
+                                key,
+                                jira_status or "(unknown)",
+                                actual_status or "(unknown)",
+                                actual_status_id or "(unknown)",
+                                verify_status if verify_status is not None else "(none)",
+                            )
+                            if jira_status_matches_space_state(
+                                actual_status, space_entity.state, states_config
+                            ):
+                                transition_verified = True
+                                break
+                            if attempt < 2:
+                                await asyncio.sleep(0.5)
+                        if not transition_verified:
+                            logger.warning(
+                                "[Space %s] -> [JIRA %s] transition %s did not reach %s; leaving Jira cache unchanged",
+                                session.space_id,
+                                project_for_key or "(unknown)",
+                                key,
+                                jira_status or "(unknown)",
+                            )
+                    if transition_verified:
                         updated_jira.state = space_entity.state
                         jira_updated = True
                 if jira_updated:

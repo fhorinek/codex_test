@@ -33,6 +33,16 @@ test("editor source contains header-config autocomplete implementation", async (
   assert.match(source, /taskScriptCompletionSource/);
 });
 
+// Verifies the board title/config header can fold and starts folded by default.
+test("editor source contains default folded board config implementation", async () => {
+  const source = await readEditorSource();
+  assert.match(source, /function isHeaderConfigHeading/);
+  assert.match(source, /function findInitialBoardConfigFoldRange/);
+  assert.match(source, /function foldInitialBoardConfig/);
+  assert.match(source, /lineHasNestedConfigSection/);
+  assert.match(source, /foldInitialBoardConfig\(view\)/);
+});
+
 // Verifies Jira bracket autocomplete support is present:
 // "[" trigger, Jira marker collector, and closing-bracket apply text.
 test("editor source contains jira bracket autocomplete implementation", async () => {

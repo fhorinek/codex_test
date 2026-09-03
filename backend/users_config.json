@@ -13,8 +13,8 @@
       "role": "manager",
       "spaces": [],
       "must_change_password": false,
-      "password_salt": "0e463c28ac30a35c",
-      "password_hash": "c426155ab44fef8b39a453b76490c51f"
+      "password_salt": "499f75f1fd16fee0",
+      "password_hash": "98e0829a271b0087d1cab8b7fd51c146"
     },
     "huszarova": {
       "display_name": "Patrícia Huszarová",

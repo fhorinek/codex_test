@@ -524,6 +524,140 @@ class JiraClient:
                 return str(issue_type_id).strip() or None
         return None
 
+    # Handles the _fetch_project_status_entries function logic.
+    # Input: self, project_key: str.
+    # Output: Optional[List[Dict[str, str]]].
+    def _fetch_project_status_entries(
+        self,
+        project_key: str,
+    ) -> Optional[List[Dict[str, str]]]:
+        if not project_key:
+            return None
+        try:
+            data, _ = self._request(
+                "GET", f"/rest/api/3/project/{project_key}/statuses"
+            )
+        except Exception:
+            logger.exception(
+                "Failed to fetch Jira statuses for project %s",
+                project_key,
+            )
+            return None
+        if not isinstance(data, list):
+            return None
+        entries: List[Dict[str, str]] = []
+        seen = set()
+        for issue_type in data:
+            if not isinstance(issue_type, dict):
+                continue
+            raw_issue_type_id = issue_type.get("id")
+            issue_type_id = (
+                str(raw_issue_type_id).strip()
+                if raw_issue_type_id is not None
+                else ""
+            )
+            raw_issue_type_name = issue_type.get("name")
+            issue_type_name = (
+                raw_issue_type_name.strip()
+                if isinstance(raw_issue_type_name, str)
+                else ""
+            )
+            for status_entry in issue_type.get("statuses", []) or []:
+                if not isinstance(status_entry, dict):
+                    continue
+                raw_status_id = status_entry.get("id")
+                raw_status_name = status_entry.get("name")
+                if raw_status_id is None or not isinstance(raw_status_name, str):
+                    continue
+                status_id = str(raw_status_id).strip()
+                status_name = raw_status_name.strip()
+                if not status_id or not status_name:
+                    continue
+                key = (issue_type_id, status_id, status_name.lower())
+                if key in seen:
+                    continue
+                seen.add(key)
+                entries.append(
+                    {
+                        "issue_type_id": issue_type_id,
+                        "issue_type_name": issue_type_name,
+                        "status_id": status_id,
+                        "status_name": status_name,
+                    }
+                )
+        return entries
+
+    # Handles the _resolve_status_id_from_entries function logic.
+    # Input: self, entries: List[Dict[str, str]], status_name: str, issue_type_id: Optional[str] = None.
+    # Output: Optional[str].
+    def _resolve_status_id_from_entries(
+        self,
+        entries: List[Dict[str, str]],
+        status_name: str,
+        issue_type_id: Optional[str] = None,
+    ) -> Optional[str]:
+        normalized_target = (status_name or "").strip().lower()
+        if not normalized_target:
+            return None
+        fallback = None
+        normalized_issue_type_id = str(issue_type_id or "").strip()
+        for entry in entries:
+            if entry.get("status_name", "").strip().lower() != normalized_target:
+                continue
+            status_id = entry.get("status_id", "").strip()
+            if not status_id:
+                continue
+            if normalized_issue_type_id and entry.get("issue_type_id") == normalized_issue_type_id:
+                return status_id
+            if fallback is None:
+                fallback = status_id
+        return fallback
+
+    # Handles the _resolve_project_status_id function logic.
+    # Input: self, project_key: str, status_name: str, issue_type_id: Optional[str] = None.
+    # Output: Optional[str].
+    def _resolve_project_status_id(
+        self,
+        project_key: str,
+        status_name: str,
+        issue_type_id: Optional[str] = None,
+    ) -> Optional[str]:
+        entries = self._fetch_project_status_entries(project_key)
+        if entries is None:
+            return None
+        return self._resolve_status_id_from_entries(entries, status_name, issue_type_id)
+
+    # Handles the _extract_issue_move_context function logic.
+    # Input: issue: Any.
+    # Output: Optional[Dict[str, str]].
+    def _extract_issue_move_context(self, issue: Any) -> Optional[Dict[str, str]]:
+        if not isinstance(issue, dict):
+            return None
+        fields = issue.get("fields")
+        if not isinstance(fields, dict):
+            return None
+        project = fields.get("project")
+        issue_type = fields.get("issuetype")
+        status = fields.get("status")
+        if not isinstance(project, dict) or not isinstance(issue_type, dict) or not isinstance(status, dict):
+            return None
+        project_key = str(project.get("key") or "").strip().upper()
+        issue_type_id = str(issue_type.get("id") or "").strip()
+        status_id = str(status.get("id") or "").strip()
+        if not project_key or not issue_type_id or not status_id:
+            return None
+        context = {
+            "project_key": project_key,
+            "issue_type_id": issue_type_id,
+            "status_id": status_id,
+        }
+        parent = fields.get("parent")
+        if isinstance(parent, dict):
+            parent_key = str(parent.get("key") or "").strip().upper()
+            if parent_key:
+                context["parent_key"] = parent_key
+        return context
+
     # Handles the _summarize_payload function logic.
     # Input: self, payload: Optional[Dict[str, Any]].
     # Output: str.
@@ -1120,6 +1254,277 @@ class JiraClient:
             logger.exception("Failed to update Jira issue parent %s", key)
             return None, None
 
+    # Handles the move_issue_status function logic.
+    # Input: self, key: str, status_name: str.
+    # Output: Tuple[Optional[int], Optional[Dict[str, Any]]].
+    def move_issue_status(
+        self, key: str, status_name: str
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]]]:
+        try:
+            issue, issue_status = self.get_issue(key)
+            context = self._extract_issue_move_context(issue)
+            if not context:
+                logger.warning(
+                    "Bulk status move context missing for %s while targeting %s (fetch status: %s)",
+                    key,
+                    status_name,
+                    issue_status if issue_status is not None else "(none)",
+                )
+                return None, None
+            status_entries = self._fetch_project_status_entries(context["project_key"])
+            if status_entries is None:
+                logger.warning(
+                    "Bulk status move could not list project statuses for %s in project %s",
+                    key,
+                    context["project_key"],
+                )
+                return None, None
+            matching_type_entries = [
+                entry
+                for entry in status_entries
+                if entry.get("issue_type_id") == context["issue_type_id"]
+            ]
+            log_entries = matching_type_entries or status_entries
+            logger.info(
+                "Jira statuses before bulk status move for %s: project=%s issue_type=%s statuses=%s",
+                key,
+                context["project_key"],
+                context["issue_type_id"],
+                ", ".join(
+                    f"{entry.get('status_id')}:{entry.get('status_name')}"
+                    for entry in log_entries
+                ) or "(none)",
+            )
+            target_status_id = self._resolve_status_id_from_entries(
+                status_entries,
+                status_name,
+                context["issue_type_id"],
+            )
+            if not target_status_id:
+                logger.warning(
+                    "Bulk status move target %s does not exist for %s in project %s issue type %s",
+                    status_name,
+                    key,
+                    context["project_key"],
+                    context["issue_type_id"],
+                )
+                return None, None
+            if target_status_id == context["status_id"]:
+                logger.info(
+                    "Bulk status move skipped for %s; Jira already reports %s",
+                    key,
+                    status_name,
+                )
+                return 204, {}
+            logger.info(
+                "Bulk status move context for %s: project=%s issue_type=%s current_status=%s target_status=%s",
+                key,
+                context["project_key"],
+                context["issue_type_id"],
+                context["status_id"],
+                target_status_id,
+            )
+            mapping_key = f"{context['project_key']},{context['issue_type_id']}"
+            if context.get("parent_key"):
+                mapping_key = f"{mapping_key},{context['parent_key']}"
+            payload = {
+                "sendBulkNotification": False,
+                "targetToSourcesMapping": {
+                    mapping_key: {
+                        "issueIdsOrKeys": [key],
+                        "inferClassificationDefaults": True,
+                        "inferFieldDefaults": True,
+                        "inferStatusDefaults": False,
+                        "inferSubtaskTypeDefault": True,
+                        "targetMandatoryFields": [],
+                        "targetStatus": [
+                            {
+                                "statuses": {
+                                    target_status_id: [context["status_id"]],
+                                }
+                            }
+                        ],
+                    }
+                },
+            }
+            result, status = self._request(
+                "POST",
+                "/rest/api/3/bulk/issues/move",
+                payload,
+            )
+            logger.info(
+                "%s",
+                self._format_block(
+                    "calling JIRA API",
+                    "\n".join(
+                        [
+                            f"POST {self.base_url}/rest/api/3/bulk/issues/move",
+                            self._format_payload(payload),
+                            f"RESPONSE {status} - OK",
+                            self._format_payload(result),
+                        ]
+                    ),
+                ),
+            )
+            return status, result if isinstance(result, dict) else None
+        except Exception:
+            logger.exception(
+                "Failed to bulk move Jira issue %s to status %s",
+                key,
+                status_name,
+            )
+            return None, None
+
+    # Handles the bulk_edit_issue_status function logic.
+    # Input: self, key: str, status_name: str.
+    # Output: Tuple[Optional[int], Optional[Dict[str, Any]]].
+    def bulk_edit_issue_status(
+        self, key: str, status_name: str
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]]]:
+        try:
+            issue, issue_status = self.get_issue(key)
+            context = self._extract_issue_move_context(issue)
+            if not context:
+                logger.warning(
+                    "Bulk edit status context missing for %s while targeting %s (fetch status: %s)",
+                    key,
+                    status_name,
+                    issue_status if issue_status is not None else "(none)",
+                )
+                return None, None
+            status_entries = self._fetch_project_status_entries(context["project_key"])
+            if status_entries is None:
+                logger.warning(
+                    "Bulk edit status could not list project statuses for %s in project %s",
+                    key,
+                    context["project_key"],
+                )
+                return None, None
+            matching_type_entries = [
+                entry
+                for entry in status_entries
+                if entry.get("issue_type_id") == context["issue_type_id"]
+            ]
+            log_entries = matching_type_entries or status_entries
+            logger.info(
+                "Jira statuses before bulk edit status for %s: project=%s issue_type=%s statuses=%s",
+                key,
+                context["project_key"],
+                context["issue_type_id"],
+                ", ".join(
+                    f"{entry.get('status_id')}:{entry.get('status_name')}"
+                    for entry in log_entries
+                ) or "(none)",
+            )
+            editable_fields, editable_fields_status = self._request(
+                "GET",
+                f"/rest/api/3/bulk/issues/fields?issueIdsOrKeys={quote(str(key), safe='')}",
+            )
+            fields_payload = (
+                editable_fields.get("fields")
+                if isinstance(editable_fields, dict)
+                else None
+            )
+            fields = fields_payload if isinstance(fields_payload, list) else []
+            log_fields = [
+                f"{field.get('id')}:{field.get('name')}"
+                + (
+                    f" unavailable={field.get('unavailableMessage')}"
+                    if field.get("unavailableMessage")
+                    else ""
+                )
+                for field in fields
+                if isinstance(field, dict)
+            ]
+            logger.info(
+                "Jira bulk editable fields for %s: status=%s fields=%s",
+                key,
+                editable_fields_status,
+                ", ".join(log_fields) or "(none)",
+            )
+            status_field = next(
+                (
+                    field
+                    for field in fields
+                    if isinstance(field, dict) and field.get("id") == "status"
+                ),
+                None,
+            )
+            if not status_field or status_field.get("unavailableMessage"):
+                logger.warning(
+                    "Bulk edit status is not available for %s; Jira editable fields status=%s status_field=%s",
+                    key,
+                    editable_fields_status,
+                    self._format_payload(status_field) if status_field else "(missing)",
+                )
+                return None, None
+            target_status_id = self._resolve_status_id_from_entries(
+                status_entries,
+                status_name,
+                context["issue_type_id"],
+            )
+            if not target_status_id:
+                logger.warning(
+                    "Bulk edit status target %s does not exist for %s in project %s issue type %s",
+                    status_name,
+                    key,
+                    context["project_key"],
+                    context["issue_type_id"],
+                )
+                return None, None
+            if target_status_id == context["status_id"]:
+                logger.info(
+                    "Bulk edit status skipped for %s; Jira already reports %s",
+                    key,
+                    status_name,
+                )
+                return 204, {}
+            logger.info(
+                "Bulk edit status context for %s: project=%s issue_type=%s current_status=%s target_status=%s",
+                key,
+                context["project_key"],
+                context["issue_type_id"],
+                context["status_id"],
+                target_status_id,
+            )
+            payload = {
+                "selectedIssueIdsOrKeys": [key],
+                "selectedActions": ["status"],
+                "editedFieldsInput": {
+                    "status": {
+                        "statusId": target_status_id,
+                    }
+                },
+                "sendBulkNotification": False,
+            }
+            result, status = self._request(
+                "POST",
+                "/rest/api/3/bulk/issues/fields",
+                payload,
+            )
+            logger.info(
+                "%s",
+                self._format_block(
+                    "calling JIRA API",
+                    "\n".join(
+                        [
+                            f"POST {self.base_url}/rest/api/3/bulk/issues/fields",
+                            self._format_payload(payload),
+                            f"RESPONSE {status} - OK",
+                            self._format_payload(result),
+                        ]
+                    ),
+                ),
+            )
+            return status, result if isinstance(result, dict) else None
+        except Exception:
+            logger.exception(
+                "Failed to bulk edit Jira issue %s to status %s",
+                key,
+                status_name,
+            )
+            return None, None
+
     # Handles the get_projects function logic.
     # Input: self, max_results: int = 200.
     # Output: Tuple[Optional[List[Dict[str, Any]]], Optional[int]].
@@ -1282,14 +1687,31 @@ class JiraClient:
             return None, None
         candidates = transitions.get("transitions") if isinstance(transitions, dict) else None
         if not candidates:
+            logger.warning(
+                "No Jira transitions returned for %s while targeting status %s",
+                key,
+                status_name,
+            )
             return None, None
         target = None
+        available = []
         for transition in candidates:
             to_state = transition.get("to", {}).get("name")
+            transition_name = transition.get("name")
+            transition_id = transition.get("id")
+            available.append(
+                f"{transition_id or '?'}:{transition_name or '?'}->{to_state or '?'}"
+            )
             if to_state and to_state.lower() == status_name.lower():
                 target = transition.get("id")
                 break
         if not target:
+            logger.warning(
+                "No Jira transition target matched %s for %s. Available: %s",
+                status_name,
+                key,
+                ", ".join(available) or "(none)",
+            )
             return None, None
         payload = {"transition": {"id": target}}
         try:
@@ -1314,3 +1736,201 @@ class JiraClient:
         except Exception:
             logger.exception("Failed to transition Jira issue %s to %s", key, status_name)
             return None, None
+
+    # Handles the transition_issue_via_path function logic.
+    # Input: self, key: str, status_name: str, max_steps: int = 5.
+    # Output: Tuple[Optional[int], Optional[Dict[str, Any]]].
+    def transition_issue_via_path(
+        self, key: str, status_name: str, max_steps: int = 5
+    ) -> Tuple[Optional[int], Optional[Dict[str, Any]]]:
+        def status_matches(value: Any) -> bool:
+            return isinstance(value, str) and value.lower() == status_name.lower()
+
+        def transition_target(transition: Dict[str, Any]) -> Tuple[str, str]:
+            to_state = transition.get("to") if isinstance(transition, dict) else None
+            if not isinstance(to_state, dict):
+                return "", ""
+            raw_name = to_state.get("name")
+            raw_id = to_state.get("id")
+            name = raw_name.strip() if isinstance(raw_name, str) else ""
+            status_id = str(raw_id).strip() if raw_id is not None else ""
+            return name, status_id
+
+        def transition_score(transition: Dict[str, Any], current_name: str) -> Tuple[int, str]:
+            to_name, _ = transition_target(transition)
+            text = " ".join(
+                str(part or "").lower()
+                for part in (transition.get("name"), to_name)
+            )
+            score = 50
+            if to_name.lower() == current_name.lower():
+                score += 100
+            if "back" in text or "todo" in text or "to do" in text or "backlog" in text:
+                score += 20
+            if "progress" in text:
+                score -= 12
+            if "review" in text or "approval" in text:
+                score -= 8
+            if "test" in text or "ready" in text:
+                score -= 6
+            if "closed" in text or "done" in text:
+                score += 12
+            return score, str(transition.get("id") or "")
+
+        path: List[Dict[str, str]] = []
+        visited_statuses = set()
+        last_status: Optional[int] = None
+        last_result: Optional[Dict[str, Any]] = None
+        try:
+            issue, issue_status = self.get_issue(key)
+            current_name = ""
+            current_id = ""
+            fields = issue.get("fields") if isinstance(issue, dict) else None
+            status_field = fields.get("status") if isinstance(fields, dict) else None
+            if isinstance(status_field, dict):
+                raw_current_name = status_field.get("name")
+                raw_current_id = status_field.get("id")
+                current_name = (
+                    raw_current_name.strip()
+                    if isinstance(raw_current_name, str)
+                    else ""
+                )
+                current_id = str(raw_current_id).strip() if raw_current_id is not None else ""
+            if current_name:
+                visited_statuses.add(current_name.lower())
+            if status_matches(current_name):
+                return 204, {"path": path}
+            for step in range(max(1, int(max_steps or 1))):
+                transitions, transition_fetch_status = self._request(
+                    "GET", f"/rest/api/3/issue/{key}/transitions"
+                )
+                candidates = (
+                    transitions.get("transitions")
+                    if isinstance(transitions, dict)
+                    else None
+                )
+                if not candidates:
+                    logger.warning(
+                        "No Jira transition path candidates for %s while targeting %s from %s (status=%s)",
+                        key,
+                        status_name,
+                        current_name or "(unknown)",
+                        transition_fetch_status,
+                    )
+                    return None, {"path": path} if path else None
+                direct = None
+                available = []
+                for transition in candidates:
+                    if not isinstance(transition, dict):
+                        continue
+                    to_name, _ = transition_target(transition)
+                    transition_id = transition.get("id")
+                    transition_name = transition.get("name")
+                    available.append(
+                        f"{transition_id or '?'}:{transition_name or '?'}->{to_name or '?'}"
+                    )
+                    if transition_id and status_matches(to_name):
+                        direct = transition
+                        break
+                if direct is None:
+                    next_options = []
+                    for transition in candidates:
+                        if not isinstance(transition, dict) or not transition.get("id"):
+                            continue
+                        to_name, _ = transition_target(transition)
+                        if not to_name:
+                            continue
+                        if to_name.lower() in visited_statuses:
+                            continue
+                        next_options.append(transition)
+                    if not next_options:
+                        logger.warning(
+                            "No Jira transition path from %s to %s for %s. Visited=%s Available=%s",
+                            current_name or "(unknown)",
+                            status_name,
+                            key,
+                            ", ".join(sorted(visited_statuses)) or "(none)",
+                            ", ".join(available) or "(none)",
+                        )
+                        return None, {"path": path} if path else None
+                    direct = sorted(
+                        next_options,
+                        key=lambda transition: transition_score(transition, current_name),
+                    )[0]
+                transition_id = str(direct.get("id") or "").strip()
+                transition_name = str(direct.get("name") or "").strip()
+                to_name, to_id = transition_target(direct)
+                logger.info(
+                    "Jira transition path step %s for %s: %s -> %s via %s:%s",
+                    step + 1,
+                    key,
+                    current_name or current_id or "(unknown)",
+                    to_name or to_id or "(unknown)",
+                    transition_id or "?",
+                    transition_name or "?",
+                )
+                payload = {"transition": {"id": transition_id}}
+                result, status = self._request(
+                    "POST", f"/rest/api/3/issue/{key}/transitions", payload
+                )
+                logger.info(
+                    "%s",
+                    self._format_block(
+                        "calling JIRA API",
+                        "\n".join(
+                            [
+                                f"POST {self.base_url}/rest/api/3/issue/{key}/transitions",
+                                self._format_payload(payload),
+                                f"RESPONSE {status} - OK",
+                                self._format_payload(result),
+                            ]
+                        ),
+                    ),
+                )
+                last_status = status
+                last_result = result if isinstance(result, dict) else {}
+                path.append(
+                    {
+                        "transition_id": transition_id,
+                        "transition_name": transition_name,
+                        "from_status": current_name,
+                        "to_status": to_name,
+                        "to_status_id": to_id,
+                    }
+                )
+                issue, issue_status = self.get_issue(key)
+                fields = issue.get("fields") if isinstance(issue, dict) else None
+                status_field = fields.get("status") if isinstance(fields, dict) else None
+                next_name = ""
+                next_id = ""
+                if isinstance(status_field, dict):
+                    raw_next_name = status_field.get("name")
+                    raw_next_id = status_field.get("id")
+                    next_name = raw_next_name.strip() if isinstance(raw_next_name, str) else ""
+                    next_id = str(raw_next_id).strip() if raw_next_id is not None else ""
+                if not next_name and to_name:
+                    next_name = to_name
+                    next_id = to_id
+                current_name = next_name
+                current_id = next_id
+                if current_name:
+                    visited_statuses.add(current_name.lower())
+                if status_matches(current_name):
+                    payload_result = dict(last_result or {})
+                    payload_result["path"] = path
+                    return last_status, payload_result
+            logger.warning(
+                "Jira transition path for %s did not reach %s after %s steps; current=%s path=%s",
+                key,
+                status_name,
+                max_steps,
+                current_name or current_id or "(unknown)",
+                " -> ".join(
+                    item.get("to_status") or item.get("to_status_id") or "(unknown)"
+                    for item in path
+                ) or "(none)",
+            )
+            return None, {"path": path} if path else None
+        except Exception:
+            logger.exception("Failed to transition Jira issue %s to %s via path", key, status_name)
+            return None, {"path": path} if path else None

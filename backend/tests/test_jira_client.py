@@ -270,6 +270,183 @@ class JiraClientTests(unittest.TestCase):
             },
         )
 
+    def test_move_issue_status_uses_bulk_move_status_mapping(self):
+        issue_payload = {
+            "fields": {
+                "project": {"key": "KAN"},
+                "issuetype": {"id": "10008", "name": "Task"},
+                "status": {"id": "1", "name": "Ready for Test"},
+            }
+        }
+        statuses_payload = [
+            {
+                "id": "10008",
+                "statuses": [
+                    {"id": "1", "name": "Ready for Test"},
+                    {"id": "2", "name": "In progress"},
+                ],
+            }
+        ]
+        with patch.object(
+            self.client,
+            "_request",
+            side_effect=[
+                (issue_payload, 200),
+                (statuses_payload, 200),
+                ({"taskId": "123"}, 201),
+            ],
+        ) as mocked:
+            status, result = self.client.move_issue_status("KAN-1", "In progress")
+
+        self.assertEqual(status, 201)
+        self.assertEqual(result, {"taskId": "123"})
+        self.assertEqual(
+            mocked.call_args_list[0].args,
+            (
+                "GET",
+                "/rest/api/3/issue/KAN-1?fields=summary,description,status,labels,assignee,issuetype,issuelinks,subtasks,parent,project,timetracking,timeoriginalestimate",
+            ),
+        )
+        self.assertEqual(
+            mocked.call_args_list[1].args,
+            ("GET", "/rest/api/3/project/KAN/statuses"),
+        )
+        method, path, payload = mocked.call_args_list[2].args
+        self.assertEqual((method, path), ("POST", "/rest/api/3/bulk/issues/move"))
+        mapping = payload["targetToSourcesMapping"]
+        self.assertEqual(
+            mapping,
+            {
+                "KAN,10008": {
+                    "issueIdsOrKeys": ["KAN-1"],
+                    "inferClassificationDefaults": True,
+                    "inferFieldDefaults": True,
+                    "inferStatusDefaults": False,
+                    "inferSubtaskTypeDefault": True,
+                    "targetMandatoryFields": [],
+                    "targetStatus": [
+                        {
+                            "statuses": {
+                                "2": ["1"],
+                            }
+                        }
+                    ],
+                }
+            },
+        )
+
+    def test_move_issue_status_returns_none_when_target_status_missing(self):
+        issue_payload = {
+            "fields": {
+                "project": {"key": "KAN"},
+                "issuetype": {"id": "10008", "name": "Task"},
+                "status": {"id": "1", "name": "Ready for Test"},
+            }
+        }
+        statuses_payload = [{"id": "10008", "statuses": [{"id": "1", "name": "Ready for Test"}]}]
+        with patch.object(
+            self.client,
+            "_request",
+            side_effect=[(issue_payload, 200), (statuses_payload, 200)],
+        ):
+            status, result = self.client.move_issue_status("KAN-1", "In progress")
+
+        self.assertIsNone(status)
+        self.assertIsNone(result)
+
+    def test_bulk_edit_issue_status_uses_bulk_edit_status_payload(self):
+        issue_payload = {
+            "fields": {
+                "project": {"key": "KAN"},
+                "issuetype": {"id": "10008", "name": "Task"},
+                "status": {"id": "1", "name": "Ready for Test"},
+            }
+        }
+        statuses_payload = [
+            {
+                "id": "10008",
+                "statuses": [
+                    {"id": "1", "name": "Ready for Test"},
+                    {"id": "2", "name": "In progress"},
+                ],
+            }
+        ]
+        editable_fields_payload = {
+            "fields": [{"id": "status", "name": "Status", "type": "status"}]
+        }
+        with patch.object(
+            self.client,
+            "_request",
+            side_effect=[
+                (issue_payload, 200),
+                (statuses_payload, 200),
+                (editable_fields_payload, 200),
+                ({"taskId": "123"}, 201),
+            ],
+        ) as mocked:
+            status, result = self.client.bulk_edit_issue_status("KAN-1", "In progress")
+
+        self.assertEqual(status, 201)
+        self.assertEqual(result, {"taskId": "123"})
+        self.assertEqual(
+            mocked.call_args_list[1].args,
+            ("GET", "/rest/api/3/project/KAN/statuses"),
+        )
+        self.assertEqual(
+            mocked.call_args_list[2].args,
+            ("GET", "/rest/api/3/bulk/issues/fields?issueIdsOrKeys=KAN-1"),
+        )
+        method, path, payload = mocked.call_args_list[3].args
+        self.assertEqual((method, path), ("POST", "/rest/api/3/bulk/issues/fields"))
+        self.assertEqual(
+            payload,
+            {
+                "selectedIssueIdsOrKeys": ["KAN-1"],
+                "selectedActions": ["status"],
+                "editedFieldsInput": {
+                    "status": {
+                        "statusId": "2",
+                    }
+                },
+                "sendBulkNotification": False,
+            },
+        )
+
+    def test_bulk_edit_issue_status_skips_when_status_is_not_editable(self):
+        issue_payload = {
+            "fields": {
+                "project": {"key": "KAN"},
+                "issuetype": {"id": "10008", "name": "Task"},
+                "status": {"id": "1", "name": "Ready for Test"},
+            }
+        }
+        statuses_payload = [
+            {
+                "id": "10008",
+                "statuses": [
+                    {"id": "1", "name": "Ready for Test"},
+                    {"id": "2", "name": "In progress"},
+                ],
+            }
+        ]
+        editable_fields_payload = {
+            "fields": [{"id": "priority", "name": "Priority", "type": "priority"}]
+        }
+        with patch.object(
+            self.client,
+            "_request",
+            side_effect=[
+                (issue_payload, 200),
+                (statuses_payload, 200),
+                (editable_fields_payload, 200),
+            ],
+        ) as mocked:
+            status, result = self.client.bulk_edit_issue_status("KAN-1", "In progress")
+
+        self.assertIsNone(status)
+        self.assertIsNone(result)
+        self.assertEqual(len(mocked.call_args_list), 3)
+
     def test_get_project_statuses_dedupes_and_validates_shape(self):
         api_payload = [
             {"statuses": [{"name": "To Do"}, {"name": "Done"}]},
@@ -433,6 +610,60 @@ class JiraClientTests(unittest.TestCase):
             status, result = self.client.transition_issue("KAN-1", "Done")
         self.assertIsNone(status)
         self.assertIsNone(result)
+
+    def test_transition_issue_via_path_walks_intermediate_statuses(self):
+        todo_issue = {"fields": {"status": {"id": "1", "name": "To Do"}}}
+        progress_issue = {"fields": {"status": {"id": "2", "name": "In Progress"}}}
+        ready_issue = {"fields": {"status": {"id": "3", "name": "Ready for Test"}}}
+        first_transitions = {
+            "transitions": [
+                {"id": "11", "name": "Stay Put", "to": {"id": "1", "name": "To Do"}},
+                {
+                    "id": "22",
+                    "name": "Start Progress",
+                    "to": {"id": "2", "name": "In Progress"},
+                },
+            ]
+        }
+        second_transitions = {
+            "transitions": [
+                {
+                    "id": "33",
+                    "name": "Ready for Test",
+                    "to": {"id": "3", "name": "Ready for Test"},
+                }
+            ]
+        }
+        with patch.object(
+            self.client,
+            "_request",
+            side_effect=[
+                (todo_issue, 200),
+                (first_transitions, 200),
+                ({}, 204),
+                (progress_issue, 200),
+                (second_transitions, 200),
+                ({}, 204),
+                (ready_issue, 200),
+            ],
+        ) as mocked:
+            status, result = self.client.transition_issue_via_path(
+                "KAN-1", "Ready for Test"
+            )
+
+        self.assertEqual(status, 204)
+        self.assertEqual(
+            [step["to_status"] for step in result["path"]],
+            ["In Progress", "Ready for Test"],
+        )
+        self.assertEqual(
+            mocked.call_args_list[2].args,
+            ("POST", "/rest/api/3/issue/KAN-1/transitions", {"transition": {"id": "22"}}),
+        )
+        self.assertEqual(
+            mocked.call_args_list[5].args,
+            ("POST", "/rest/api/3/issue/KAN-1/transitions", {"transition": {"id": "33"}}),
+        )
 
     def test_adf_checkbox_conversion_accepts_empty_labels(self):
         adf = to_adf("[ ]\n[x]\n[ ] named")

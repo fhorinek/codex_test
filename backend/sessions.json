@@ -1,34 +1,19 @@
 {
   "sessions": {
-    "sgBNUM0hAXVXClJ5jGaVoogpvPUAWAEXf2AkVsDGGW4": {
-      "username": "admin",
-      "created_at": 1785325707,
-      "expires_at": 1787917707
-    },
-    "s4n2l4hAbVIfjnlnotx4-ZvzUBUvWsT124tGYTGm0mo": {
-      "username": "admin",
-      "created_at": 1785325707,
-      "expires_at": 1787917707
-    },
-    "dvZ7N1Yu7EEvXzywK4PKx9HgTUllQEAKUlhXN-KoQxc": {
-      "username": "admin",
-      "created_at": 1785325925,
-      "expires_at": 1787917925
-    },
-    "5r0FAdu3LpUtZBjSUv4LgzzjbHvBBP8PzUTwk4Xorbg": {
-      "username": "admin",
-      "created_at": 1785337640,
-      "expires_at": 1787929640
-    },
-    "R0Jp0MlN-sMwpbKoTcekSp1YCBI-FukiD8nO1Nvsj58": {
-      "username": "huszarova",
-      "created_at": 1785390618,
-      "expires_at": 1787982618
-    },
     "QxS_QuS5aWKTfWTxagadFVs7BPnZFRIHRz4GuXU-WOk": {
       "username": "admin",
       "created_at": 1786436686,
       "expires_at": 1789028686
+    },
+    "Opc4iWaRHtuBE-93XLK35ffyukynROR3AoqSkD0LPhI": {
+      "username": "admin",
+      "created_at": 1788162965,
+      "expires_at": 1790754965
+    },
+    "UF5ZJcUerHOtReYicgZnvlfoCL0qvHPokeklpXjVKbg": {
+      "username": "huszarova",
+      "created_at": 1788265064,
+      "expires_at": 1790857064
     }
   }
 }

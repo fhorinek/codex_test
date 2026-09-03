@@ -133,6 +133,8 @@ SYSTEM_SHARED_PRESENCE_REFRESH_DELAY = 0.15
 # Stores the SYSTEM_SHARED_PRESENCE_SYNC_INTERVAL module constant.
 SYSTEM_SHARED_PRESENCE_SYNC_INTERVAL = 5
 system_shared_presence_task: Optional[asyncio.Task] = None
+system_shared_presence_refresh_task: Optional[asyncio.Task] = None
+last_system_presence_snapshot: Optional[Dict[str, List[str]]] = None
 
 
 # Defines the AuthUser structure used by this module.
@@ -1893,20 +1895,24 @@ def set_system_shared_map_values(ydoc: Y.YDoc, values: Dict[str, Any]) -> bool:
 # Input: none.
 # Output: Dict[str, List[str]].
 def build_system_presence_snapshot() -> Dict[str, List[str]]:
-    users = load_users_store()
+    candidate_paths: Set[str] = set(presence.keys())
+    for path in list(getattr(websocket_server, "rooms", {}).keys()):
+        if is_system_shared_ws_path(path):
+            continue
+        ref = space_ref_from_ws_path(path)
+        if ref:
+            _space_id, space_path_hint = ref
+            candidate_paths.add(space_path_hint)
+
     snapshot: Dict[str, List[str]] = {}
-    for entry in list_space_entries(users):
-        if not isinstance(entry, dict):
+    for space_path in sorted(candidate_paths):
+        normalized_path = normalize_folder_name(space_path)
+        if not normalized_path:
             continue
-        space_id = entry.get("id")
-        space_path = entry.get("path")
-        if not isinstance(space_id, str) or not space_id.strip():
-            continue
-        if not isinstance(space_path, str) or not space_path.strip():
-            continue
-        connected_users = users_for_space(space_id, space_path_hint=space_path)
+        space_id = normalized_path.split("/")[-1]
+        connected_users = users_for_space(space_id, space_path_hint=normalized_path)
         if connected_users:
-            snapshot[space_path] = connected_users
+            snapshot[normalized_path] = connected_users
     return snapshot
 
 
@@ -1914,15 +1920,19 @@ def build_system_presence_snapshot() -> Dict[str, List[str]]:
 # Input: values: Dict[str, Any].
 # Output: bool.
 async def publish_system_shared_values(values: Dict[str, Any]) -> bool:
-    room = await websocket_server.get_room(SYSTEM_SHARED_WS_PATH)
+    room = get_or_create_system_shared_room()
     return set_system_shared_map_values(room.ydoc, values)
 
 
 # Handles the publish_system_presence_snapshot function logic.
 # Input: none.
 # Output: None.
-async def publish_system_presence_snapshot() -> None:
+async def publish_system_presence_snapshot(*, force: bool = False) -> None:
+    global last_system_presence_snapshot
     snapshot = build_system_presence_snapshot()
+    if not force and snapshot == last_system_presence_snapshot:
+        return
+    last_system_presence_snapshot = snapshot
     await publish_system_shared_values(
         {
             SYSTEM_SHARED_KEY_BACKEND_BUILD_ID: BACKEND_BUILD_ID,
@@ -1938,12 +1948,12 @@ async def publish_system_presence_snapshot() -> None:
 def schedule_system_presence_snapshot(
     delay_seconds: float = SYSTEM_SHARED_PRESENCE_REFRESH_DELAY,
 ) -> None:
-    global system_shared_presence_task
+    global system_shared_presence_refresh_task
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    existing = system_shared_presence_task
+    existing = system_shared_presence_refresh_task
     if isinstance(existing, asyncio.Task) and not existing.done():
         existing.cancel()
 
@@ -1960,7 +1970,7 @@ def schedule_system_presence_snapshot(
         except Exception:
             logger.exception("Failed to publish system shared presence snapshot")
 
-    system_shared_presence_task = loop.create_task(_publish())
+    system_shared_presence_refresh_task = loop.create_task(_publish())
 
 
 # Handles the system_shared_presence_sync_loop function logic.
@@ -3451,6 +3461,20 @@ class PersistentWebsocketServer(WebsocketServer):
 
 
 websocket_server = PersistentWebsocketServer()
+
+
+# Handles the get_or_create_system_shared_room function logic.
+# Input: none.
+# Output: YRoom.
+def get_or_create_system_shared_room():
+    room = websocket_server.rooms.get(SYSTEM_SHARED_WS_PATH)
+    if room is None:
+        room = YRoom(ready=websocket_server.rooms_ready, log=websocket_server.log)
+        websocket_server.rooms[SYSTEM_SHARED_WS_PATH] = room
+        attach_awareness_hook(room)
+    return room
+
+
 # Handles the _is_benign_shutdown_error function logic.
 # Input: exc: BaseException.
 # Output: bool.
@@ -3590,7 +3614,7 @@ app.mount("/", StaticFiles(directory=FRONTEND_STATIC_DIR, html=True), name="stat
 # Input: none.
 # Output: None.
 async def main() -> None:
-    global system_shared_presence_task
+    global system_shared_presence_task, system_shared_presence_refresh_task
     load_users_store()
     await sync_snapshots_from_ystore_on_startup()
     port_value = os.getenv("PORT", "5000").strip()
@@ -3632,12 +3656,21 @@ async def main() -> None:
         else:
             raise
     finally:
+        if isinstance(system_shared_presence_refresh_task, asyncio.Task):
+            system_shared_presence_refresh_task.cancel()
+            try:
+                await system_shared_presence_refresh_task
+            except BaseException as exc:
+                if not _is_benign_shutdown_error(exc):
+                    raise
+            system_shared_presence_refresh_task = None
         if isinstance(system_shared_presence_task, asyncio.Task):
             system_shared_presence_task.cancel()
             try:
                 await system_shared_presence_task
-            except Exception:
-                pass
+            except BaseException as exc:
+                if not _is_benign_shutdown_error(exc):
+                    raise
             system_shared_presence_task = None
         pending_save_tasks = list(space_save_tasks.values())
         for task in pending_save_tasks:
