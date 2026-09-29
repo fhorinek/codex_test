@@ -4,6 +4,7 @@
  * Module: Task command parsing and command execution helpers.
  */
 
+import { updateTaskDates, type TaskDates } from "./taskDates.js";
 import { normalizeContent } from "./formatter.js";
 import { parseJiraTitle } from "./task.js";
 
@@ -772,7 +773,16 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     return { ok: true, title, lineIndex: taskRange.start };
   }
 
+  function setTaskDates(taskLine: number, dates: TaskDates, expectedSource: string): void {
+    if (getEditorValue() !== expectedSource) return;
+    const next = updateTaskDates(expectedSource, taskLine, dates);
+    if (next === expectedSource) return;
+    applyEditorValue(next);
+    syncEditorState();
+  }
+
   return {
+    setTaskDates,
     deleteTaskAtLine,
     deleteTaskKeepSubtasksAtLine,
     moveTaskAsSubtask,

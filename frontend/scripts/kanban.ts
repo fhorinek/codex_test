@@ -1039,6 +1039,10 @@ function bindKanbanCard({
       event.preventDefault();
       if (isPointOverTaskTrash(drag.lastClientX, drag.lastClientY)) {
         dispatchKanbanTouchTaskTrashDrop(drag.taskId);
+      } else if (document.elementFromPoint(drag.lastClientX, drag.lastClientY)?.closest(".timeline-track")) {
+        window.dispatchEvent(new CustomEvent("taskdroptimeline", { detail: {
+          taskId: drag.taskId, clientX: drag.lastClientX, clientY: drag.lastClientY,
+        } }));
       } else {
         const task = getTaskById(drag.taskId);
         const nextState = String(drag.hoverColumn?.dataset?.stateTag || "");

@@ -109,12 +109,12 @@ export function renderTaskDescriptionNode(options: TaskDescriptionRenderOptions)
     disableLinks = false,
     showState = false,
     showEstimate = false,
-  } = options || {};
+  }: TaskDescriptionRenderOptions = options || {};
 
   const descriptionText = buildTaskDescriptionText(task, { showState, showEstimate });
   const lineIndexes = Array.isArray(providedLineIndexes)
     ? providedLineIndexes
-    : (Array.isArray(task?.descriptionLineIndexes) ? task.descriptionLineIndexes : undefined);
+    : (task && Array.isArray(task.descriptionLineIndexes) ? task.descriptionLineIndexes : undefined);
 
   if (typeof renderMarkdown !== "function") {
     const fallback = document.createElement("pre");
@@ -289,4 +289,18 @@ export function wireDescriptionCheckboxes(node: ParentNode, options: Description
       });
     });
   });
+}
+
+/** Shared state badge used by graph and timeline tasks. */
+export function createTaskStatePill(value: string, meta?: { name?: string; color?: string }): HTMLSpanElement {
+  const pill = document.createElement("span");
+  pill.className = "pill state-pill";
+  pill.textContent = meta?.name || value.replace(/^!/, "");
+  if (meta?.color) {
+    pill.style.borderColor = meta.color;
+    pill.style.color = meta.color;
+  }
+  pill.dataset["type"] = "state";
+  pill.dataset["value"] = value;
+  return pill;
 }

@@ -1887,7 +1887,8 @@ def set_system_shared_map_values(ydoc: Y.YDoc, values: Dict[str, Any]) -> bool:
             shared_map.set(txn, key, encoded)
             changed = True
 
-    ydoc.transact(apply)
+    with ydoc.begin_transaction() as txn:
+        apply(txn)
     return changed
 
 
@@ -2093,7 +2094,8 @@ def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
         if content:
             text.insert(txn, 0, content)
 
-    ydoc.transact(apply)
+    with ydoc.begin_transaction() as txn:
+        apply(txn)
 
 
 # Handles the schedule_space_snapshot function logic.

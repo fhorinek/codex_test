@@ -37,5 +37,5 @@ if [[ ! -f package.json ]]; then
   npm init -y
 fi
 
-echo "Installing frontend runtime dependencies..."
-npm install --omit=dev
+echo "Installing frontend runtime and build dependencies..."
+npm install --include=dev

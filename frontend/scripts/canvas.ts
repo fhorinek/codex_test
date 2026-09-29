@@ -6,6 +6,7 @@
 
 import { colorFromString } from "./task.js";
 import {
+  createTaskStatePill,
   decorateDescriptionPills,
   decorateDescriptionReferences,
   renderTaskDescriptionNode,
@@ -1269,15 +1270,7 @@ export function createCanvas({
         : `★ ${formatStoryPointsNumber(ownStoryPoints)}`)
       : (subtaskStoryPoints > 0 ? `★ +${formatStoryPointsNumber(subtaskStoryPoints)}` : "");
     if (task.state) {
-      const statePill = document.createElement("span");
-      statePill.className = "pill state-pill";
-      const stateMeta = state.stateMeta?.get(task.state);
-      statePill.textContent = stateMeta?.name || task.state.replace(/^!/, "");
-      const stateColor = state.stateMeta?.get(task.state)?.color;
-      if (stateColor) {
-        statePill.style.borderColor = stateColor;
-        statePill.style.color = stateColor;
-      }
+      const statePill = createTaskStatePill(task.state, state.stateMeta?.get(task.state));
       statePill.draggable = !isResponsiveDragDisabled();
       statePill.addEventListener("dragstart", (event: any) => {
         if (isResponsiveDragDisabled()) {
@@ -2270,6 +2263,8 @@ export function createCanvas({
   });
 
   return {
+    matchesFiltersTask,
+    matchesSearch,
     renderGraph,
     focusOnTask,
     applyTransform,

@@ -219,3 +219,64 @@ All success and error feedback is shown as top-right toasts.
 - `backend/jira/jira_config.json`: Jira configuration
 - `backend/spaces/`: space files/folders
 - `backend/ystore/`: collaboration state storage
+
+## Timeline
+
+Use **Graph | Timeline** at the bottom-right of the graph pane to switch views. Your choice
+is remembered on this browser. The timeline shows only tasks with valid dates, keeping parents and children in
+script order, with a shared date ruler and a red Today line. There is no left task list.
+
+Dates use **day.month.year**, with four-digit years, anywhere in the task's own body:
+
+```text
+% Release
+3.4.2026-8.4.2026
+!inprogress #release @maya
+    % Prepare notes
+    3.4.2026
+    % Final review
+    -8.4.2026
+```
+
+A range has both ends; a single date (such as `30.9.2026` or `30.9.2026-`) is a
+start with a fading right end; a leading
+minus denotes a deadline with a fading left end. The first valid date expression
+in each task's body controls its bar. Invalid dates and reversed ranges are ignored.
+
+Drag a task from kanban onto the timeline to schedule it. Undated tasks and
+tasks with invalid dates stay hidden until they have a valid date. New dates are inserted as the first body line; existing dates are
+replaced in place. Drag a bar to move it, or its edges to resize. Dragging a faded
+edge sets the missing date. Each gesture changes only that task, leaving children
+unchanged, and is undoable in the editor. Escape or dropping outside cancels.
+
+Double-click a task to edit, or drag it to the trash to use the usual deletion
+dialog. Enter opens editing for a focused task. History views cannot be edited.
+Drag empty space to pan horizontally or vertically. Use the mouse wheel over the
+timeline to zoom; no modifier key is needed. With the timeline focused, arrow keys pan by a week
+and +/− zoom. Dates snap to whole days at every zoom level.
+
+Timeline tags, people, and states use the same named and colored pills as the rest
+of the app. Task borders follow the configured state color. Drag a person or tag
+from the legend (or another task's pill) onto a timeline task to assign it; a state
+pill can also be dropped onto a task. Clicking tag/person pills highlights matches.
+Drag a timeline task into a kanban column to change its state without changing its
+dates. Drag a kanban task back onto the timeline to schedule or reschedule it while
+preserving its state.
+
+### Daily workload
+
+The People section at the bottom of the timeline shows one row per assigned person.
+Each day with assigned tasks has a vertical bar: one task is a low bar, and the
+largest visible overlap fills the available height. Intermediate counts scale
+between them. Bar heights adapt to the visible date window and are comparable
+across people; hover for the exact date and count. Unassigned days remain empty.
+
+Ranges count on every day, including both ends. Start-only tasks count from their
+start onward; deadline-only tasks count on every day up to their deadline. Only
+tasks with valid dates are counted, and each task counts once per assigned person.
+The workload shares the timeline's zoom and horizontal position. Use the wheel to
+zoom, or drag within the workload area to pan and move through the person rows.
+
+Drag a tag or person pill out of a timeline task and drop it on empty space to remove
+that assignment. Dropping on another task assigns it there and keeps the original;
+dropping back on the source task or cancelling the drag leaves it unchanged.

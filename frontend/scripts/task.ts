@@ -219,10 +219,11 @@ export function applyInlineMarkdownWithOptions(text: string, options: InlineMark
   value = value.replace(/\{([^}]+)\}/g, "<span class=\"references\" data-ref=\"$1\">$1</span>");
   value = value.replace(/@@INLINE_(\d+)@@/g, (_match: string, rawIndex: string) => {
     const index = Number.parseInt(rawIndex, 10);
-    if (!Number.isFinite(index) || !placeholders[index]) {
+    const placeholder = placeholders[index];
+    if (!Number.isFinite(index) || !placeholder) {
       return "";
     }
-    return placeholders[index];
+    return placeholder;
   });
   return value;
 }

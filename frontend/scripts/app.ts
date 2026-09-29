@@ -4,6 +4,7 @@
 
 import { parseTasks, parseJiraTitle, renderMarkdown } from "./task.js";
 import { createEditor } from "./editor.js";
+import { createTimeline } from "./timeline.js";
 import { createCanvas } from "./canvas.js";
 import {
   buildKanban as buildKanbanView,
@@ -2306,10 +2307,69 @@ const canvasController = createCanvas({
   onFiltersChange: () => {
     buildTagPersonLists();
     buildKanban();
+    if (graphView === "timeline") timelineController.render();
     updateClearFiltersVisibility();
     renderStoryPointsSummary();
   },
 });
+
+const timelineHost = document.createElement("div");
+timelineHost.className = "timeline-host";
+timelineHost.hidden = true;
+dom.graphCanvas.append(timelineHost);
+const timelineController = createTimeline({
+  host: timelineHost,
+  state,
+  getSource: () => editorController.getValue(),
+  canEdit: () => !state.historyViewerActive,
+  onSelect: (task) => selectTask(task, { focusEditor: false }),
+  onEdit: (task) => openTaskEditModal(task),
+  onDates: (task, dates, source) => {
+    if (!state.historyViewerActive) taskCommandController.setTaskDates(task.lineIndex, dates, source);
+  },
+  onToken: (task, value, action = "add") => { if (!state.historyViewerActive) updateTaskToken(task, value, action); },
+  onState: (task, value) => { if (!state.historyViewerActive) updateTaskState(task, value); },
+  onToggleToken: (type, value) => {
+    if (type === "tag") canvasController.toggleTag(value);
+    else if (type === "person") canvasController.togglePerson(value);
+  },
+  matchesFilters: canvasController.matchesFiltersTask,
+  matchesSearch: canvasController.matchesSearch,
+});
+let graphView = "graph";
+try { if (localStorage.getItem("taskScriptGraphView") === "timeline") graphView = "timeline"; } catch { /* Storage may be disabled. */ }
+const viewSwitch = document.createElement("div");
+viewSwitch.className = "graph-view-switch";
+viewSwitch.setAttribute("role", "group");
+viewSwitch.setAttribute("aria-label", "Graph panel view");
+for (const view of ["graph", "timeline"]) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = view === "graph" ? "Graph" : "Timeline";
+  button.dataset["view"] = view;
+  button.addEventListener("click", () => {
+    graphView = view;
+    try { localStorage.setItem("taskScriptGraphView", view); } catch { /* Optional preference. */ }
+    updateGraphView();
+    canvasController.renderGraph();
+  });
+  viewSwitch.append(button);
+}
+for (const event of ["mousedown", "pointerdown", "touchstart", "click", "dblclick", "wheel"]) {
+  viewSwitch.addEventListener(event, (e) => e.stopPropagation());
+}
+dom.graphCanvas.append(viewSwitch);
+function updateGraphView() {
+  dom.graphCanvas.classList.toggle("show-timeline", graphView === "timeline");
+  viewSwitch.querySelectorAll("button").forEach(button => button.setAttribute("aria-pressed", String(button.dataset["view"] === graphView)));
+  timelineController.setActive(graphView === "timeline");
+}
+updateGraphView();
+const focusGraphTask = canvasController.focusOnTask.bind(canvasController);
+canvasController.focusOnTask = (task: any) => {
+  if (graphView === "timeline") timelineController.focusOnTask(task);
+  else focusGraphTask(task);
+};
 
 if (canvasController?.renderGraph) {
   const rawRenderGraph = canvasController.renderGraph.bind(canvasController);
@@ -2319,6 +2379,7 @@ if (canvasController?.renderGraph) {
       return;
     }
     state.pendingResponsiveGraphRender = false;
+    if (graphView === "timeline") { timelineController.render(); return; }
     return measurePerformanceSync("app.canvas.renderGraph", () => rawRenderGraph(...args));
   };
 }
@@ -3806,7 +3867,7 @@ function deleteTaskKeepSubtasks(task: any): void {
  * Output: void.
  */
 function clearTaskDeletePreview(): void {
-  document.querySelectorAll(".task-node.delete-preview").forEach((node) => {
+  document.querySelectorAll(".task-node.delete-preview, .timeline-bar.delete-preview").forEach((node) => {
     node.classList.remove("delete-preview");
   });
   document.querySelectorAll(".kanban-card.delete-preview").forEach((card) => {
@@ -3842,6 +3903,10 @@ function highlightTaskDeletePreview(task: any, includeSubtasks: any): void {
     const node = document.querySelector(`.task-node[data-task-id="${item.id}"]`);
     if (node) {
       node.classList.add("delete-preview");
+    }
+    const bar = document.querySelector(`.timeline-bar[data-task-id="${item.id}"]`);
+    if (bar) {
+      bar.classList.add("delete-preview");
     }
     const card = document.querySelector(`.kanban-card[data-task-id="${item.id}"]`);
     if (card) {
@@ -4997,11 +5062,11 @@ async function deleteUserRequest(username: any) {
  * Input: folders: any.
  * Output: result produced by this function.
  */
-function sortFolderIds(folders: any) {
+function sortFolderIds(folders: unknown): string[] {
   const names = Array.from(
     new Set(
       (Array.isArray(folders) ? folders : [])
-        .filter((item) => typeof item === "string")
+        .filter((item): item is string => typeof item === "string")
         .map((item) => item.trim())
         .filter(Boolean)
     )

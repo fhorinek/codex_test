@@ -5859,3 +5859,101 @@ html[data-theme="dark"][data-viewport="tablet"] .topbar-actions .toolbar-button.
 html[data-theme="dark"][data-viewport="tablet"] .topbar-actions .toolbar-button.topbar-connect-button:hover {
   background: rgba(121, 156, 255, 0.12);
 }
+
+/* The timeline occupies the graph pane, retaining the editor/kanban split. */
+
+:root {
+  --timeline-canvas: #ffffff;
+  --timeline-surface: #ffffff;
+  --timeline-ruler: #f6f7ff;
+  --timeline-switch: #eef0ff;
+  --timeline-text: #1d1f2b;
+  --timeline-muted: #6b7394;
+  --timeline-border: #d6d9e6;
+  --timeline-grid: #edf0fb;
+  --timeline-card: #f3f4ff;
+  --timeline-card-border: #b9c0ff;
+  --timeline-accent: #2f54eb;
+  --timeline-focus: #2f54eb;
+  --timeline-selection: rgba(47, 84, 235, .22);
+  --timeline-today: #ff4d4f;
+  --timeline-shadow: 0 10px 24px rgba(12, 24, 64, .08);
+}
+html[data-theme="dark"] {
+  --timeline-canvas: #0f111a;
+  --timeline-surface: #121524;
+  --timeline-ruler: #151a2a;
+  --timeline-switch: #1e2231;
+  --timeline-text: #e6e8f2;
+  --timeline-muted: #8b93ad;
+  --timeline-border: #2a2e3f;
+  --timeline-grid: #22283a;
+  --timeline-card: #151a2a;
+  --timeline-card-border: #2a2e3f;
+  --timeline-focus: #8fa4ff;
+  --timeline-selection: rgba(143, 164, 255, .22);
+  --timeline-shadow: 0 12px 24px rgba(3, 6, 20, .4);
+}
+
+.graph-view-switch { position: absolute; bottom: 12px; right: 12px; z-index: 8; display: flex; padding: 3px; gap: 3px; border: 1px solid var(--timeline-border); border-radius: 999px; background: var(--timeline-switch); color: var(--timeline-text); }
+.graph-view-switch button { border: 1px solid transparent; border-radius: 8px; padding: 6px 12px; background: transparent; color: inherit; cursor: pointer; font: inherit; font-size: 12px; }
+.graph-view-switch button[aria-pressed="true"] { background: var(--timeline-accent); color: white; }
+.show-timeline > #graph-nodes, .show-timeline > #graph-lines, .show-timeline > #graph-minimap, .show-timeline > .graph-footer { display: none; }
+.timeline-host { position: absolute; inset: 0; background: var(--timeline-canvas); color: var(--timeline-text); display: flex; flex-direction: column; }
+.timeline-host[hidden] { display: none; }
+.timeline-viewport { position: relative; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; touch-action: none; overscroll-behavior: contain; }
+.timeline-ruler { height: 72px; display: flex; position: sticky; top: 0; background: var(--timeline-ruler); z-index: 4; border-bottom: 1px solid var(--timeline-border); }
+.timeline-ticks { position: relative; flex: 1; overflow: hidden; }
+.timeline-tick { position: absolute; top: 48px; height: 24px; text-align: center; padding: 3px; font-size: 10px; white-space: nowrap; }
+.timeline-today-label { position: absolute; top: 48px; height: 23px; text-align: center; line-height: 20px; padding: 1px 5px; background: var(--timeline-today); color: white; font-size: 10px; font-weight: 700; white-space: nowrap; border-radius: 3px; }
+.timeline-row { height: 72px; display: flex; border-bottom: 1px solid var(--timeline-grid); }
+.timeline-track { position: relative; flex: 1; overflow: hidden; }
+.timeline-bar { position: absolute; top: 7px; height: 58px; border: 1px solid var(--timeline-card-border); border-radius: 12px; background: var(--timeline-card); box-shadow: var(--timeline-shadow); color: var(--timeline-text); padding: 4px 12px; cursor: grab; overflow: hidden; touch-action: none; min-width: 2px; }
+.timeline-title { display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 16px; }
+.timeline-dates { display: block; font-size: 10px; white-space: nowrap; line-height: 14px; }
+.timeline-metadata { display: flex; gap: 4px; font-size: 9px; white-space: nowrap; line-height: 13px; }
+.timeline-bar.open-end { background: linear-gradient(to right, var(--timeline-card) 60%, transparent); border-right: 0; }
+.timeline-bar.open-start { background: linear-gradient(to left, var(--timeline-card) 60%, transparent); border-left: 0; }
+.timeline-handle { position: absolute; top: 0; bottom: 0; width: 9px; cursor: ew-resize; z-index: 2; }
+.timeline-handle:hover { background: var(--timeline-selection); }
+.timeline-handle.start { left: 0; }
+.timeline-handle.end { right: 0; }
+.timeline-today-line { position: absolute; top: 0; bottom: 0; border-left: 3px solid var(--timeline-today); pointer-events: none; z-index: 3; }
+.timeline-bar.selected { box-shadow: inset 0 0 0 2px var(--timeline-focus); }
+.timeline-bar.search-highlight { outline: 2px solid #ffb020; outline-offset: -2px; }
+.timeline-bar.dimmed { opacity: .35; filter: grayscale(.4); }
+.timeline-bar.archived { opacity: .55; }
+.timeline-empty { padding: 30px; color: var(--timeline-muted); }
+.timeline-host.is-dragging { user-select: none; cursor: grabbing; }
+.timeline-host button:focus-visible, .timeline-bar:focus-visible { outline: 2px solid var(--timeline-focus); outline-offset: -2px; }
+@media (max-width: 800px) { .graph-view-switch button { padding: 6px 9px; } }
+.timeline-rows { position: relative; min-height: calc(100% - 72px); background-image: linear-gradient(var(--timeline-today), var(--timeline-today)); background-size: 3px 100%; background-repeat: no-repeat; }
+.timeline-handle { width: min(9px, 25%); }
+
+.graph-view-switch button { border-radius: 999px; font-weight: 600; }
+.graph-view-switch button:hover:not([aria-pressed="true"]) { color: var(--timeline-focus); }
+.timeline-bar.selected { border-color: var(--timeline-focus); }
+.timeline-viewport { scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); scrollbar-width: thin; }
+.graph-view-switch button:focus-visible { outline: 2px solid var(--timeline-focus); outline-offset: 2px; }
+
+.timeline-section { position: absolute; height: 24px; padding: 4px 8px; border-left: 1px solid var(--timeline-border); border-bottom: 1px solid var(--timeline-border); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.timeline-year { top: 0; font-weight: 700; }
+.timeline-month { top: 24px; font-weight: 600; }
+.timeline-metadata .pill { flex: 0 0 auto; margin: 0; font-size: 10px; line-height: 13px; padding: 0 5px; }
+.timeline-metadata .pill:focus-visible { outline: 2px solid var(--timeline-focus); outline-offset: -1px; }
+.kanban-column.timeline-drop-target { outline: 2px solid var(--timeline-focus); outline-offset: -2px; background: var(--timeline-ruler); }
+.timeline-drag-ghost { position: fixed; z-index: 2000; pointer-events: none; max-width: 240px; padding: 8px 12px; border: 1px solid var(--timeline-card-border); border-radius: 12px; background: var(--timeline-card); color: var(--timeline-text); box-shadow: var(--timeline-shadow); font-size: 12px; font-weight: 600; }
+
+.timeline-year-boundary { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--timeline-border); pointer-events: none; }
+
+.timeline-workload { flex: 0 0 auto; max-height: 35%; min-height: 0; overflow-x: hidden; overflow-y: auto; border-top: 1px solid var(--timeline-border); background: var(--timeline-surface); touch-action: none; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+.timeline-workload-person { position: relative; height: 28px; border-bottom: 1px solid var(--timeline-grid); }
+.timeline-workload-name { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); margin: 0; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; z-index: 4; }
+.timeline-workload-days { position: absolute; top: 0; bottom: 1px; left: 0; overflow: hidden; }
+.timeline-workload-box { position: absolute; bottom: 1px; display: flex; align-items: center; justify-content: center; border-radius: 2px; background: var(--timeline-accent); color: #ffffff; font-size: 9px; line-height: 1; }
+.timeline-workload-empty { padding: 10px 12px; color: var(--timeline-muted); font-size: 11px; }
+
+.timeline-month-boundary { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--timeline-grid); pointer-events: none; }
+
+.timeline-bar.delete-preview { border-color: #ff4d4f !important; box-shadow: 0 0 0 2px rgba(255, 77, 79, .18), 0 14px 26px rgba(255, 77, 79, .24); }
+html[data-theme="dark"] .timeline-bar.delete-preview { border-color: #ff7a7c !important; box-shadow: 0 0 0 2px rgba(255, 122, 124, .2), 0 16px 28px rgba(3, 6, 20, .55); }
