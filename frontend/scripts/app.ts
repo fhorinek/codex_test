@@ -3011,6 +3011,7 @@ let editingTaskJiraKey: any = null;
 let editingTaskRef: any = null;
 // Stores the creatingTask module constant.
 let creatingTask = false;
+let creatingTaskParentId: string | null = null;
 // Stores the pendingDeleteTask module constant.
 let pendingDeleteTask: any = null;
 // Stores the isTaskDragActive module constant.
@@ -3539,6 +3540,12 @@ function getTaskEditDeleteTarget(): any {
  * Output: void.
  */
 function updateTaskEditDeleteButtonVisibility(): void {
+  if (dom.taskEditSave) dom.taskEditSave.textContent = creatingTask ? "Create" : "Save";
+  const parent = creatingTask && state.allTasks.find((task: any) => task.id === creatingTaskParentId);
+  if (dom.taskEditSaveSubtask) {
+    dom.taskEditSaveSubtask.classList.toggle("hidden", !parent);
+    dom.taskEditSaveSubtask.textContent = parent ? `Create as subtask of ${parent.name}` : "Create as subtask";
+  }
   if (!dom.taskEditDelete) {
     return;
   }
@@ -3600,6 +3607,7 @@ function openTaskCreateModal() {
     return;
   }
   creatingTask = true;
+  creatingTaskParentId = state.selectedTaskId;
   editingTaskRef = null;
   const lines = editorController.getValue().split("\n");
   const draft = buildTaskCreateDraft(lines);
@@ -3643,6 +3651,7 @@ function closeTaskEditModal() {
   editingTaskRef = null;
   creatingTask = false;
   updateTaskEditDeleteButtonVisibility();
+  creatingTaskParentId = null;
 }
 
 /**
@@ -3920,7 +3929,8 @@ function highlightTaskDeletePreview(task: any, includeSubtasks: any): void {
  * Input: none.
  * Output: result produced by this function.
  */
-function saveTaskEditModal() {
+function saveTaskEditModal(asSubtask = false) {
+  if (state.historyViewerActive) return;
   if (!dom.taskEditModal) {
     return;
   }
@@ -3937,6 +3947,16 @@ function saveTaskEditModal() {
     }
     return;
   }
+  const parent = asSubtask && creatingTask
+    ? state.allTasks.find((task: any) => task.id === creatingTaskParentId)
+    : null;
+  if (asSubtask && !parent) {
+    if (dom.taskEditError) {
+      dom.taskEditError.textContent = "The selected parent task is no longer available.";
+      dom.taskEditError.classList.remove("hidden");
+    }
+    return;
+  }
   const saveResult = taskCommandController.saveTaskEdit({
     taskRange: editingTaskRange,
     rawTitle,
@@ -3944,6 +3964,7 @@ function saveTaskEditModal() {
     indent: editingTaskIndent,
     fallbackJiraKey: editingTaskJiraKey,
     creatingTask,
+    parentLine: parent ? parent.lineIndex : undefined,
   });
   if (!saveResult.ok) {
     if (dom.taskEditError) {
@@ -9382,6 +9403,7 @@ if (dom.taskEditDelete) {
   });
 }
 
+dom.taskEditSaveSubtask?.addEventListener("click", () => saveTaskEditModal(true));
 if (dom.taskEditSave) {
   dom.taskEditSave.addEventListener("click", () => {
     saveTaskEditModal();

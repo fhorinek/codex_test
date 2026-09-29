@@ -135,8 +135,8 @@ export function createTimeline(options: Options) {
     })), Math.floor(origin), Math.ceil(origin + availableWidth() / scale) - 1);
     const scrollTop = workload.scrollTop;
     workload.replaceChildren();
+    workload.hidden = !data.people.length;
     if (!data.people.length) {
-      workload.append(node('div', 'timeline-workload-empty', 'Assign people to dated tasks to see their daily workload.'));
       return;
     }
     data.people.sort((a, b) => String(state.peopleMeta?.get(a.person)?.name || a.person).localeCompare(String(state.peopleMeta?.get(b.person)?.name || b.person)));

@@ -71,6 +71,7 @@ type SaveTaskEditParams = {
   indent?: string;
   fallbackJiraKey?: string | null;
   creatingTask?: boolean;
+  parentLine?: number;
 };
 // Defines the SaveTaskEditResult type structure for this module.
 type SaveTaskEditResult =
@@ -740,13 +741,21 @@ export function createTaskCommandController(options: TaskCommandControllerOption
    */
   function saveTaskEdit(params: SaveTaskEditParams): SaveTaskEditResult {
     const {
-      taskRange,
+      taskRange: requestedRange,
       rawTitle,
       bodyText,
-      indent = "",
+      indent: requestedIndent = "",
       fallbackJiraKey = "",
       creatingTask = false,
     } = params || {};
+    let taskRange = requestedRange;
+    let indent = requestedIndent;
+    if (creatingTask && params.parentLine !== undefined) {
+      const parent = findTaskBlock(getEditorValue().split("\n"), params.parentLine);
+      if (!parent) return { ok: false, error: "The selected parent task is no longer available." };
+      taskRange = { start: parent.end, end: parent.end };
+      indent = `${parent.indent}    `;
+    }
     if (!taskRange || !Number.isInteger(taskRange.start) || !Number.isInteger(taskRange.end)) {
       return { ok: false, error: "Missing task range." };
     }

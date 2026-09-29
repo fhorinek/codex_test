@@ -5912,8 +5912,8 @@ html[data-theme="dark"] {
 .timeline-title { display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 16px; }
 .timeline-dates { display: block; font-size: 10px; white-space: nowrap; line-height: 14px; }
 .timeline-metadata { display: flex; gap: 4px; font-size: 9px; white-space: nowrap; line-height: 13px; }
-.timeline-bar.open-end { background: linear-gradient(to right, var(--timeline-card) 60%, transparent); border-right: 0; }
-.timeline-bar.open-start { background: linear-gradient(to left, var(--timeline-card) 60%, transparent); border-left: 0; }
+.timeline-bar.open-end { mask-image: linear-gradient(to right, #000 60%, transparent); border-right: 0; }
+.timeline-bar.open-start { mask-image: linear-gradient(to left, #000 60%, transparent); border-left: 0; }
 .timeline-handle { position: absolute; top: 0; bottom: 0; width: 9px; cursor: ew-resize; z-index: 2; }
 .timeline-handle:hover { background: var(--timeline-selection); }
 .timeline-handle.start { left: 0; }
@@ -5951,7 +5951,6 @@ html[data-theme="dark"] {
 .timeline-workload-name { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); margin: 0; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; z-index: 4; }
 .timeline-workload-days { position: absolute; top: 0; bottom: 1px; left: 0; overflow: hidden; }
 .timeline-workload-box { position: absolute; bottom: 1px; display: flex; align-items: center; justify-content: center; border-radius: 2px; background: var(--timeline-accent); color: #ffffff; font-size: 9px; line-height: 1; }
-.timeline-workload-empty { padding: 10px 12px; color: var(--timeline-muted); font-size: 11px; }
 
 .timeline-month-boundary { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--timeline-grid); pointer-events: none; }
 

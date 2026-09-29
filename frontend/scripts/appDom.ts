@@ -222,6 +222,7 @@ function createAppDomRaw(doc: Document = document) {
     taskEditTags: doc.getElementById("task-edit-tags"),
     taskEditCancel: doc.getElementById("task-edit-cancel"),
     taskEditSave: doc.getElementById("task-edit-save"),
+    taskEditSaveSubtask: doc.getElementById("task-edit-save-subtask"),
     taskEditError: doc.getElementById("task-edit-error"),
     slugRenameModal: doc.getElementById("slug-rename-modal"),
     slugRenameClose: doc.getElementById("slug-rename-close"),
