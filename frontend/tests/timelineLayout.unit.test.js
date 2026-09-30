@@ -1,17 +1,17 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-test('parent-to-child separators match child siblings while parent groups stay thicker', async () => {
+test('separators appear only between top-level task groups', async () => {
   const { timelineSeparatorWidth } = await import('../scripts/timelineLayout.ts');
   const root = { id: 'root' }, otherRoot = { id: 'other' };
   const child = { id: 'child', parent: root }, sibling = { id: 'sibling', parent: root };
   const grandchild = { id: 'grandchild', parent: child }, cousin = { id: 'cousin', parent: child };
-  assert.equal(timelineSeparatorWidth(root, child), 3);
-  assert.equal(timelineSeparatorWidth(child, sibling), 3);
-  assert.equal(timelineSeparatorWidth(child, grandchild), 2);
+  assert.equal(timelineSeparatorWidth(root, child), 0);
+  assert.equal(timelineSeparatorWidth(child, sibling), 0);
+  assert.equal(timelineSeparatorWidth(child, grandchild), 0);
   assert.equal(timelineSeparatorWidth(grandchild, otherRoot), 4);
-  assert.equal(timelineSeparatorWidth(grandchild, sibling), 3);
-  assert.equal(timelineSeparatorWidth(grandchild, cousin), 2);
+  assert.equal(timelineSeparatorWidth(grandchild, sibling), 0);
+  assert.equal(timelineSeparatorWidth(grandchild, cousin), 0);
   assert.equal(timelineSeparatorWidth(root), 0);
 });
 

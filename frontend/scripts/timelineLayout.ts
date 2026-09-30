@@ -3,7 +3,7 @@ type Span = { start: number; end: number };
 
 type HierarchyTask = { id: string; parent?: HierarchyTask | null };
 
-/** Entering a child group uses that group's width; leaving it uses the shared ancestor level. */
+/** Separate top-level task groups, including all their descendants. */
 export function timelineSeparatorWidth(current: HierarchyTask, next?: HierarchyTask): number {
   if (!next) return 0;
   const path = (task: HierarchyTask) => {
@@ -15,7 +15,7 @@ export function timelineSeparatorWidth(current: HierarchyTask, next?: HierarchyT
   const left = path(current), right = path(next);
   let shared = 0;
   while (shared < left.length && shared < right.length && left[shared] === right[shared]) shared++;
-  return Math.max(1, 4 - shared);
+  return shared === 0 ? 4 : 0;
 }
 
 /** Siblings without visible descendants share a band. Visible branches stay separate. */
