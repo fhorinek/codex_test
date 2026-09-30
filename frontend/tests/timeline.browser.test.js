@@ -96,10 +96,17 @@ test('timeline browser interactions and graph-panel integration', { timeout: 600
     assert.ok(await timelineTask.locator('.state-pill').count());
     // Tag background can be set and cleared in the shared tag dialog.
     const tagEditorToken = page.locator('#code-editor .cm-tag-token').filter({ hasText: 'backend' }).first();
-    await tagEditorToken.dblclick();
+    await timelineTask.locator('.timeline-title').dblclick();
+    await page.locator('#task-edit-code-editor .cm-tag-token').filter({ hasText: 'backend' }).first().dblclick();
     await page.locator('#slug-rename-background-picker').fill('#fff0ed');
     await page.locator('#slug-rename-save').click();
     assert.match(await page.locator('#task-editor').inputValue(), /background: fff0ed/);
+    assert.equal(await page.locator('.task-preview-card').evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 240, 237)');
+    await page.locator('#task-edit-save').click();
+    const savedTaskWithBackground = await page.locator('#task-editor').inputValue();
+    assert.match(savedTaskWithBackground.split('% Kickoff sprint')[0], /background: fff0ed/);
+    assert.equal(savedTaskWithBackground.match(/% Kickoff sprint/g).length, 1);
+    assert.match(savedTaskWithBackground, /    % Collect requirements/);
     assert.equal(await timelineTask.locator('.timeline-bar').evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 240, 237)');
     assert.equal(await kickoff.evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 240, 237)');
     await timelineTask.locator('.timeline-title').dblclick();

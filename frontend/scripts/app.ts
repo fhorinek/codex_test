@@ -3964,11 +3964,22 @@ function saveTaskEditModal(asSubtask = false) {
     }
     return;
   }
+  // Global slug edits may insert header lines while this dialog remains open.
+  const currentLines = editorController.getValue().split("\n");
+  const currentTask = state.allTasks.find((task: any) => task.id === editingTaskRef?.id);
+  const currentDraft = creatingTask ? buildTaskCreateDraft(currentLines) : buildTaskEditDraft(currentLines, currentTask);
+  if (!currentDraft) {
+    if (dom.taskEditError) {
+      dom.taskEditError.textContent = "This task is no longer available. Close the dialog and reopen the task.";
+      dom.taskEditError.classList.remove("hidden");
+    }
+    return;
+  }
   const saveResult = taskCommandController.saveTaskEdit({
-    taskRange: editingTaskRange,
+    taskRange: currentDraft.range,
     rawTitle,
     bodyText: modalEditor.getValue(),
-    indent: editingTaskIndent,
+    indent: currentDraft.indent,
     fallbackJiraKey: editingTaskJiraKey,
     creatingTask,
     parentLine: parent ? parent.lineIndex : undefined,

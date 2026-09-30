@@ -30,6 +30,7 @@ test("editor source contains header-config autocomplete implementation", async (
   assert.match(source, /label:\s*"tags:"/);
   assert.match(source, /label:\s*"name:"/);
   assert.match(source, /label:\s*"color:"/);
+  assert.match(source, /currentSection === "tags".*label:\s*"background:"/);
   assert.match(source, /taskScriptCompletionSource/);
 });
 

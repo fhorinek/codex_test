@@ -1015,6 +1015,7 @@ function buildHeaderConfigCompletions(context: any, state: any) {
         const options = [
             { label: "name:", type: "property", apply: "name: " },
             { label: "color:", type: "property", apply: "color: " },
+            ...(currentSection === "tags" ? [{ label: "background:", type: "property", apply: "background: " }] : []),
         ].filter((option) => option.label.toLowerCase().includes(partial.toLowerCase()));
         if (!options.length) {
             return null;
