@@ -1,4 +1,4 @@
-const CACHE_NAME = "task-script-pwa-v1";
+const CACHE_NAME = "task-script-pwa-v2";
 const APP_SHELL = [
   "/",
   "/index.html",
@@ -61,7 +61,7 @@ self.addEventListener("fetch", (event) => {
 
   event.respondWith(
     caches.match(request).then((cached) => {
-      const fresh = fetch(request)
+      return fetch(request)
         .then((response) => {
           if (response.ok) {
             const copy = response.clone();
@@ -70,7 +70,6 @@ self.addEventListener("fetch", (event) => {
           return response;
         })
         .catch(() => cached);
-      return cached || fresh;
     })
   );
 });

@@ -24,6 +24,7 @@ import {
 } from "./slugRenameModal.js";
 import {
   decorateDescriptionPills,
+  taskBackground,
   decorateDescriptionReferences,
   renderTaskDescriptionNode,
   wireDescriptionCheckboxes,
@@ -2947,6 +2948,9 @@ function sync(): void {
   renderStoryPointsSummary();
   editorController.updateSuggestions();
   updateClearFiltersVisibility();
+  if (modalEditorController && !dom.taskEditModal?.classList.contains("hidden")) {
+    updateTaskEditPreviewFromText(modalEditorController.getValue());
+  }
 }
 
 /**
@@ -3274,6 +3278,9 @@ function updateTaskEditPreviewFromText(text: any): void {
   dom.taskEditPreview.innerHTML = "";
   const card = document.createElement("div");
   card.className = "task-preview-card";
+  const currentTask = state.allTasks.find((task: any) => task.id === editingTaskRef?.id);
+  card.style.backgroundColor = taskBackground({ tags: parsed.tags, parent: currentTask?.parent }, state.tagMeta);
+  card.style.borderColor = state.stateMeta?.get(parsed.state)?.color || "";
   const header = document.createElement("div");
   header.className = "task-header";
   const title = document.createElement("h4");

@@ -49,6 +49,7 @@ type AppDomSpecific = {
   slugRenameNew: HTMLInputElement | null;
   slugRenameDisplayName: HTMLInputElement | null;
   slugRenameColor: HTMLInputElement | null;
+  slugRenameBackground: HTMLInputElement | null;
   slugRenameColorPicker: HTMLInputElement | null;
   slugRenameEmail: HTMLInputElement | null;
   slugRenameJiraState: HTMLInputElement | null;
@@ -238,6 +239,12 @@ function createAppDomRaw(doc: Document = document) {
     slugRenameColorPicker: doc.getElementById("slug-rename-color-picker"),
     slugRenameColorClear: doc.getElementById("slug-rename-color-clear"),
     slugRenameColorPreview: doc.getElementById("slug-rename-color-preview"),
+    slugRenameBackgroundField: doc.getElementById("slug-rename-background-field"),
+    slugRenameBackground: doc.getElementById("slug-rename-background"),
+    slugRenameBackgroundSwatches: doc.getElementById("slug-rename-background-swatches"),
+    slugRenameBackgroundPicker: doc.getElementById("slug-rename-background-picker"),
+    slugRenameBackgroundClear: doc.getElementById("slug-rename-background-clear"),
+    slugRenameBackgroundPreview: doc.getElementById("slug-rename-background-preview"),
     slugRenameEmailField: doc.getElementById("slug-rename-email-field"),
     slugRenameEmailLabel: doc.getElementById("slug-rename-email-label"),
     slugRenameEmail: doc.getElementById("slug-rename-email"),

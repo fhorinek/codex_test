@@ -3,6 +3,29 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
+test("offline cache serves fresh rendering code online and falls back offline", async () => {
+  const vm = require('node:vm');
+  const handlers = {};
+  const cached = { version: 'old' };
+  const fresh = { version: 'new', ok: true, clone() { return this; } };
+  let offline = false;
+  const context = {
+    URL,
+    self: { location: { origin: 'http://localhost' }, addEventListener: (name, handler) => { handlers[name] = handler; } },
+    caches: { match: async () => cached, open: async () => ({ put: async () => {} }) },
+    fetch: async () => { if (offline) throw new Error('Offline'); return fresh; },
+  };
+  vm.runInNewContext(await fs.readFile(path.resolve(__dirname, '../sw.js'), 'utf8'), context);
+  async function request() {
+    let response;
+    handlers.fetch({ request: { url: 'http://localhost/scripts/canvas.js', method: 'GET' }, respondWith: promise => { response = promise; } });
+    return response;
+  }
+  assert.equal(await request(), fresh);
+  offline = true;
+  assert.equal(await request(), cached);
+});
+
 async function readAppSource() {
   const sourcePath = path.resolve(__dirname, "../scripts/app.ts");
   return fs.readFile(sourcePath, "utf8");

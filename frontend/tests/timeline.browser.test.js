@@ -94,6 +94,28 @@ test('timeline browser interactions and graph-panel integration', { timeout: 600
     assert.equal(await timelineTask.locator('.pill[data-value="@luis"]').textContent(), '👤 Luis Ortega');
     assert.equal(await timelineTask.locator('.pill[data-value="#backend"]').textContent(), '#backend');
     assert.ok(await timelineTask.locator('.state-pill').count());
+    // Tag background can be set and cleared in the shared tag dialog.
+    const tagEditorToken = page.locator('#code-editor .cm-tag-token').filter({ hasText: 'backend' }).first();
+    await tagEditorToken.dblclick();
+    await page.locator('#slug-rename-background-picker').fill('#fff0ed');
+    await page.locator('#slug-rename-save').click();
+    assert.match(await page.locator('#task-editor').inputValue(), /background: fff0ed/);
+    assert.equal(await timelineTask.locator('.timeline-bar').evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 240, 237)');
+    assert.equal(await kickoff.evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 240, 237)');
+    await timelineTask.locator('.timeline-title').dblclick();
+    assert.equal(await page.locator('.task-preview-card').evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 240, 237)');
+    await page.locator('#task-edit-cancel').click();
+    await page.locator('.graph-view-switch [data-view="graph"]').click();
+    const graphTask = page.locator('.task-node').filter({ hasText: 'Kickoff sprint' }).first();
+    assert.equal(await graphTask.evaluate(e => getComputedStyle(e).backgroundColor), 'rgb(255, 240, 237)');
+    const inheritedTask = page.locator('.task-node').filter({ has: page.locator('h4', { hasText: 'Collect requirements' }) }).first();
+    assert.match(await inheritedTask.evaluate(e => getComputedStyle(e).backgroundColor), /0\.8\)/);
+    await page.locator('.graph-view-switch [data-view="timeline"]').click();
+    await tagEditorToken.dblclick();
+    assert.equal(await page.locator('#slug-rename-background-picker').inputValue(), '#fff0ed');
+    await page.locator('#slug-rename-background-clear').click();
+    await page.locator('#slug-rename-save').click();
+    assert.equal(await timelineTask.locator('.timeline-bar').evaluate(e => e.style.backgroundColor), '');
     const dateBeforeState = await timelineTask.locator('.timeline-dates').textContent();
     const done = page.locator('.kanban-column[data-state-tag="!done"]').first();
     await done.scrollIntoViewIfNeeded();
@@ -171,6 +193,11 @@ test('timeline browser interactions and graph-panel integration', { timeout: 600
     });
     const labels = page.locator('.timeline-title');
     assert.deepEqual(await labels.allTextContents(), ['Parent', 'Grandchild', 'Other']);
+    assert.deepEqual(await page.locator('.timeline-parent-name').allTextContents(), ['Child']);
+    const parentHeading = await page.locator('.timeline-parent-name').boundingBox();
+    const descendantBar = await page.locator('.timeline-row').nth(1).locator('.timeline-bar').boundingBox();
+    assert.ok(parentHeading.y + parentHeading.height <= descendantBar.y);
+    assert.ok(Math.abs(parentHeading.x - descendantBar.x) < 1);
     assert.equal(await page.locator('.timeline-task-label').count(), 0);
     const track = await page.locator('.timeline-track').nth(1).boundingBox();
     const drag = async (from, to) => { await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 8 }); await page.mouse.up(); };
@@ -182,6 +209,7 @@ test('timeline browser interactions and graph-panel integration', { timeout: 600
       element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer, clientX: pos.x + pos.width / 2, clientY: pos.y + 30 }));
     }, track);
     assert.deepEqual(await labels.allTextContents(), ['Parent', 'Child', 'Grandchild', 'Other']);
+    assert.equal(await page.locator('.timeline-parent-name').count(), 0);
     const scheduled = await page.evaluate(() => window.fixture.source());
     assert.match(scheduled, /% Child\n    \d+\.\d+\.\d{4}\n    details/);
     assert.equal(await page.evaluate(() => window.fixture.commits), 1);
@@ -278,6 +306,26 @@ test('timeline browser interactions and graph-panel integration', { timeout: 600
     assert.equal(await page.locator('.timeline-handle').count(), 0);
     assert.deepEqual(errors, []);
     await page.screenshot({ path: '/tmp/timeline-browser.png' });
+    await page.evaluate(async () => {
+      const { createTimeline } = await import('/scripts/timeline.js');
+      const { parseTasks } = await import('/scripts/task.js');
+      const { todayDay, formatDay } = await import('/scripts/taskDates.js');
+      const day = todayDay();
+      const range = (a, b) => `${formatDay(day + a)}-${formatDay(day + b)}`;
+      const source = `% Parent\n${range(0, 12)}\n    % Later\n    ${range(2, 6)}\n    % Early\n    ${range(0, 4)}\n    % After\n    ${range(7, 9)}\n    % Branch\n    ${range(0, 12)}\n        % Nested\n        ${range(0, 4)}`;
+      const host = document.getElementById('fixture'); host.replaceChildren();
+      const state = parseTasks(source);
+      const controller = createTimeline({ host, state, getSource: () => source, canEdit: () => true,
+        onDates: () => {}, onSelect: () => {}, onEdit: () => {}, matchesFilters: () => true, matchesSearch: () => false });
+      controller.setActive(true);
+    });
+    const positions = await page.locator('.timeline-bar').evaluateAll(bars => Object.fromEntries(bars.map(bar => [bar.querySelector('.timeline-title').textContent, { y: bar.getBoundingClientRect().y }])));
+    const { Early: early, Later: later, After: after, Branch: branch, Nested: nested } = positions;
+    assert.equal(after.y, early.y);
+    assert.equal(later.y, early.y + 72);
+    assert.ok(branch.y > later.y);
+    assert.ok(nested.y > branch.y);
+    assert.equal(await page.locator('.timeline-row').count(), 4);
   } finally {
     await browser?.close(); await new Promise(resolve => server.close(resolve));
   }

@@ -1,8 +1,9 @@
 import { buildDailyWorkload, workloadBoxSize } from "./timelineWorkload.js";
-import { decorateDescriptionPills, createTaskStatePill } from "./taskDescription.js";
+import { layoutTimeline, timelineSeparatorWidth } from "./timelineLayout.js";
+import { decorateDescriptionPills, createTaskStatePill, taskBackground } from "./taskDescription.js";
 import { findTaskDates, formatDay, formatDates, todayDay, moveDates, resizeDates, type TaskDates } from './taskDates.js';
 
-type Task = { id: string; name: string; lineIndex: number; depth: number; children: Task[]; archived?: boolean; tags: string[]; people: string[]; state: string | null; jiraKey: string | null };
+type Task = { id: string; name: string; lineIndex: number; depth: number; parent?: Task | null; children: Task[]; archived?: boolean; tags: string[]; people: string[]; state: string | null; jiraKey: string | null };
 type Options = {
   host: HTMLElement; state: any; getSource: () => string; canEdit: () => boolean;
   onSelect: (task: Task) => void; onEdit: (task: Task) => void;
@@ -53,13 +54,15 @@ export function createTimeline(options: Options) {
   function tasks(): Task[] {
     const result: Task[] = [];
     const visit = (task: Task) => {
+      if (task.archived) return;
       result.push(task);
-      if (!task.archived) task.children?.forEach(visit);
+      task.children?.forEach(visit);
     };
     (state.tasks || []).forEach(visit); return result;
   }
   function makeBar(task: Task, dates: TaskDates): HTMLElement {
     const bar = node('div', 'timeline-bar');
+    bar.style.backgroundColor = taskBackground(task, state.tagMeta);
     bar.dataset['taskId'] = task.id; bar.dataset['kind'] = 'move'; bar.tabIndex = 0;
     bar.setAttribute('role', 'button'); bar.setAttribute('aria-label', `${task.name}, ${formatDates(dates)}. Enter to edit.`);
     if (state.selectedTaskId === task.id) bar.classList.add('selected');
@@ -231,11 +234,52 @@ export function createTimeline(options: Options) {
       }
     }
     const visible = tasks().filter(task => findTaskDates(sourceLines, task.lineIndex));
-    for (const task of visible) {
-      const row = node('div', 'timeline-row'); row.dataset['rowTaskId'] = task.id;
+    const bands = layoutTimeline<Task>(state.tasks || [], task => {
+      const dates = findTaskDates(sourceLines, task.lineIndex);
+      if (!dates) return null;
+      const start = dates.start === null ? (dates.end! + 1) * scale - 130 : dates.start * scale;
+      const end = dates.end === null ? start + 130 : (dates.end + 1) * scale;
+      return { start, end: Math.max(start + scale, end) };
+    });
+    for (const [index, band] of bands.entries()) {
+      const row = node('div', 'timeline-row');
+      const separatorWidth = timelineSeparatorWidth(band.tasks[0]!.task, bands[index + 1]?.tasks[0]?.task);
+      row.style.borderBottomWidth = `${separatorWidth}px`;
+      row.style.borderBottomColor = `color-mix(in srgb, var(--timeline-text) ${Math.max(0, separatorWidth - 1) * 12}%, var(--timeline-grid))`;
+      const headingHeight = band.hiddenParent ? 22 : 0;
+      row.style.height = `${band.lanes * 72 + headingHeight + Math.max(0, separatorWidth - 1)}px`;
+      row.dataset['rowTaskId'] = band.tasks[0]!.task.id;
       const track = node('div', 'timeline-track');
-      const dates = gesture?.task?.id === task.id && gesture.preview ? gesture.preview : findTaskDates(sourceLines, task.lineIndex);
-      if (dates) track.append(makeBar(task, dates));
+      let heading: HTMLElement | null = null;
+      let firstVisible: { left: number; right: number } | null = null;
+      if (band.hiddenParent) {
+        const names: string[] = [];
+        let ancestor: Task | null | undefined = band.hiddenParent;
+        while (ancestor && !findTaskDates(sourceLines, ancestor.lineIndex)) {
+          names.unshift(ancestor.name);
+          ancestor = ancestor.parent;
+        }
+        const label = names.join(' > ');
+        heading = node('div', 'timeline-parent-name', label);
+        heading.title = label;
+        track.append(heading);
+      }
+      for (const { task, lane } of band.tasks) {
+        const dates = gesture?.task?.id === task.id && gesture.preview ? gesture.preview : findTaskDates(sourceLines, task.lineIndex);
+        if (dates) {
+          const bar = makeBar(task, dates);
+          bar.style.top = `${headingHeight + lane * 72 + 7}px`;
+          bar.dataset['lane'] = String(lane);
+          const left = parseFloat(bar.style.left), right = left + parseFloat(bar.style.width);
+          if (right > 0 && left < availableWidth() && (!firstVisible || left < firstVisible.left)) {
+            firstVisible = { left, right };
+          }
+          track.append(bar);
+        }
+      }
+      if (heading && firstVisible && firstVisible.left >= 0 && firstVisible.right <= availableWidth()) {
+        heading.style.left = `${firstVisible.left}px`;
+      }
       const line = node('div', 'timeline-today-line'); line.style.left = `${todayX}px`; track.append(line);
       row.append(track); rows.append(row);
     }
@@ -259,10 +303,10 @@ export function createTimeline(options: Options) {
   }
   function isInTaskRow(g: Gesture, x: number, y: number): boolean {
     if (!g.task || !isInTimeline(x, y)) return false;
-    const row = Array.from(rows.children).find(element => (element as HTMLElement).dataset['rowTaskId'] === g.task!.id);
-    if (!row) return false;
-    const rect = row.getBoundingClientRect();
-    return y >= rect.top && y < rect.bottom;
+    const bar = Array.from(rows.querySelectorAll<HTMLElement>('.timeline-bar')).find(element => element.dataset['taskId'] === g.task!.id);
+    if (!bar) return false;
+    const top = bar.getBoundingClientRect().top - 7;
+    return y >= top && y < top + 72;
   }
   function isOverTrash(x: number, y: number) {
     return Boolean(document.elementFromPoint(x, y)?.closest('#task-trash'));
@@ -478,10 +522,9 @@ export function createTimeline(options: Options) {
     setActive(value: boolean) { cancel(); active = value; host.hidden = !value; if (value) paint(); },
     focusOnTask(task: Task) {
       if (!active) return;
-      const lines = getSource().split("\n");
-      const index = tasks().filter(item => findTaskDates(lines, item.lineIndex)).findIndex(item => item.id === task.id);
-      if (index < 0) return;
-      const top = index * 72, bottom = top + 72;
+      const bar = Array.from(rows.querySelectorAll<HTMLElement>('.timeline-bar')).find(element => element.dataset['taskId'] === task.id);
+      if (!bar) return;
+      const top = bar.getBoundingClientRect().top - rows.getBoundingClientRect().top - 7, bottom = top + 72;
       if (top < viewport.scrollTop) viewport.scrollTop = top;
       else if (bottom > viewport.scrollTop + viewport.clientHeight - RULER_HEIGHT) viewport.scrollTop = bottom - viewport.clientHeight + RULER_HEIGHT;
       const dates = findTaskDates(getSource(), task.lineIndex);

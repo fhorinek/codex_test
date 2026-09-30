@@ -33,6 +33,7 @@ type ParsedConfigEntry = {
   key: string;
   name: string;
   color: string;
+  background?: string;
   email?: string;
   jiraState?: string;
 };
@@ -505,6 +506,8 @@ function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: 
           currentEntry.name = value || currentEntry.name;
         } else if (propKey === "color") {
           currentEntry.color = normalizeConfiguredColorValue(value);
+        } else if (propKey === "background" && currentSection === "tags") {
+          currentEntry.background = normalizeConfiguredColorValue(value);
         } else if ((propKey === "email" || propKey === "mail") && currentSection === "people") {
           currentEntry.email = value;
         } else if (

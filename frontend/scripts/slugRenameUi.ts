@@ -64,83 +64,97 @@ export function createSlugRenameUi(dom: AppDom, doc: Document = document) {
   let colorControlsBound = false;
   const domAny: any = dom;
 
-  /**
-   * @param {string} value
-   */
-  function updateColorPreview(value: string) {
-    if (!domAny.slugRenameColorPreview) {
-      return;
+  function createColorControls(controls: any) {
+    /**
+     * @param {string} value
+     */
+    function updateColorPreview(value: string) {
+      if (!controls.slugRenameColorPreview) {
+        return;
+      }
+      const raw = typeof value === "string" ? value.trim() : "";
+      const hex = normalizeHexColorValue(raw);
+      controls.slugRenameColorPreview.textContent = raw || "Auto";
+      controls.slugRenameColorPreview.style.setProperty(
+        "--slug-rename-preview-color",
+        hex || "transparent"
+      );
+      controls.slugRenameColorPreview.classList.toggle("has-color", Boolean(hex));
     }
-    const raw = typeof value === "string" ? value.trim() : "";
-    const hex = normalizeHexColorValue(raw);
-    domAny.slugRenameColorPreview.textContent = raw || "Auto";
-    domAny.slugRenameColorPreview.style.setProperty(
-      "--slug-rename-preview-color",
-      hex || "transparent"
-    );
-    domAny.slugRenameColorPreview.classList.toggle("has-color", Boolean(hex));
-  }
 
-  /**
-   * @param {string} value
-   */
-  function setColorValue(value: string) {
-    const raw = typeof value === "string" ? value.trim() : "";
-    if (domAny.slugRenameColor) {
-      domAny.slugRenameColor.value = raw;
+    /**
+     * @param {string} value
+     */
+    function setColorValue(value: string) {
+      const raw = typeof value === "string" ? value.trim() : "";
+      if (controls.slugRenameColor) {
+        controls.slugRenameColor.value = raw;
+      }
+      const hex = normalizeHexColorValue(raw);
+      if (controls.slugRenameColorPicker && hex) {
+        controls.slugRenameColorPicker.value = hex;
+      }
+      if (controls.slugRenameColorSwatches) {
+        controls.slugRenameColorSwatches
+          .querySelectorAll("button[data-color]")
+          .forEach((buttonNode: Element) => {
+            const button = buttonNode as HTMLButtonElement;
+            const swatchColor = normalizeHexColorValue(button.dataset["color"] || "");
+            const active = Boolean(hex) && swatchColor === hex;
+            button.classList.toggle("active", active);
+            button.setAttribute("aria-pressed", active ? "true" : "false");
+          });
+      }
+      updateColorPreview(raw);
     }
-    const hex = normalizeHexColorValue(raw);
-    if (domAny.slugRenameColorPicker && hex) {
-      domAny.slugRenameColorPicker.value = hex;
-    }
-    if (domAny.slugRenameColorSwatches) {
-      domAny.slugRenameColorSwatches
-        .querySelectorAll("button[data-color]")
-        .forEach((buttonNode: Element) => {
-          const button = buttonNode as HTMLButtonElement;
-          const swatchColor = normalizeHexColorValue(button.dataset["color"] || "");
-          const active = Boolean(hex) && swatchColor === hex;
-          button.classList.toggle("active", active);
-          button.setAttribute("aria-pressed", active ? "true" : "false");
-        });
-    }
-    updateColorPreview(raw);
-  }
 
-  /**
-   * Handles the ensureColorControls function logic.
-   * Input: none.
-   * Output: result produced by this function.
-   */
-  function ensureColorControls() {
-    if (colorControlsBound) {
-      return;
-    }
-    colorControlsBound = true;
-    if (domAny.slugRenameColorSwatches) {
-      domAny.slugRenameColorSwatches.innerHTML = "";
-      SLUG_RENAME_SWATCH_COLORS.forEach((color, index) => {
-        const button = doc.createElement("button");
-        button.type = "button";
-        button.className = "slug-color-swatch";
-        button.dataset["color"] = color;
-        button.style.setProperty("--swatch-color", color);
-        button.setAttribute("aria-label", `Color ${index + 1}`);
-        button.setAttribute("aria-pressed", "false");
-        button.addEventListener("click", () => {
-          setColorValue(color);
+    /**
+     * Handles the ensureColorControls function logic.
+     * Input: none.
+     * Output: result produced by this function.
+     */
+    function bindControls() {
+      if (controls.slugRenameColorSwatches) {
+        controls.slugRenameColorSwatches.innerHTML = "";
+        SLUG_RENAME_SWATCH_COLORS.forEach((color, index) => {
+          const button = doc.createElement("button");
+          button.type = "button";
+          button.className = "slug-color-swatch";
+          button.dataset["color"] = color;
+          button.style.setProperty("--swatch-color", color);
+          button.setAttribute("aria-label", `Color ${index + 1}`);
+          button.setAttribute("aria-pressed", "false");
+          button.addEventListener("click", () => {
+            setColorValue(color);
+          });
+          controls.slugRenameColorSwatches.appendChild(button);
         });
-        domAny.slugRenameColorSwatches.appendChild(button);
+      }
+      controls.slugRenameColorPicker?.addEventListener("input", (event: Event) => {
+        const target = event.currentTarget as HTMLInputElement | null;
+        setColorValue(target?.value || "");
       });
-    }
-    domAny.slugRenameColorPicker?.addEventListener("input", (event: Event) => {
-      const target = event.currentTarget as HTMLInputElement | null;
-      setColorValue(target?.value || "");
-    });
-    domAny.slugRenameColorClear?.addEventListener("click", () => {
+      controls.slugRenameColorClear?.addEventListener("click", () => {
+        setColorValue("");
+      });
       setColorValue("");
-    });
-    setColorValue("");
+    }
+
+    return { setColorValue, bindControls };
+  }
+  const color = createColorControls(domAny);
+  const background = createColorControls({
+    slugRenameColor: domAny.slugRenameBackground,
+    slugRenameColorPicker: domAny.slugRenameBackgroundPicker,
+    slugRenameColorSwatches: domAny.slugRenameBackgroundSwatches,
+    slugRenameColorClear: domAny.slugRenameBackgroundClear,
+    slugRenameColorPreview: domAny.slugRenameBackgroundPreview,
+  });
+  function ensureColorControls() {
+    if (colorControlsBound) return;
+    colorControlsBound = true;
+    color.bindControls();
+    background.bindControls();
   }
 
   /**
@@ -178,13 +192,15 @@ export function createSlugRenameUi(dom: AppDom, doc: Document = document) {
   function setFieldVisibility(kind: string) {
     domAny.slugRenameDisplayNameField?.classList.remove("hidden");
     domAny.slugRenameColorField?.classList.remove("hidden");
+    domAny.slugRenameBackgroundField?.classList.toggle("hidden", kind !== "tag");
     domAny.slugRenameEmailField?.classList.toggle("hidden", !isPersonKind(kind));
     domAny.slugRenameJiraStateField?.classList.toggle("hidden", !isStateKind(kind));
   }
 
   return {
     ensureColorControls,
-    setColorValue,
+    setColorValue: color.setColorValue,
+    setBackgroundValue: background.setColorValue,
     setFieldVisibility,
     configureContext,
   };

@@ -13,7 +13,7 @@ type SlugSection = "tags" | "people" | "states";
 // Defines the SlugConfigProp type structure for this module.
 type SlugConfigProp = keyof SlugRenameMetadata;
 // Defines the SlugRenameMetadata type structure for this module.
-type SlugRenameMetadata = { name: string; color: string; email: string; jiraState: string };
+type SlugRenameMetadata = { name: string; color: string; background: string; email: string; jiraState: string };
 // Defines the SlugRenameTokenInput type structure for this module.
 type SlugRenameTokenInput = { type?: string; prefix?: string; slug?: string } | null | undefined;
 // Defines the RenameWholeFileOptions type structure for this module.
@@ -45,7 +45,7 @@ const SLUG_SECTION_BY_KIND: Record<SlugKind, SlugSection> = {
 
 // Stores the SLUG_CONFIG_PROPS_BY_KIND module constant.
 const SLUG_CONFIG_PROPS_BY_KIND: Record<SlugKind, SlugConfigProp[]> = {
-  tag: ["name", "color"],
+  tag: ["name", "color", "background"],
   person: ["name", "color", "email"],
   state: ["name", "color", "jiraState"],
 };
@@ -123,6 +123,7 @@ export function normalizeSlugMetadata(kind: string, metadata: Record<string, any
   const normalized = {
     name: typeof metadata["name"] === "string" ? metadata["name"].trim() : "",
     color: typeof metadata["color"] === "string" ? metadata["color"].trim() : "",
+    background: kind === "tag" && typeof metadata["background"] === "string" ? metadata["background"].trim() : "",
     email: "",
     jiraState: "",
   };
@@ -171,6 +172,7 @@ export function buildSlugRenameMetadataFromConfig(
   return normalizeSlugMetadata(kind, {
     name: entry?.["name"] && entry["name"] !== slug ? entry["name"] : "",
     color: entry?.["color"] || "",
+    background: entry?.["background"] || "",
     email: entry?.["email"] || "",
     jiraState: entry?.["jiraState"] || "",
   });
@@ -226,7 +228,7 @@ function slugConfigPropOutputName(kind: string, prop: SlugConfigProp): string {
  */
 function slugConfigPropOutputValue(prop: SlugConfigProp, value: string): string {
   const raw = typeof value === "string" ? value.trim() : "";
-  if (prop === "color") {
+  if (prop === "color" || prop === "background") {
     const normalized = normalizeHexColorValue(raw);
     if (normalized) {
       return normalized.slice(1);
@@ -263,6 +265,7 @@ function normalizeSlugConfigPropName(prop: string): SlugConfigProp | "" {
   if (compact === "color") {
     return "color";
   }
+  if (compact === "background") return "background";
   if (compact === "email") {
     return "email";
   }
@@ -496,6 +499,7 @@ type SlugRenameModalDom = {
   slugRenameNew?: HTMLInputElement | null;
   slugRenameDisplayName?: HTMLInputElement | null;
   slugRenameColor?: HTMLInputElement | null;
+  slugRenameBackground?: HTMLInputElement | null;
   slugRenameEmail?: HTMLInputElement | null;
   slugRenameJiraState?: HTMLInputElement | null;
   taskEditModal?: HTMLElement | null;
@@ -527,6 +531,7 @@ type SlugRenameUiApi = {
    * Output: result produced by this function.
    */
   setColorValue: (value: string) => void;
+  setBackgroundValue: (value: string) => void;
 };
 
 // Defines the PendingSlugRename type structure for this module.
@@ -619,6 +624,7 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
       dom.slugRenameDisplayName.value = "";
     }
     slugRenameUi.setColorValue("");
+    slugRenameUi.setBackgroundValue("");
     if (dom.slugRenameEmail) {
       dom.slugRenameEmail.value = "";
     }
@@ -668,6 +674,7 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
       dom.slugRenameDisplayName.value = pending.metadata.name || "";
     }
     slugRenameUi.setColorValue(pending.metadata.color || "");
+    slugRenameUi.setBackgroundValue(pending.metadata.background || "");
     if (dom.slugRenameEmail) {
       dom.slugRenameEmail.value = pending.metadata.email || "";
     }
@@ -702,6 +709,7 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
     const nextMetadata = normalizeSlugMetadata(pending.kind, {
       name: dom.slugRenameDisplayName?.value || "",
       color: dom.slugRenameColor?.value || "",
+      background: dom.slugRenameBackground?.value || "",
       email: dom.slugRenameEmail?.value || "",
       jiraState: dom.slugRenameJiraState?.value || "",
     });

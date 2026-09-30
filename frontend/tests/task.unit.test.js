@@ -282,6 +282,51 @@ test("parseTasks treats any positive indent increase as child depth", async () =
 // - people entries can carry nested mail
 // - state entries can carry nested jiraState
 // - parser keeps raw config values and exposes them via metadata maps
+test("tag backgrounds parse, survive formatting, and follow task tag order", async () => {
+  const { parseTasks } = await loadTaskModule();
+  const { taskBackground } = await import('../scripts/taskDescription.ts');
+  const { formatTaskScript } = await import('../scripts/formatter.ts');
+  const source = 'Board:\n    tags:\n        urgent:\n            color: e74c3c\n            background: fff0ed\n        review:\n            background: #eef\n\n% Task\n#plain #urgent #review';
+  for (const text of [source, formatTaskScript(source)]) {
+    const parsed = parseTasks(text);
+    assert.equal(parsed.tagMeta.get('#urgent').background, '#fff0ed');
+    assert.equal(parsed.tagMeta.get('#urgent').color, '#e74c3c');
+    assert.equal(taskBackground(parsed.allTasks[0].tags, parsed.tagMeta), '#fff0ed');
+    assert.equal(taskBackground(['#review', '#urgent'], parsed.tagMeta), '#eef');
+    assert.equal(taskBackground(['#plain'], parsed.tagMeta), '');
+  }
+});
+
+test("tag dialog saves, reloads, and clears background metadata", async () => {
+  const { parseTasks } = await loadTaskModule();
+  const { renameSlugInWholeFile, buildSlugRenameMetadataFromConfig, slugMetadataEqual } = await import('../scripts/slugRenameModal.ts');
+  const source = 'Board:\n    tags:\n        urgent:\n            color: e74c3c\n\n% Task\n#urgent';
+  const metadata = { name: '', color: '#e74c3c', background: '#fff0ed' };
+  const options = { kind: 'tag', prefix: '#', oldSlug: 'urgent', newSlug: 'urgent', metadata };
+  const saved = renameSlugInWholeFile(source, options).text;
+  const loaded = buildSlugRenameMetadataFromConfig(parseTasks(saved).config, 'tag', 'urgent');
+  assert.equal(loaded.background, '#fff0ed');
+  assert.equal(slugMetadataEqual('tag', loaded, { ...loaded, background: '' }), false);
+  const cleared = renameSlugInWholeFile(saved, { ...options, metadata: { ...metadata, background: '' } }).text;
+  assert.doesNotMatch(cleared, /background:/);
+  assert.equal(parseTasks(cleared).tagMeta.get('#urgent').color, '#e74c3c');
+});
+
+test("task backgrounds inherit, fade per level, and reset at local overrides", async () => {
+  const { taskBackground } = await import('../scripts/taskDescription.ts');
+  const meta = new Map([['#red', { background: '#ff0000' }], ['#blue', { background: '#0000ff' }]]);
+  const root = { tags: ['#red'] };
+  const child = { tags: [], parent: root };
+  const grandchild = { tags: [], parent: child };
+  assert.equal(taskBackground(root, meta), '#ff0000');
+  assert.equal(taskBackground(child, meta), 'color-mix(in srgb, #ff0000 80%, transparent)');
+  assert.equal(taskBackground(grandchild, meta), 'color-mix(in srgb, #ff0000 60%, transparent)');
+  child.tags = ['#blue'];
+  assert.equal(taskBackground(child, meta), '#0000ff');
+  assert.equal(taskBackground(grandchild, meta), 'color-mix(in srgb, #0000ff 80%, transparent)');
+  assert.equal(taskBackground({ tags: [] }, meta), '');
+});
+
 test("parseTasks parses slug config metadata fields", async () => {
   const { parseTasks } = await loadTaskModule();
   const parsed = parseTasks(

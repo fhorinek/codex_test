@@ -168,6 +168,26 @@ Optional config header before first task:
 
 If `states:` is omitted, defaults are `todo`, `inprogress`, `done`.
 
+Tags support `name`, `color` (pill color), and `background` (whole task background
+in graph, kanban, and timeline). The first tag on a task with a configured
+background wins. Children inherit the closest ancestor's background with 20%
+more transparency per level, unless their own tag defines a background. Removing
+an override restores the next tag's background, inherited background, or theme.
+The tag edit dialog also provides a Task background color picker; Auto clears
+the override.
+
+```text
+My board:
+    tags:
+        urgent:
+            name: Urgent
+            color: #e74c3c
+            background: #fff0ed
+
+% Fix the issue
+#urgent
+```
+
 ## Editor Interactions
 
 - Double-click `%` task title in code editor: open task edit modal.
@@ -224,7 +244,16 @@ All success and error feedback is shown as top-right toasts.
 
 Use **Graph | Timeline** at the bottom-right of the graph pane to switch views. Your choice
 is remembered on this browser. The timeline shows only tasks with valid dates, keeping parents and children in
-script order, with a shared date ruler and a red Today line. There is no left task list.
+hierarchical order, with a shared date ruler and a red Today line. Consecutive leaf
+subtasks with no visible descendants share a row; overlapping tasks stack below
+earlier-starting tasks and expand that row. Subtasks with dated descendants have
+their own row, followed by those descendants. Undated children do not force a
+separate row. There is no left task list.
+When a parent has no timeline entry, its name appears above its children's row,
+aligned with the first visible task. If that task is partially clipped, the name
+stays at the left edge of the row.
+Consecutive undated ancestors appear as a breadcrumb, such as `Parent > Sub-parent`.
+Archived tasks and their descendants are excluded from the timeline and workload.
 
 Dates use **day.month.year**, with four-digit years, anywhere in the task's own body:
 
