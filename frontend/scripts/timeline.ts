@@ -1,6 +1,6 @@
 import { buildDailyWorkload, workloadBoxSize } from "./timelineWorkload.js";
 import { layoutTimeline, timelineSeparatorWidth } from "./timelineLayout.js";
-import { decorateDescriptionPills, createTaskStatePill, taskBackground } from "./taskDescription.js";
+import { decorateDescriptionPills, createTaskStatePill, applyTaskBackground } from "./taskDescription.js";
 import { findTaskDates, formatDay, formatDates, todayDay, moveDates, resizeDates, type TaskDates } from './taskDates.js';
 
 type Task = { id: string; name: string; lineIndex: number; depth: number; parent?: Task | null; children: Task[]; archived?: boolean; tags: string[]; people: string[]; state: string | null; jiraKey: string | null };
@@ -26,15 +26,19 @@ export function createTimeline(options: Options) {
   const viewport = document.createElement('div');
   viewport.className = 'timeline-viewport';
   viewport.tabIndex = 0;
-  viewport.setAttribute('aria-label', 'Task timeline. Drag background to pan; Use the mouse wheel to zoom.');
+  viewport.setAttribute('aria-label', 'Task timeline. Wheel scrolls rows; Shift pans horizontally; Control adjusts row height. Wheel over dates zooms time.');
   const ruler = document.createElement('div'); ruler.className = 'timeline-ruler';
   const rows = document.createElement('div'); rows.className = 'timeline-rows';
   const workload = document.createElement('section'); workload.className = 'timeline-workload';
+  workload.tabIndex = 0;
+  workload.setAttribute('aria-label', 'People workload. Hover or focus to expand.');
   workload.setAttribute('aria-label', 'Daily workload by person');
   workload.tabIndex = 0;
   viewport.append(ruler, rows); host.append(viewport, workload);
   let origin = todayDay() - 15, scale = 24, initialized = false;
+  let rowHeight = 72;
   let active = false, gesture: Gesture | null = null, frame = 0, lastSource = '';
+  let focusFrame = 0;
   let externalDragSource: string | null = null;
   let tokenDrag: { taskId: string; value: string; source: string } | null = null;
   let dragGhost: HTMLElement | null = null;
@@ -62,7 +66,7 @@ export function createTimeline(options: Options) {
   }
   function makeBar(task: Task, dates: TaskDates): HTMLElement {
     const bar = node('div', 'timeline-bar');
-    bar.style.backgroundColor = taskBackground(task, state.tagMeta);
+    applyTaskBackground(bar, task, state.tagMeta);
     bar.dataset['taskId'] = task.id; bar.dataset['kind'] = 'move'; bar.tabIndex = 0;
     bar.setAttribute('role', 'button'); bar.setAttribute('aria-label', `${task.name}, ${formatDates(dates)}. Enter to edit.`);
     if (state.selectedTaskId === task.id) bar.classList.add('selected');
@@ -142,9 +146,26 @@ export function createTimeline(options: Options) {
     if (!data.people.length) {
       return;
     }
-    data.people.sort((a, b) => String(state.peopleMeta?.get(a.person)?.name || a.person).localeCompare(String(state.peopleMeta?.get(b.person)?.name || b.person)));
-    for (const person of data.people) {
+    data.people.sort((a, b) => Number(Boolean(state.selectedPeople?.has(b.person))) - Number(Boolean(state.selectedPeople?.has(a.person)))
+      || String(state.peopleMeta?.get(a.person)?.name || a.person).localeCompare(String(state.peopleMeta?.get(b.person)?.name || b.person)));
+    workload.style.setProperty('--workload-height', `${data.people.length * 28}px`);
+    const selectedCount = data.people.filter(person => state.selectedPeople?.has(person.person)).length;
+    const compactCount = data.people.length - selectedCount;
+    const compactStripHeight = 28 / Math.max(1, compactCount);
+    workload.style.setProperty('--compact-strip-height', `${compactStripHeight}px`);
+    workload.style.setProperty('--compact-bar-height', `${compactStripHeight * .8}px`);
+    workload.style.setProperty('--resting-height', `${selectedCount * 28 + (compactCount ? 28 : 0)}px`);
+    workload.classList.toggle('has-selected-people', selectedCount > 0);
+    const content = node('div', 'timeline-workload-content');
+    workload.append(content);
+    let restingTop = 0;
+    for (const [personIndex, person] of data.people.entries()) {
       const row = node('div', 'timeline-workload-person'); row.dataset['person'] = person.person;
+      const selected = Boolean(state.selectedPeople?.has(person.person));
+      row.classList.toggle('selected', selected);
+      row.style.setProperty('--person-top', `${personIndex * 28}px`);
+      row.style.setProperty('--compact-person-top', `${restingTop}px`);
+      restingTop += selected ? 28 : compactStripHeight;
       const name = node('span', 'pill inline-pill timeline-workload-name');
       name.dataset['type'] = 'person'; name.dataset['value'] = person.person;
       const cells = node('div', 'timeline-workload-days');
@@ -156,8 +177,9 @@ export function createTimeline(options: Options) {
         const width = Math.max(1, Math.min(6, scale - Math.min(3, scale / 4)));
         const cell = node('span', 'timeline-workload-box');
         cell.dataset['day'] = String(day); cell.dataset['count'] = String(count);
-        cell.style.left = `${(day - origin) * scale + (scale - width) / 2}px`;
-        cell.style.width = `${width}px`; cell.style.height = `${size}px`;
+        cell.style.setProperty('--expanded-left', `${(day - origin) * scale + (scale - width) / 2}px`);
+        cell.style.setProperty('--expanded-width', `${width}px`);
+        cell.style.setProperty('--expanded-height', `${size}px`);
         cell.style.backgroundColor = state.peopleMeta?.get(person.person)?.color || 'var(--timeline-accent)';
         const label = `${state.peopleMeta?.get(person.person)?.name || person.person.replace(/^@/, '')} · ${formatDay(day)} · ${count} ${count === 1 ? 'task' : 'tasks'}`;
         cell.title = label; cell.setAttribute('aria-label', label); cell.setAttribute('role', 'img');
@@ -170,12 +192,13 @@ export function createTimeline(options: Options) {
         const line = node('div', 'timeline-year-boundary'); line.style.left = `${x}px`; cells.append(line);
       }
       const today = node('div', 'timeline-today-line'); today.style.left = `${todayX}px`; cells.append(today);
-      row.append(cells); workload.append(row);
+      row.append(cells); content.append(row);
     }
     workload.scrollTop = scrollTop;
   }
   function paint() {
     if (!active) return;
+    const scrollTop = viewport.scrollTop;
     if (!initialized && host.clientWidth) { scale = availableWidth() / 30; initialized = true; }
     const source = getSource();
     const sourceLines = source.split('\n');
@@ -241,34 +264,46 @@ export function createTimeline(options: Options) {
       const end = dates.end === null ? start + 130 : (dates.end + 1) * scale;
       return { start, end: Math.max(start + scale, end) };
     });
+    const groups: { task: Task; element: HTMLElement; heading: HTMLElement; aligned: boolean }[] = [];
     for (const [index, band] of bands.entries()) {
+      // Undated ancestors own a group spanning every descendant band, even
+      // when a dated task appears between that ancestor and its grandchildren.
+      const ancestors: Task[] = [];
+      let ancestor = band.tasks[0]!.task.parent;
+      while (ancestor) {
+        if (!findTaskDates(sourceLines, ancestor.lineIndex)) ancestors.unshift(ancestor);
+        ancestor = ancestor.parent;
+      }
+      let shared = 0;
+      while (shared < groups.length && groups[shared]!.task.id === ancestors[shared]?.id) shared++;
+      groups.length = shared;
+      for (const task of ancestors.slice(shared)) {
+        const element = node('div', 'timeline-parent-group');
+        const heading = node('div', 'timeline-parent-name');
+        heading.append(node('span', 'timeline-parent-label', task.name));
+        heading.style.top = `${RULER_HEIGHT + groups.length * 22}px`;
+        heading.style.zIndex = String(100 - groups.length);
+        applyTaskBackground(heading, task, state.tagMeta);
+        heading.title = task.name;
+        element.append(heading);
+        (groups.at(-1)?.element || rows).append(element);
+        groups.push({ task, element, heading, aligned: false });
+      }
       const row = node('div', 'timeline-row');
-      const separatorWidth = timelineSeparatorWidth(band.tasks[0]!.task, bands[index + 1]?.tasks[0]?.task);
+      const nextBand = bands[index + 1];
+      const separatorWidth = nextBand?.hiddenParent ? 0 : timelineSeparatorWidth(band.tasks[0]!.task, nextBand?.tasks[0]?.task);
       row.style.borderBottomWidth = `${separatorWidth}px`;
       row.style.borderBottomColor = `color-mix(in srgb, var(--timeline-text) ${Math.max(0, separatorWidth - 1) * 12}%, var(--timeline-grid))`;
-      const headingHeight = band.hiddenParent ? 22 : 0;
-      row.style.height = `${band.lanes * 72 + headingHeight + Math.max(0, separatorWidth - 1)}px`;
+      row.style.height = `${band.lanes * rowHeight + Math.max(0, separatorWidth - 1)}px`;
       row.dataset['rowTaskId'] = band.tasks[0]!.task.id;
       const track = node('div', 'timeline-track');
-      let heading: HTMLElement | null = null;
       let firstVisible: { left: number; right: number } | null = null;
-      if (band.hiddenParent) {
-        const names: string[] = [];
-        let ancestor: Task | null | undefined = band.hiddenParent;
-        while (ancestor && !findTaskDates(sourceLines, ancestor.lineIndex)) {
-          names.unshift(ancestor.name);
-          ancestor = ancestor.parent;
-        }
-        const label = names.join(' > ');
-        heading = node('div', 'timeline-parent-name', label);
-        heading.title = label;
-        track.append(heading);
-      }
       for (const { task, lane } of band.tasks) {
         const dates = gesture?.task?.id === task.id && gesture.preview ? gesture.preview : findTaskDates(sourceLines, task.lineIndex);
         if (dates) {
           const bar = makeBar(task, dates);
-          bar.style.top = `${headingHeight + lane * 72 + 7}px`;
+          bar.style.top = `${lane * rowHeight + 7}px`;
+          bar.style.height = `${rowHeight - 14}px`;
           bar.dataset['lane'] = String(lane);
           const left = parseFloat(bar.style.left), right = left + parseFloat(bar.style.width);
           if (right > 0 && left < availableWidth() && (!firstVisible || left < firstVisible.left)) {
@@ -277,17 +312,23 @@ export function createTimeline(options: Options) {
           track.append(bar);
         }
       }
-      if (heading && firstVisible && firstVisible.left >= 0 && firstVisible.right <= availableWidth()) {
-        heading.style.left = `${firstVisible.left}px`;
+      if (firstVisible) {
+        for (const group of groups) {
+          if (group.aligned) continue;
+          if (firstVisible.left >= 0 && firstVisible.right <= availableWidth()) group.heading.style.paddingLeft = `${firstVisible.left}px`;
+          group.aligned = true;
+        }
       }
       const line = node('div', 'timeline-today-line'); line.style.left = `${todayX}px`; track.append(line);
-      row.append(track); rows.append(row);
+      row.append(track); (groups.at(-1)?.element || rows).append(row);
     }
     if (!visible.length) rows.append(node('div', 'timeline-empty', 'No tasks with valid dates. Drag a task from kanban here to schedule it, or add dates in the editor.'));
     renderWorkload(visible, sourceLines, todayX, yearBoundaries, monthBoundaries);
+    viewport.scrollTop = scrollTop;
     lastSource = source;
   }
   function cancel() {
+    cancelAnimationFrame(focusFrame); focusFrame = 0;
     if (!gesture) return;
     gesture = null; cancelAnimationFrame(frame);
     dragGhost?.remove(); dragGhost = null;
@@ -306,7 +347,7 @@ export function createTimeline(options: Options) {
     const bar = Array.from(rows.querySelectorAll<HTMLElement>('.timeline-bar')).find(element => element.dataset['taskId'] === g.task!.id);
     if (!bar) return false;
     const top = bar.getBoundingClientRect().top - 7;
-    return y >= top && y < top + 72;
+    return y >= top && y < top + rowHeight;
   }
   function isOverTrash(x: number, y: number) {
     return Boolean(document.elementFromPoint(x, y)?.closest('#task-trash'));
@@ -340,7 +381,7 @@ export function createTimeline(options: Options) {
   }
   function autoScroll() {
     const g = gesture;
-    if (!g?.moved || g.kind === 'pan') return;
+    if (!g?.moved || g.kind === 'pan' || g.kind === 'start' || g.kind === 'end') return;
     const rect = viewport.getBoundingClientRect();
     const previousOrigin = origin, previousScroll = viewport.scrollTop;
     if (isInTaskRow(g, g.lastX, g.lastY)) {
@@ -353,6 +394,7 @@ export function createTimeline(options: Options) {
     frame = requestAnimationFrame(autoScroll);
   }
   viewport.addEventListener('pointerdown', (event) => {
+    cancelAnimationFrame(focusFrame); focusFrame = 0;
     if (event.button !== 0 || gesture) return;
     const target = event.target as HTMLElement;
     if (target.closest('.timeline-ruler')) return;
@@ -404,11 +446,16 @@ export function createTimeline(options: Options) {
     if (!valid) return;
     if (trash) window.dispatchEvent(new CustomEvent('taskdroptrash', { detail: { taskId: g.task!.id } }));
     else if (column && nextState !== undefined) options.onState?.(g.task!, nextState);
-    else if (commit) options.onDates(g.task!, g.preview!, g.source);
+    else if (commit) {
+      options.onDates(g.task!, g.preview!, g.source);
+      if (g.kind === 'start' || g.kind === 'end') controller.focusOnTask(g.task!, true);
+    }
   });
   window.addEventListener('keydown', event => { if (event.key === 'Escape' && gesture) { cancel(); event.preventDefault(); } });
   viewport.addEventListener('pointercancel', () => cancel());
-  viewport.addEventListener('lostpointercapture', () => cancel());
+  viewport.addEventListener('lostpointercapture', event => {
+    if (gesture?.pointer === event.pointerId) cancel();
+  });
   viewport.addEventListener('click', (event) => {
     if (Date.now() < suppressClickUntil) return;
     const id = (event.target as HTMLElement).closest<HTMLElement>('[data-task-id]')?.dataset['taskId'];
@@ -438,7 +485,22 @@ export function createTimeline(options: Options) {
     const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16
       : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? viewport.clientHeight : 1;
     const delta = (event.deltaY || event.deltaX) * unit;
-    zoom(Math.exp(-delta * .005), event.clientX);
+    const target = event.target as HTMLElement;
+    if (target.closest('.timeline-ticks, .timeline-workload')) {
+      zoom(Math.exp(-delta * .005), event.clientX);
+    } else if (event.ctrlKey || event.metaKey) {
+      cancel();
+      const previousHeight = rowHeight;
+      rowHeight = Math.max(36, Math.min(180, rowHeight * Math.exp(-delta * .005)));
+      const pointerY = Math.max(0, event.clientY - viewport.getBoundingClientRect().top - RULER_HEIGHT);
+      const anchor = viewport.scrollTop + pointerY;
+      paint();
+      viewport.scrollTop = anchor * rowHeight / previousHeight - pointerY;
+    } else if (event.shiftKey) {
+      cancel(); origin += delta / scale; paint();
+    } else {
+      cancel(); viewport.scrollTop += event.deltaY * unit;
+    }
   }, { passive: false });
   let workloadPan: { x: number; y: number; origin: number; scroll: number; pointer: number } | null = null;
   workload.addEventListener('pointerdown', event => {
@@ -518,21 +580,40 @@ export function createTimeline(options: Options) {
   new ResizeObserver(() => { if (active) paint(); }).observe(host);
   let lastToday = todayDay();
   window.setInterval(() => { const day = todayDay(); if (day !== lastToday) { lastToday = day; paint(); } }, 60000);
-  return {
+  const controller = {
     setActive(value: boolean) { cancel(); active = value; host.hidden = !value; if (value) paint(); },
-    focusOnTask(task: Task) {
-      if (!active) return;
+    focusOnTask(task: Task, onlyIfClipped = false) {
+      if (!active || gesture?.kind === 'start' || gesture?.kind === 'end') return;
       const bar = Array.from(rows.querySelectorAll<HTMLElement>('.timeline-bar')).find(element => element.dataset['taskId'] === task.id);
       if (!bar) return;
-      const top = bar.getBoundingClientRect().top - rows.getBoundingClientRect().top - 7, bottom = top + 72;
-      if (top < viewport.scrollTop) viewport.scrollTop = top;
-      else if (bottom > viewport.scrollTop + viewport.clientHeight - RULER_HEIGHT) viewport.scrollTop = bottom - viewport.clientHeight + RULER_HEIGHT;
-      const dates = findTaskDates(getSource(), task.lineIndex);
-      const day = dates && (dates.start ?? dates.end);
-      if (day !== null && day !== undefined && (day < origin || day > origin + availableWidth() / scale)) {
-        origin = day - availableWidth() / scale / 2; paint();
+      if (onlyIfClipped) {
+        const bounds = bar.getBoundingClientRect(), view = viewport.getBoundingClientRect();
+        if (bounds.left >= view.left && bounds.right <= view.left + viewport.clientWidth
+          && bounds.top >= view.top + RULER_HEIGHT && bounds.bottom <= view.top + viewport.clientHeight) return;
       }
+      cancelAnimationFrame(focusFrame); focusFrame = 0;
+      const visibleHeight = viewport.clientHeight - RULER_HEIGHT;
+      // Allow the last task to center without adding empty space above the first.
+      const padding = Math.max(0, visibleHeight / 2);
+      rows.style.paddingBottom = `${padding}px`;
+      const rect = bar.getBoundingClientRect();
+      const targetScroll = Math.max(0, rect.top - rows.getBoundingClientRect().top + rect.height / 2 - visibleHeight / 2);
+      const targetOrigin = origin + (parseFloat(bar.style.left) + parseFloat(bar.style.width) / 2 - availableWidth() / 2) / scale;
+      const startOrigin = origin, startScroll = viewport.scrollTop;
+      const source = getSource(), started = performance.now();
+      const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 220;
+      const tick = (now: number) => {
+        if (!active || source !== getSource()) { focusFrame = 0; return; }
+        const progress = duration ? Math.min(1, (now - started) / duration) : 1;
+        const eased = 1 - (1 - progress) ** 3;
+        origin = startOrigin + (targetOrigin - startOrigin) * eased;
+        paint();
+        viewport.scrollTop = startScroll + (targetScroll - startScroll) * eased;
+        focusFrame = progress < 1 ? requestAnimationFrame(tick) : 0;
+      };
+      focusFrame = requestAnimationFrame(tick);
     },
     render() { if (gesture && (lastSource !== getSource() || !options.canEdit())) cancel(); paint(); },
   };
+  return controller;
 }

@@ -7,7 +7,7 @@
 import { colorFromString } from "./task.js";
 import {
   createTaskStatePill,
-  taskBackground,
+  applyTaskBackground,
   decorateDescriptionPills,
   decorateDescriptionReferences,
   renderTaskDescriptionNode,
@@ -1209,7 +1209,7 @@ export function createCanvas({
   const renderTaskNodeContent = (node: any, task: any): void => {
     const wasDragging = node.classList.contains("dragging");
     node.className = "task-node";
-    node.style.backgroundColor = taskBackground(task, state.tagMeta);
+    applyTaskBackground(node, task, state.tagMeta);
     node.style.borderColor = state.stateMeta?.get(task.state)?.color || "";
     if (wasDragging) {
       node.classList.add("dragging");

@@ -280,8 +280,9 @@ unchanged, and is undoable in the editor. Escape or dropping outside cancels.
 
 Double-click a task to edit, or drag it to the trash to use the usual deletion
 dialog. Enter opens editing for a focused task. History views cannot be edited.
-Drag empty space to pan horizontally or vertically. Use the mouse wheel over the
-timeline to zoom; no modifier key is needed. With the timeline focused, arrow keys pan by a week
+Drag empty space to pan horizontally or vertically. Wheel over the date ruler to
+zoom time. Over task rows, wheel scrolls vertically, Shift + wheel pans horizontally,
+and Ctrl/Cmd + wheel changes row height. With the timeline focused, arrow keys pan by a week
 and +/− zoom. Dates snap to whole days at every zoom level.
 
 Timeline tags, people, and states use the same named and colored pills as the rest
@@ -294,7 +295,13 @@ preserving its state.
 
 ### Daily workload
 
-The People section at the bottom of the timeline shows one row per assigned person.
+The People section at the bottom normally folds into a single compact row, hiding
+names while keeping each person's colored bars in a separate thin horizontal strip.
+Collapsed bars keep their normal date position and width, with a uniform height. Hover over it or
+focus it with the keyboard to animate it open into one named row per person.
+It folds back when you leave; reduced-motion preferences disable the animation.
+Selected people keep their named workload rows expanded above the compact strip
+for everyone else, even without hovering.
 Each day with assigned tasks has a vertical bar: one task is a low bar, and the
 largest visible overlap fills the available height. Intermediate counts scale
 between them. Bar heights adapt to the visible date window and are comparable

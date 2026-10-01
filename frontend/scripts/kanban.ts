@@ -8,7 +8,7 @@ import { splitIndent, normalizeContent, prependTokenToLine } from "./formatter.j
 import { parseJiraTitle } from "./task.js";
 import {
   buildTaskDescriptionText,
-  taskBackground,
+  applyTaskBackground,
   decorateDescriptionPills,
   decorateDescriptionReferences,
   renderTaskDescriptionNode,
@@ -781,7 +781,7 @@ function renderKanbanCardContent({
 }: any): void {
   const wasDragging = card.classList.contains("dragging");
   card.className = "kanban-card";
-  card.style.backgroundColor = taskBackground(task, state.tagMeta);
+  applyTaskBackground(card, task, state.tagMeta, '#101420');
   if (wasDragging) {
     card.classList.add("dragging");
   }

@@ -4,6 +4,45 @@
 
 type BackgroundTask = { tags: string[]; parent?: BackgroundTask | null };
 
+const foregroundCache = new Map<string, string>();
+let colorCanvas: CanvasRenderingContext2D | null = null;
+
+/** Composite translucent colors on the view surface before choosing black or white. */
+function contrastingForeground(background: string, surface: string): string {
+  const key = `${surface}|${background}`;
+  const cached = foregroundCache.get(key);
+  if (cached) return cached;
+  if (!colorCanvas) {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1;
+    colorCanvas = canvas.getContext('2d', { willReadFrequently: true });
+  }
+  if (!colorCanvas) return '#000000';
+  colorCanvas.clearRect(0, 0, 1, 1);
+  colorCanvas.fillStyle = surface; colorCanvas.fillRect(0, 0, 1, 1);
+  colorCanvas.fillStyle = background; colorCanvas.fillRect(0, 0, 1, 1);
+  const rgba = colorCanvas.getImageData(0, 0, 1, 1).data;
+  const linear = (value: number) => { const v = value / 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
+  const luminance = .2126 * linear(rgba[0]!) + .7152 * linear(rgba[1]!) + .0722 * linear(rgba[2]!);
+  const foreground = (luminance + .05) / .05 >= 1.05 / (luminance + .05) ? '#000000' : '#ffffff';
+  if (foregroundCache.size > 256) foregroundCache.clear();
+  foregroundCache.set(key, foreground);
+  return foreground;
+}
+
+export function applyTaskBackground(element: HTMLElement, task: BackgroundTask, tagMeta?: Map<string, { background?: string }>, darkSurface = '#0f111a'): void {
+  element.style.backgroundColor = '';
+  element.style.backgroundColor = taskBackground(task, tagMeta);
+  const background = element.style.backgroundColor;
+  element.classList.toggle('has-task-background', Boolean(background));
+  if (background) {
+    element.style.setProperty('--task-foreground-light', contrastingForeground(background, '#ffffff'));
+    element.style.setProperty('--task-foreground-dark', contrastingForeground(background, darkSurface));
+  } else {
+    element.style.removeProperty('--task-foreground-light');
+    element.style.removeProperty('--task-foreground-dark');
+  }
+}
+
 /** The nearest configured background wins, fading by twenty percentage points per level. */
 export function taskBackground(task: BackgroundTask | string[], tagMeta?: Map<string, { background?: string }>): string {
   let current: BackgroundTask | null | undefined = Array.isArray(task) ? { tags: task } : task;

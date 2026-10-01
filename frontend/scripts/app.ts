@@ -24,7 +24,7 @@ import {
 } from "./slugRenameModal.js";
 import {
   decorateDescriptionPills,
-  taskBackground,
+  applyTaskBackground,
   decorateDescriptionReferences,
   renderTaskDescriptionNode,
   wireDescriptionCheckboxes,
@@ -2323,7 +2323,10 @@ const timelineController = createTimeline({
   state,
   getSource: () => editorController.getValue(),
   canEdit: () => !state.historyViewerActive,
-  onSelect: (task) => selectTask(task, { focusEditor: false }),
+  onSelect: (task) => {
+    selectTask(task, { focusEditor: false, focusView: false });
+    timelineController.focusOnTask(task, true);
+  },
   onEdit: (task) => openTaskEditModal(task),
   onDates: (task, dates, source) => {
     if (!state.historyViewerActive) taskCommandController.setTaskDates(task.lineIndex, dates, source);
@@ -2652,7 +2655,7 @@ function handleEditorSelection(line: any): void {
  * Input: task: any.
  * Output: void.
  */
-function selectTask(task: any, options: { focusEditor?: boolean } = {}): void {
+function selectTask(task: any, options: { focusEditor?: boolean; focusView?: boolean } = {}): void {
   const focusEditor = options.focusEditor !== false;
   state.selectedTaskId = task.id;
   state.selectedLine = task.lineIndex;
@@ -2672,7 +2675,7 @@ function selectTask(task: any, options: { focusEditor?: boolean } = {}): void {
   editorController.setSelectionRange(caretPosition, caretPosition);
   editorController.updateSelectedLine();
   editorController.highlightText(lines);
-  canvasController.focusOnTask(task);
+  if (options.focusView !== false) canvasController.focusOnTask(task);
   canvasController.renderGraph();
   buildKanban();
   scrollFocusedTaskIntoKanban();
@@ -3279,7 +3282,7 @@ function updateTaskEditPreviewFromText(text: any): void {
   const card = document.createElement("div");
   card.className = "task-preview-card";
   const currentTask = state.allTasks.find((task: any) => task.id === editingTaskRef?.id);
-  card.style.backgroundColor = taskBackground({ tags: parsed.tags, parent: currentTask?.parent }, state.tagMeta);
+  applyTaskBackground(card, { tags: parsed.tags, parent: currentTask?.parent }, state.tagMeta, '#121524');
   card.style.borderColor = state.stateMeta?.get(parsed.state)?.color || "";
   const header = document.createElement("div");
   header.className = "task-header";
@@ -9946,10 +9949,10 @@ let pendingGraphRender: number | null = null;
 let legendHiddenByDividerSnap = false;
 // Stores the legendHasVisibleContent module constant.
 let legendHasVisibleContent = true;
-// Stores the activeTouchDividerPointerId module constant.
-let activeTouchDividerPointerId: number | null = null;
-// Stores the activeTouchKanbanDividerPointerId module constant.
-let activeTouchKanbanDividerPointerId: number | null = null;
+// Stores the activeDividerPointerId module constant.
+let activeDividerPointerId: number | null = null;
+// Stores the activeKanbanDividerPointerId module constant.
+let activeKanbanDividerPointerId: number | null = null;
 // Stores the activeTouchDividerTouchId module constant.
 let activeTouchDividerTouchId: number | null = null;
 // Stores the activeTouchKanbanDividerTouchId module constant.
@@ -10171,9 +10174,7 @@ dom.divider.addEventListener("mousedown", () => {
 });
 
 dom.divider.addEventListener("pointerdown", (event: PointerEvent) => {
-  if (event.pointerType !== "touch") {
-    return;
-  }
+  if (event.button !== 0 || !event.isPrimary) return;
   if (
     state.viewportMode === "mobile"
     || (state.viewportMode === "tablet" && (state.tabletPaneLayout === "hide" || state.tabletPaneLayout === "code"))
@@ -10182,7 +10183,8 @@ dom.divider.addEventListener("pointerdown", (event: PointerEvent) => {
   }
   event.preventDefault();
   resizing = true;
-  activeTouchDividerPointerId = event.pointerId;
+  activeDividerPointerId = event.pointerId;
+  dom.divider.setPointerCapture(event.pointerId);
   dom.divider.classList.add("dragging");
 });
 
@@ -10201,7 +10203,7 @@ dom.divider.addEventListener("touchstart", (event: TouchEvent) => {
   resizing = true;
   activeTouchDividerTouchId = touch.identifier;
   dom.divider.classList.add("dragging");
-}, { passive: false });
+}, { passive: false, capture: true });
 
 if (dom.kanbanDivider) {
   dom.kanbanDivider.addEventListener("mousedown", () => {
@@ -10212,15 +10214,14 @@ if (dom.kanbanDivider) {
     dom.kanbanDivider.classList.add("dragging");
   });
   dom.kanbanDivider.addEventListener("pointerdown", (event: PointerEvent) => {
-    if (event.pointerType !== "touch") {
-      return;
-    }
+    if (event.button !== 0 || !event.isPrimary) return;
     if (state.viewportMode !== "desktop") {
       return;
     }
     event.preventDefault();
     resizingKanban = true;
-    activeTouchKanbanDividerPointerId = event.pointerId;
+    activeKanbanDividerPointerId = event.pointerId;
+    dom.kanbanDivider.setPointerCapture(event.pointerId);
     dom.kanbanDivider.classList.add("dragging");
   });
   dom.kanbanDivider.addEventListener("touchstart", (event: TouchEvent) => {
@@ -10235,10 +10236,11 @@ if (dom.kanbanDivider) {
     resizingKanban = true;
     activeTouchKanbanDividerTouchId = touch.identifier;
     dom.kanbanDivider.classList.add("dragging");
-  }, { passive: false });
+  }, { passive: false, capture: true });
 }
 
 window.addEventListener("mousemove", (event) => {
+  if (activeDividerPointerId !== null || activeKanbanDividerPointerId !== null) return;
   if (!resizing) {
     if (resizingKanban) {
       updateKanbanHeightFromPointer(event.clientY);
@@ -10251,9 +10253,10 @@ window.addEventListener("mousemove", (event) => {
     return;
   }
   updateMainDividerFromPointer(event.clientX);
-});
+}, true);
 
 window.addEventListener("mouseup", () => {
+  if (activeDividerPointerId !== null || activeKanbanDividerPointerId !== null) return;
   if (!resizing) {
     if (resizingKanban) {
       resizingKanban = false;
@@ -10272,14 +10275,11 @@ window.addEventListener("mouseup", () => {
   }
   rememberLayoutGeometryForCurrentViewport();
   scheduleGraphRender();
-});
+}, true);
 
 window.addEventListener("pointermove", (event: PointerEvent) => {
-  if (event.pointerType !== "touch") {
-    return;
-  }
-  const dividerActive = resizing && activeTouchDividerPointerId === event.pointerId;
-  const kanbanActive = resizingKanban && activeTouchKanbanDividerPointerId === event.pointerId;
+  const dividerActive = resizing && activeDividerPointerId === event.pointerId;
+  const kanbanActive = resizingKanban && activeKanbanDividerPointerId === event.pointerId;
   if (!dividerActive && !kanbanActive) {
     return;
   }
@@ -10295,7 +10295,7 @@ window.addEventListener("pointermove", (event: PointerEvent) => {
   if (kanbanActive) {
     updateKanbanHeightFromPointer(event.clientY);
   }
-}, { passive: false });
+}, { passive: false, capture: true });
 
 window.addEventListener("touchmove", (event: TouchEvent) => {
   let handled = false;
@@ -10320,19 +10320,23 @@ window.addEventListener("touchmove", (event: TouchEvent) => {
   if (handled) {
     event.preventDefault();
   }
-}, { passive: false });
+}, { passive: false, capture: true });
 
-const finishTouchDividerResize = (pointerId: number): void => {
+const finishDividerPointerResize = (pointerId: number): void => {
   let didFinish = false;
-  if (resizing && activeTouchDividerPointerId === pointerId) {
+  if (resizing && activeDividerPointerId === pointerId) {
     resizing = false;
-    activeTouchDividerPointerId = null;
+    activeDividerPointerId = null;
+    activeTouchDividerTouchId = null;
+    if (dom.divider.hasPointerCapture(pointerId)) dom.divider.releasePointerCapture(pointerId);
     dom.divider.classList.remove("dragging");
     didFinish = true;
   }
-  if (resizingKanban && activeTouchKanbanDividerPointerId === pointerId) {
+  if (resizingKanban && activeKanbanDividerPointerId === pointerId) {
     resizingKanban = false;
-    activeTouchKanbanDividerPointerId = null;
+    activeKanbanDividerPointerId = null;
+    activeTouchKanbanDividerTouchId = null;
+    if (dom.kanbanDivider?.hasPointerCapture(pointerId)) dom.kanbanDivider.releasePointerCapture(pointerId);
     dom.kanbanDivider?.classList.remove("dragging");
     didFinish = true;
   }
@@ -10363,17 +10367,18 @@ const finishTouchDividerResizeByIdentifier = (touchIdentifier: number): void => 
 };
 
 window.addEventListener("pointerup", (event: PointerEvent) => {
-  if (event.pointerType !== "touch") {
-    return;
-  }
-  finishTouchDividerResize(event.pointerId);
-});
+  finishDividerPointerResize(event.pointerId);
+}, true);
 
 window.addEventListener("pointercancel", (event: PointerEvent) => {
-  if (event.pointerType !== "touch") {
-    return;
-  }
-  finishTouchDividerResize(event.pointerId);
+  finishDividerPointerResize(event.pointerId);
+}, true);
+
+dom.divider.addEventListener("lostpointercapture", (event: PointerEvent) => finishDividerPointerResize(event.pointerId));
+dom.kanbanDivider?.addEventListener("lostpointercapture", (event: PointerEvent) => finishDividerPointerResize(event.pointerId));
+window.addEventListener("blur", () => {
+  if (activeDividerPointerId !== null) finishDividerPointerResize(activeDividerPointerId);
+  if (activeKanbanDividerPointerId !== null) finishDividerPointerResize(activeKanbanDividerPointerId);
 });
 
 window.addEventListener("touchend", (event: TouchEvent) => {

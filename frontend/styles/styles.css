@@ -5907,8 +5907,9 @@ html[data-theme="dark"] {
 .timeline-tick { position: absolute; top: 48px; height: 24px; text-align: center; padding: 3px; font-size: 10px; white-space: nowrap; }
 .timeline-today-label { position: absolute; top: 48px; height: 23px; text-align: center; line-height: 20px; padding: 1px 5px; background: var(--timeline-today); color: white; font-size: 10px; font-weight: 700; white-space: nowrap; border-radius: 3px; }
 .timeline-row { height: 72px; display: flex; border-bottom: 1px solid var(--timeline-grid); }
-.timeline-track { position: relative; flex: 1; overflow: hidden; }
-.timeline-parent-name { position: absolute; top: 2px; left: 8px; right: 8px; height: 20px; line-height: 20px; font-size: 11px; font-weight: 600; color: var(--timeline-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 4; pointer-events: none; }
+.timeline-track { position: relative; flex: 1; overflow: clip; }
+.timeline-parent-group { position: relative; display: flow-root; }
+.timeline-parent-name { position: sticky; top: 72px; margin-top: 2px; width: 100%; padding: 0 8px; height: 20px; line-height: 20px; font-size: 11px; font-weight: 600; color: var(--timeline-muted); background-color: var(--timeline-ruler); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; z-index: 4; pointer-events: none; }
 .timeline-bar { position: absolute; top: 7px; height: 58px; border: 3px solid var(--timeline-card-border); border-radius: 12px; background: var(--timeline-card); box-shadow: var(--timeline-shadow); color: var(--timeline-text); padding: 4px 12px; cursor: grab; overflow: hidden; touch-action: none; min-width: 2px; }
 .timeline-title { display: block; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 16px; }
 .timeline-dates { display: block; font-size: 10px; white-space: nowrap; line-height: 14px; }
@@ -5928,7 +5929,7 @@ html[data-theme="dark"] {
 .timeline-host.is-dragging { user-select: none; cursor: grabbing; }
 .timeline-host button:focus-visible, .timeline-bar:focus-visible { outline: 2px solid var(--timeline-focus); outline-offset: -2px; }
 @media (max-width: 800px) { .graph-view-switch button { padding: 6px 9px; } }
-.timeline-rows { position: relative; min-height: calc(100% - 72px); background-image: linear-gradient(var(--timeline-today), var(--timeline-today)); background-size: 3px 100%; background-repeat: no-repeat; }
+.timeline-rows { position: relative; isolation: isolate; min-height: calc(100% - 72px); background-image: linear-gradient(var(--timeline-today), var(--timeline-today)); background-size: 3px 100%; background-repeat: no-repeat; }
 .timeline-handle { width: min(9px, 25%); }
 
 .graph-view-switch button { border-radius: 999px; font-weight: 600; }
@@ -5947,13 +5948,43 @@ html[data-theme="dark"] {
 
 .timeline-year-boundary { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--timeline-border); pointer-events: none; }
 
-.timeline-workload { flex: 0 0 auto; max-height: 35%; min-height: 0; overflow-x: hidden; overflow-y: auto; border-top: 1px solid var(--timeline-border); background: var(--timeline-surface); touch-action: none; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
-.timeline-workload-person { position: relative; height: 28px; border-bottom: 1px solid var(--timeline-grid); }
-.timeline-workload-name { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); margin: 0; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; z-index: 4; }
-.timeline-workload-days { position: absolute; top: 0; bottom: 1px; left: 0; overflow: hidden; }
-.timeline-workload-box { position: absolute; bottom: 1px; display: flex; align-items: center; justify-content: center; border-radius: 2px; background: var(--timeline-accent); color: #ffffff; font-size: 9px; line-height: 1; }
+.timeline-workload { flex: 0 0 auto; height: calc(var(--resting-height, 28px) + 1px); max-height: 35%; min-height: 0; overflow: hidden; border-top: 1px solid var(--timeline-border); background: var(--timeline-surface); touch-action: none; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); transition: height 220ms ease; }
+.timeline-workload-content { position: relative; height: var(--resting-height, 28px); transition: height 220ms ease; }
+.timeline-workload-person { pointer-events: none; position: absolute; top: var(--compact-person-top); left: 0; right: 0; height: var(--compact-strip-height); transition: top 220ms ease, height 220ms ease; }
+.timeline-workload-name { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); margin: 0; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; z-index: 4; opacity: 0; visibility: hidden; transition: opacity 180ms ease, visibility 180ms; }
+.timeline-workload-days { position: absolute; top: 0; bottom: 0; left: 0; overflow: hidden; pointer-events: none; }
+.timeline-workload-box, .timeline-workload-name { pointer-events: auto; }
+.timeline-workload-box { position: absolute; left: var(--expanded-left); width: var(--expanded-width); height: var(--compact-bar-height); bottom: 0; display: flex; align-items: center; justify-content: center; border-radius: 2px; background: var(--timeline-accent); color: #ffffff; font-size: 9px; line-height: 1; transition: height 220ms ease; }
+.timeline-workload:is(:hover, :focus-visible) { height: calc(var(--workload-height) + 1px); overflow-y: auto; }
+.timeline-workload:is(:hover, :focus-visible) .timeline-workload-content { height: var(--workload-height); }
+.timeline-workload:is(:hover, :focus-visible) .timeline-workload-person { top: var(--person-top); height: 28px; border-bottom: 1px solid var(--timeline-grid); }
+.timeline-workload:is(:hover, :focus-visible) .timeline-workload-name { opacity: 1; visibility: visible; }
+.timeline-workload:is(:hover, :focus-visible) .timeline-workload-box { height: var(--expanded-height); }
+@media (prefers-reduced-motion: reduce) {
+  .timeline-workload, .timeline-workload-content, .timeline-workload-person, .timeline-workload-name, .timeline-workload-box { transition: none; }
+}
 
 .timeline-month-boundary { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--timeline-grid); pointer-events: none; }
 
 .timeline-bar.delete-preview { border-color: #ff4d4f !important; box-shadow: 0 0 0 2px rgba(255, 77, 79, .18), 0 14px 26px rgba(255, 77, 79, .24); }
 html[data-theme="dark"] .timeline-bar.delete-preview { border-color: #ff7a7c !important; box-shadow: 0 0 0 2px rgba(255, 122, 124, .2), 0 16px 28px rgba(3, 6, 20, .55); }
+
+.timeline-workload.has-selected-people { overflow-y: auto; }
+.timeline-workload-person.selected { height: 28px; border-bottom: 1px solid var(--timeline-grid); }
+.timeline-workload-person.selected .timeline-workload-name { opacity: 1; visibility: visible; }
+.timeline-workload-person.selected .timeline-workload-box { height: var(--expanded-height); }
+
+.has-task-background { --task-foreground: var(--task-foreground-light); color: var(--task-foreground) !important; }
+html[data-theme="dark"] .has-task-background { --task-foreground: var(--task-foreground-dark); }
+html :is(.task-node, .kanban-card, .timeline-bar).selected:not(.delete-preview) {
+  --task-selection-color: var(--task-foreground, #2f54eb);
+  background-image: linear-gradient(rgb(255 255 255 / 12%), rgb(255 255 255 / 12%));
+  box-shadow: inset 0 0 0 3px var(--task-selection-color), 0 0 0 2px color-mix(in srgb, var(--task-selection-color) 35%, transparent);
+}
+html[data-theme="dark"] :is(.task-node, .kanban-card, .timeline-bar).selected:not(.delete-preview) {
+  --task-selection-color: var(--task-foreground, #8fa4ff);
+}
+html :is(.task-node, .kanban-card, .timeline-bar).has-task-background.selected:not(.delete-preview) {
+  border-color: var(--task-foreground);
+}
+.has-task-background :is(h4, .kanban-card-title, .timeline-title, .timeline-dates, .timeline-parent-label, .description, .description p, .description li, .description a, .reference, .inline-link, .collapse-toggle):not(:is(.pill, .pill *, table *, pre *, code *)) { color: var(--task-foreground) !important; }
