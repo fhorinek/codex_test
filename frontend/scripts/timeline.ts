@@ -45,6 +45,10 @@ export function createTimeline(options: Options) {
   let suppressClickUntil = 0, lastTaskClick = "", lastTaskClickTime = 0;
   const availableWidth = () => Math.max(80, viewport.clientWidth);
   const dayAt = (x: number) => origin + (x - viewport.getBoundingClientRect().left) / scale;
+  const currentTimeX = (now = new Date()) => {
+    const fraction = (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds() + now.getMilliseconds() / 1000) / 86400;
+    return (todayDay(now) + fraction - origin) * scale;
+  };
   const node = (tag: string, className: string, text?: string) => {
     const element = document.createElement(tag); element.className = className;
     if (text !== undefined) element.textContent = text;
@@ -239,12 +243,12 @@ export function createTimeline(options: Options) {
       label.style.left = `${(tick - origin) * scale}px`; label.style.width = `${scale}px`;
       label.title = formatDay(tick); ticks.append(label);
     }
-    const todayX = (todayDay() - origin) * scale;
+    const todayX = currentTimeX();
     rows.style.backgroundPositionX = `${todayX}px`;
     const today = node('span', 'timeline-today-label', String(new Date().getDate()));
     today.title = `Today · ${formatDay(todayDay())}`;
     today.setAttribute('aria-label', today.title);
-    today.style.left = `${todayX}px`; today.style.width = `${Math.max(scale, 20)}px`; ticks.append(today);
+    today.style.left = `${(todayDay() - origin) * scale}px`; today.style.width = `${Math.max(scale, 20)}px`; ticks.append(today);
     rows.replaceChildren();
     for (const x of monthBoundaries) {
       const line = node('div', 'timeline-month-boundary');
@@ -579,7 +583,15 @@ export function createTimeline(options: Options) {
   }
   new ResizeObserver(() => { if (active) paint(); }).observe(host);
   let lastToday = todayDay();
-  window.setInterval(() => { const day = todayDay(); if (day !== lastToday) { lastToday = day; paint(); } }, 60000);
+  window.setInterval(() => {
+    if (!active) return;
+    const day = todayDay();
+    if (day !== lastToday) { lastToday = day; paint(); return; }
+    // Advance the marker without replacing tasks or interrupting a gesture.
+    const left = `${currentTimeX()}px`;
+    rows.style.backgroundPositionX = left;
+    host.querySelectorAll<HTMLElement>('.timeline-today-line').forEach(element => { element.style.left = left; });
+  }, 60000);
   const controller = {
     setActive(value: boolean) { cancel(); active = value; host.hidden = !value; if (value) paint(); },
     focusOnTask(task: Task, onlyIfClipped = false) {

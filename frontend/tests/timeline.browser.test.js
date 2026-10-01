@@ -262,6 +262,15 @@ test('timeline browser interactions and graph-panel integration', { timeout: 600
     });
     const labels = page.locator('.timeline-title');
     assert.deepEqual(await labels.allTextContents(), ['Parent', 'Grandchild', 'Other']);
+    const timePositionError = await page.evaluate(async () => {
+      const { formatDay, todayDay } = await import('/scripts/taskDates.js');
+      const now = new Date();
+      const tick = Array.from(document.querySelectorAll('.timeline-tick')).find(el => el.title === formatDay(todayDay(now)));
+      const fraction = (now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds()) / 86400;
+      const expected = tick.getBoundingClientRect().left + parseFloat(tick.style.width) * fraction;
+      return Math.abs(document.querySelector('.timeline-today-line').getBoundingClientRect().left - expected);
+    });
+    assert.ok(timePositionError < 1);
     assert.deepEqual(await page.locator('.timeline-parent-name').allTextContents(), ['Child']);
     const parentHeading = await page.locator('.timeline-parent-name').boundingBox();
     const descendantBar = await page.locator('.timeline-row').nth(1).locator('.timeline-bar').boundingBox();
@@ -364,13 +373,20 @@ test('timeline browser interactions and graph-panel integration', { timeout: 600
     await page.mouse.move(bar.x + 30, bar.y + 20); await page.mouse.down(); await page.mouse.move(bar.x + 80, bar.y + 20);
     await page.evaluate(() => window.fixture.remote()); await page.mouse.up();
     assert.equal(await page.evaluate(() => window.fixture.source()), afterMove + '\nremote change');
-    // Pan and zoom leave source unchanged and keep the Today line aligned with the ruler.
+    // Pan and zoom leave source unchanged; the label stays on the day grid.
     const todayBefore = await page.locator('.timeline-today-line').first().evaluate(e => e.getBoundingClientRect().x);
     await page.locator('.timeline-viewport').focus();
     await page.keyboard.press('+');
     const rulerX = await page.locator('.timeline-today-label').evaluate(e => e.getBoundingClientRect().x);
     const lineX = await page.locator('.timeline-today-line').first().evaluate(e => e.getBoundingClientRect().x);
-    assert.ok(Math.abs(rulerX - lineX) < 1); assert.ok(Number.isFinite(todayBefore));
+    const todayGrid = await page.evaluate(async () => {
+      const { formatDay, todayDay } = await import('/scripts/taskDates.js');
+      const tick = Array.from(document.querySelectorAll('.timeline-tick')).find(el => el.title === formatDay(todayDay()));
+      return { x: tick.getBoundingClientRect().x, width: parseFloat(tick.style.width) };
+    });
+    assert.ok(Math.abs(rulerX - todayGrid.x) < 1);
+    assert.ok(lineX >= rulerX && lineX < rulerX + todayGrid.width);
+    assert.ok(Number.isFinite(todayBefore));
     const unchanged = await page.evaluate(() => window.fixture.source());
     const bg = await page.locator('.timeline-track').last().boundingBox();
     await drag({ x: bg.x + 60, y: bg.y + 68 }, { x: bg.x + 120, y: bg.y + 68 });
