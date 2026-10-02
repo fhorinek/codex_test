@@ -3,6 +3,8 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from contextlib import AsyncExitStack, ExitStack
 from unittest.mock import AsyncMock, patch
 
 
@@ -29,6 +31,94 @@ class WebsocketShutdownTests(unittest.IsolatedAsyncioTestCase):
         server.presence.update(self._presence)
         server.last_system_presence_snapshot = self._last_snapshot
         server.system_shared_presence_refresh_task = self._refresh_task
+
+    async def test_room_stop_keeps_group_for_buffered_broadcast_updates(self):
+        class Updates:
+            async def __aenter__(self): return self
+            async def __aexit__(self, *args): pass
+            def __aiter__(self): return self
+            async def __anext__(self): return b'buffered update'
+        room = server.YRoom()
+        scope = SimpleNamespace(cancel_called=False)
+        scope.cancel = lambda: setattr(scope, 'cancel_called', True)
+        group = SimpleNamespace(cancel_scope=scope)
+        room._task_group = group
+        room._update_receive_stream.close()
+        room._update_receive_stream = Updates()
+        room.stop()
+        self.assertIs(room._task_group, group)
+        await room._broadcast_updates()
+        room._update_send_stream.close()
+
+    async def test_room_context_exit_clears_group_after_broadcaster_stops(self):
+        room = server.YRoom()
+        scope = SimpleNamespace(cancel_called=False)
+        scope.cancel = lambda: setattr(scope, 'cancel_called', True)
+        group = SimpleNamespace(cancel_scope=scope)
+        room._task_group = group
+        async def exit_group(*args):
+            self.assertIs(room._task_group, group)
+            self.assertTrue(scope.cancel_called)
+        room._exit_stack = SimpleNamespace(__aexit__=exit_group)
+        await room.__aexit__(None, None, None)
+        self.assertIsNone(room._task_group)
+        room._update_send_stream.close()
+        room._update_receive_stream.close()
+
+    async def test_http_return_without_body_is_completed(self):
+        for started in (False, True):
+            messages = []
+            async def app(scope, receive, send):
+                if started:
+                    await send({'type': 'http.response.start', 'status': 200, 'headers': []})
+            async def receive(): return {'type': 'http.disconnect'}
+            async def send(message): messages.append(message)
+            await server._SuppressBenignShutdownASGI(app)({'type': 'http'}, receive, send)
+            self.assertEqual(messages[-1], {'type': 'http.response.body', 'body': b'', 'more_body': False})
+            self.assertEqual(messages[0]['status'], 200 if started else 204)
+
+    async def test_real_room_cancels_and_releases_group(self):
+        from anyio import create_task_group
+        room = server.YRoom()
+        async with create_task_group() as group:
+            await group.start(room.start)
+            room._update_send_stream.send_nowait(b'buffered update')
+            room.stop()
+        self.assertIsNone(room._task_group)
+        room._update_send_stream.close()
+
+    async def test_main_finishes_worker_cleanup_under_room_scope_cancellation(self):
+        from anyio import create_task_group
+        class Rooms:
+            async def __aenter__(self):
+                self.stack = AsyncExitStack()
+                self.group = await self.stack.enter_async_context(create_task_group())
+                return self
+            async def __aexit__(self, *args): return await self.stack.__aexit__(*args)
+        rooms = Rooms()
+        class HttpServer:
+            started = True
+            async def serve(self):
+                rooms.group.cancel_scope.cancel()
+                await asyncio.sleep(0)
+        async def loop(*args): await asyncio.sleep(100)
+        old_sync = server.system_shared_presence_task
+        with ExitStack() as stack:
+            for name in ('load_users_store', 'ensure_jira_daemon_credentials'):
+                stack.enter_context(patch.object(server, name))
+            for name in ('migrate_tab_spaces', 'publish_system_shared_values'):
+                stack.enter_context(patch.object(server, name, new_callable=AsyncMock))
+            for name in ('system_shared_presence_sync_loop', 'reconcile_tabs_loop', 'jira_daemon_supervisor'):
+                stack.enter_context(patch.object(server, name, side_effect=loop))
+            stack.enter_context(patch.object(server, 'websocket_server', rooms))
+            stack.enter_context(patch.object(server.uvicorn, 'Server', return_value=HttpServer()))
+            cleanup = stack.enter_context(patch.object(server.jira_daemons, 'shutdown', new_callable=AsyncMock))
+            try:
+                await server.main()
+                cleanup.assert_awaited_once()
+                self.assertIsNone(server.system_shared_presence_task)
+            finally:
+                server.system_shared_presence_task = old_sync
 
     async def test_websocket_send_after_close_is_suppressed(self):
         sent_messages = []

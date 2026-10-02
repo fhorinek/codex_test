@@ -27,7 +27,8 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
-from ypy_websocket import WebsocketServer, YRoom
+from ypy_websocket import WebsocketServer, YRoom as BaseYRoom
+from anyio import CancelScope
 from ypy_websocket.asgi_server import ASGIServer
 from ypy_websocket.ystore import FileYStore
 from ypy_websocket.yutils import YMessageType
@@ -45,6 +46,31 @@ from jira.config import (
     save_jira_config_data,
     save_users_config_data,
 )
+
+class YRoom(BaseYRoom):
+    """Keep the task group alive until its broadcaster finishes cancellation."""
+    def stop(self):
+        if self._task_group is None:
+            raise RuntimeError("YRoom not running")
+        self._task_group.cancel_scope.cancel()
+
+    async def start(self, **kwargs):
+        if self._starting or self._task_group is not None:
+            return await super().start(**kwargs)
+        try:
+            return await super().start(**kwargs)
+        finally:
+            self._task_group = None
+
+    async def __aexit__(self, exc_type, exc_value, exc_tb):
+        if self._task_group is None:
+            raise RuntimeError("YRoom not running")
+        self._task_group.cancel_scope.cancel()
+        try:
+            return await self._exit_stack.__aexit__(exc_type, exc_value, exc_tb)
+        finally:
+            self._task_group = None
+
 
 # Stores the ROOT_DIR module constant.
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -4079,7 +4105,10 @@ class _SuppressBenignShutdownASGI:
                 raise
 
         try:
-            return await self._app(scope, receive, tracked_send)
+            result = await self._app(scope, receive, tracked_send)
+            if scope.get("type") == "http" and not response_completed:
+                await self._finish_cancelled_http_response(send, response_started=response_started, response_completed=False)
+            return result
         except BaseException as exc:
             if BASE_EXCEPTION_GROUP_TYPE is not None and isinstance(exc, BASE_EXCEPTION_GROUP_TYPE):
                 benign, remainder = exc.split(_is_benign_shutdown_error)
@@ -4192,10 +4221,17 @@ async def main() -> None:
             try:
                 await server.serve()
             finally:
-                tabs_task.cancel()
-                jira_task.cancel()
-                await asyncio.gather(tabs_task, jira_task, return_exceptions=True)
-                await jira_daemons.shutdown()
+                # Room task-group cancellation must not interrupt worker cleanup.
+                with CancelScope(shield=True):
+                    tabs_task.cancel()
+                    jira_task.cancel()
+                    producers = [task for task in (system_shared_presence_refresh_task, system_shared_presence_task) if isinstance(task, asyncio.Task)]
+                    for task in producers:
+                        task.cancel()
+                    await asyncio.gather(tabs_task, jira_task, *producers, return_exceptions=True)
+                    system_shared_presence_refresh_task = None
+                    system_shared_presence_task = None
+                    await jira_daemons.shutdown()
     except BaseException as exc:
         if BASE_EXCEPTION_GROUP_TYPE is not None and isinstance(exc, BASE_EXCEPTION_GROUP_TYPE):
             _benign, remainder = exc.split(_is_benign_shutdown_error)
