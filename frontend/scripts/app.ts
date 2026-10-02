@@ -1,3 +1,11 @@
+let spaceTabs: ReturnType<typeof createSpaceTabs> | null = null;
+let sharedDefinitions = "";
+let historyDefinitions = "";
+let tabMode: "task" | "defs" | "empty" = "task";
+import { createSpaceTabs } from "./spaceTabs.js";
+import { resolveTaskReferences, taskSource, taskSourceLine, type TaskOrigin } from './taskReferences.js';
+import { createCrossTabDrag } from './crossTabDrag.js';
+import { findTaskDates, updateTaskDates, moveDates } from './taskDates.js';
 /**
  * Module: Main frontend application orchestration, state management, and UI event wiring.
  */
@@ -1953,6 +1961,7 @@ function stopIdleWatch() {
  * Output: string.
  */
 function connectedSpaceDisplayPath(): string {
+  if (spaceTabs?.space) return spaceTabs.space.access;
   const currentId = typeof collab.spaceId === "string" ? collab.spaceId.trim() : "";
   const currentPath = typeof collab.spacePath === "string" ? collab.spacePath.trim() : "";
   if (!currentId) {
@@ -2037,7 +2046,7 @@ function updateBoardConnectionLabel() {
   if (collab.spaceId) {
     const status = collab.connectionStatus || "disconnected";
     const statusLabel = STATUS_LABELS[status] ?? STATUS_LABELS["disconnected"] ?? "disconnected";
-    const spaceRef = connectedSpaceDisplayPath();
+    const spaceRef = spaceTabs?.space ? `${spaceTabs.space.name}/${spaceTabs.active?.name || ""}` : connectedSpaceDisplayPath();
     if (dom.boardConnection) {
       dom.boardConnection.textContent = "";
       const text = document.createElement("span");
@@ -2329,7 +2338,9 @@ const timelineController = createTimeline({
   },
   onEdit: (task) => openTaskEditModal(task),
   onDates: (task, dates, source) => {
-    if (!state.historyViewerActive) taskCommandController.setTaskDates(task.lineIndex, dates, source);
+    if (state.historyViewerActive) return;
+    if ((task as any).origin) runOriginCommand(task, controller => controller.setTaskDates(taskSourceLine(task), dates, source));
+    else taskCommandController.setTaskDates(task.lineIndex, dates, source);
   },
   onToken: (task, value, action = "add") => { if (!state.historyViewerActive) updateTaskToken(task, value, action); },
   onState: (task, value) => { if (!state.historyViewerActive) updateTaskState(task, value); },
@@ -2339,6 +2350,39 @@ const timelineController = createTimeline({
   },
   matchesFilters: canvasController.matchesFiltersTask,
   matchesSearch: canvasController.matchesSearch,
+});
+createCrossTabDrag({
+  getOrigin: id => {
+    const task = state.allTasks.find((task: any) => task.id === id);
+    if (!task || task.unresolvedReference || !spaceTabs?.active || spaceTabs.active.kind !== 'task') return null;
+    return task.origin || { documentId: spaceTabs.active.id, tab: spaceTabs.active.name,
+      lineIndex: task.lineIndex, source: editorController.getValue(), name: task.name };
+  },
+  activeDocument: () => spaceTabs?.active?.id,
+  activate: id => spaceTabs!.activate(id),
+  canEdit: () => !state.historyViewerActive && collab.isAuthenticated && tabMode === 'task',
+  notify: message => showToast(message, 'error'),
+  drop: async (origin, mode, target, x, y) => {
+    if (!spaceTabs) return;
+    const column = target.closest<HTMLElement>('.kanban-column');
+    const timeline = target.querySelector('.timeline-host:not([hidden])');
+    const code = target.closest('.editor-wrapper');
+    const line = code ? editorController.lineAtPoint(x, y) : editorController.getValue().split('\n').length;
+    const prepare = (source: string, sourceLine: number) => {
+      if (column) {
+        let next = source;
+        updateTaskStateInEditor({ task: { lineIndex: sourceLine }, newState: column.dataset['stateTag'] || '',
+          dom: { editor: { value: source } }, sync: () => {}, applyEditorValue: value => { next = value; } });
+        return next;
+      }
+      if (timeline && document.elementFromPoint(x, y)?.closest('.timeline-rows')) {
+        const dates = findTaskDates(source, sourceLine), day = timelineController.dayAtPoint(x);
+        return updateTaskDates(source, sourceLine, dates ? moveDates(dates, day - (dates.start ?? dates.end!)) : { start: day, end: null });
+      }
+      return source;
+    };
+    await spaceTabs.transfer(origin, mode, line, prepare);
+  },
 });
 let graphView = "graph";
 try { if (localStorage.getItem("taskScriptGraphView") === "timeline") graphView = "timeline"; } catch { /* Storage may be disabled. */ }
@@ -2441,6 +2485,8 @@ let modalEditorState: any = null;
 
 // Stores the slugRenameModalController module constant.
 const slugRenameModalController = createSlugRenameModalController({
+  getSharedValue: () => tabMode === "task" && spaceTabs?.space ? (sharedDefinitions || "Definitions:\n") : "",
+  saveShared: change => getSpaceTabs().saveShared(change),
   dom,
   slugRenameUi,
   /**
@@ -2883,6 +2929,15 @@ function sync(): void {
     return;
   }
   const sourceText = editorController.getValue();
+  const parsedDocument = parseTasks(tabMode === "empty" ? "" : sourceText, historyMode.viewerActive ? historyDefinitions : tabMode === "task" ? sharedDefinitions : "");
+  applyStableTaskIds({ allTasks: parsedDocument.allTasks });
+  const resolvedDocument = tabMode === 'task' && !historyMode.viewerActive
+    ? resolveTaskReferences(parsedDocument, spaceTabs?.sourceDocuments() || [], spaceTabs?.active?.id || '', sharedDefinitions)
+    : parsedDocument;
+  state.referenceLines = (resolvedDocument as any).referenceLines || new Map();
+  spaceTabs?.showReferenceDiagnostics((resolvedDocument as any).referenceDiagnostics || []);
+  state.taskReferenceCompletions = (spaceTabs?.sourceDocuments() || []).flatMap(doc => parseTasks(doc.text, sharedDefinitions).allTasks
+    .filter(task => !task.referenceTarget).map(task => ({ label: `${doc.name}::${task.name}` })));
   const {
     tasks,
     tags,
@@ -2897,9 +2952,9 @@ function sync(): void {
     stateMeta,
     incomingReferenceCountByName,
     totalStoryPoints,
-  } = parseTasks(sourceText);
+  } = resolvedDocument;
+  if (tabMode === "defs") { tasks.length = 0; if (allTasks) allTasks.length = 0; }
   const parsedAllTasks = Array.isArray(allTasks) ? allTasks : [];
-  applyStableTaskIds({ allTasks: parsedAllTasks });
   state.tasks = tasks;
   state.allTasks = parsedAllTasks;
   state.tags = tags;
@@ -2996,6 +3051,11 @@ function buildKanban(): void {
  * Output: void.
  */
 function updateTaskState(task: any, newState: any): void {
+  if (task.unresolvedReference) return;
+  if (task.origin) {
+    editReferencedTask(task, (source, apply) => updateTaskStateInEditor({ task: { ...task, lineIndex: taskSourceLine(task) }, newState, dom: { editor: { value: source } }, sync: () => {}, applyEditorValue: apply }));
+    return;
+  }
   updateTaskStateInEditor({ task, newState, dom, sync, applyEditorValue });
 }
 
@@ -3005,7 +3065,23 @@ function updateTaskState(task: any, newState: any): void {
  * Output: void.
  */
 function updateTaskToken(task: any, token: any, action: any): void {
+  if (task.unresolvedReference) return;
+  if (task.origin) {
+    editReferencedTask(task, (source, apply) => updateTaskTokenInEditor({ task: { ...task, lineIndex: taskSourceLine(task) }, token, action, dom: { editor: { value: source } }, sync: () => {}, applyEditorValue: apply }));
+    return;
+  }
   updateTaskTokenInEditor({ task, token, action, dom, sync, applyEditorValue });
+}
+
+function editReferencedTask(task: any, edit: (source: string, apply: (value: string) => void) => void): void {
+  if (state.historyViewerActive || !task?.origin) return;
+  try {
+    const source = task.origin.source;
+    edit(source, value => spaceTabs?.editOrigin(task.origin, source, value));
+  } catch (error: any) { showToast(error.message, 'error'); }
+}
+function runOriginCommand(task: any, run: (controller: ReturnType<typeof createTaskCommandController>) => void): void {
+  editReferencedTask(task, (source, apply) => run(createTaskCommandController({ getEditorValue: () => source, applyEditorValue: apply, syncEditorState: () => {} })));
 }
 
 // Stores the editingTaskRange module constant.
@@ -3574,9 +3650,10 @@ function openTaskEditModal(task: any): void {
   if (!dom.taskEditModal || !task) {
     return;
   }
+  if (task.unresolvedReference) { showToast('Fix the task reference in the code before editing it.', 'error'); return; }
   creatingTask = false;
-  const lines = editorController.getValue().split("\n");
-  const draft = buildTaskEditDraft(lines, task);
+  const lines = (taskSource(task, editorController.getValue()) as string).split("\n");
+  const draft = buildTaskEditDraft(lines, { ...task, lineIndex: taskSourceLine(task) });
   if (!draft) {
     return;
   }
@@ -3792,11 +3869,13 @@ function openTaskDeleteModal(task: any): void {
   pendingDeleteTask = task;
   if (dom.taskDeleteMessage) {
     const name = task.name || "this task";
-    dom.taskDeleteMessage.textContent = `Remove "${name}"?`;
+    dom.taskDeleteMessage.textContent = task.origin || task.referenceTarget
+      ? `Remove the reference to "${name}"? The original task and its subtasks will remain.`
+      : `Remove "${name}"?`;
   }
   if (dom.taskDeleteConfirmAll) {
     const subtaskCount = countSubtasks(task);
-    const hasSubtasks = subtaskCount > 0;
+    const hasSubtasks = subtaskCount > 0 && !task.origin && !task.referenceTarget;
     const label = subtaskCount === 1 ? "Delete with 1 subtask" : `Delete with ${subtaskCount} subtasks`;
     dom.taskDeleteConfirmAll.textContent = label;
     dom.taskDeleteConfirmAll.classList.toggle("hidden", !hasSubtasks);
@@ -3855,6 +3934,7 @@ function deleteTask(task: any): void {
   if (!task) {
     return;
   }
+  if (task.origin || task.referenceTarget) { removeTaskReference(task); return; }
   animateTaskRemoval(task, () => {
     const nextLine = taskCommandController.deleteTaskAtLine(task.lineIndex);
     if (nextLine !== null) {
@@ -3872,6 +3952,7 @@ function deleteTaskKeepSubtasks(task: any): void {
   if (!task) {
     return;
   }
+  if (task.origin || task.referenceTarget) { removeTaskReference(task); return; }
   animateTaskRemoval(task, () => {
     const nextLine = taskCommandController.deleteTaskKeepSubtasksAtLine(task.lineIndex);
     if (nextLine !== null) {
@@ -3885,6 +3966,11 @@ function deleteTaskKeepSubtasks(task: any): void {
  * Input: none.
  * Output: void.
  */
+function removeTaskReference(task: any): void {
+  const nextLine = taskCommandController.removeTaskReferenceAtLine(task.lineIndex);
+  if (nextLine !== null) handleEditorSelection(nextLine);
+}
+
 function clearTaskDeletePreview(): void {
   document.querySelectorAll(".task-node.delete-preview, .timeline-bar.delete-preview").forEach((node) => {
     node.classList.remove("delete-preview");
@@ -3905,7 +3991,7 @@ function highlightTaskDeletePreview(task: any, includeSubtasks: any): void {
     return;
   }
   const toHighlight = [task];
-  if (includeSubtasks) {
+  if (includeSubtasks && !task.origin && !task.referenceTarget) {
     const stack = [...task.children];
     while (stack.length) {
       const current = stack.shift();
@@ -3968,9 +4054,10 @@ function saveTaskEditModal(asSubtask = false) {
     return;
   }
   // Global slug edits may insert header lines while this dialog remains open.
-  const currentLines = editorController.getValue().split("\n");
+  const origin = (editingTaskRef?.origin || (creatingTask && asSubtask ? parent?.origin : undefined)) as TaskOrigin | undefined;
+  const currentLines = (origin?.source || editorController.getValue()).split("\n");
   const currentTask = state.allTasks.find((task: any) => task.id === editingTaskRef?.id);
-  const currentDraft = creatingTask ? buildTaskCreateDraft(currentLines) : buildTaskEditDraft(currentLines, currentTask);
+  const currentDraft = creatingTask ? buildTaskCreateDraft(currentLines) : buildTaskEditDraft(currentLines, origin ? { ...editingTaskRef, lineIndex: origin.lineIndex } : currentTask);
   if (!currentDraft) {
     if (dom.taskEditError) {
       dom.taskEditError.textContent = "This task is no longer available. Close the dialog and reopen the task.";
@@ -3978,15 +4065,18 @@ function saveTaskEditModal(asSubtask = false) {
     }
     return;
   }
-  const saveResult = taskCommandController.saveTaskEdit({
+  const controller = origin ? createTaskCommandController({ getEditorValue: () => origin.source,
+    applyEditorValue: value => spaceTabs!.editOrigin(origin, origin.source, value), syncEditorState: () => {} }) : taskCommandController;
+  let saveResult;
+  try { saveResult = controller.saveTaskEdit({
     taskRange: currentDraft.range,
     rawTitle,
     bodyText: modalEditor.getValue(),
     indent: currentDraft.indent,
     fallbackJiraKey: editingTaskJiraKey,
     creatingTask,
-    parentLine: parent ? parent.lineIndex : undefined,
-  });
+    ...(parent ? { parentLine: taskSourceLine(parent) } : {}),
+  }); } catch (error: any) { showToast(error.message, 'error'); return; }
   if (!saveResult.ok) {
     if (dom.taskEditError) {
       dom.taskEditError.textContent =
@@ -3995,7 +4085,10 @@ function saveTaskEditModal(asSubtask = false) {
     }
     return;
   }
-  handleEditorSelection(saveResult.lineIndex);
+  if (!origin) handleEditorSelection(saveResult.lineIndex);
+  if (!origin && !creatingTask && editingTaskRef?.name !== saveResult.title && spaceTabs?.active) {
+    spaceTabs.renameReferences(spaceTabs.active.name, editingTaskRef.name, spaceTabs.active.name, parseJiraTitle(saveResult.title).title);
+  }
   if (creatingTask) {
     showToast(`Task '${saveResult.title}' created.`);
   }
@@ -4008,6 +4101,8 @@ function saveTaskEditModal(asSubtask = false) {
  * Output: void.
  */
 function moveTaskAsSubtask(sourceTask: any, targetTask: any): void {
+  if (sourceTask.origin || targetTask.origin) { runReferencedHierarchy(sourceTask, targetTask, (controller, source, target) => controller.moveTaskAsSubtask(source, target)); return; }
+  if (sourceTask.unresolvedReference || targetTask.unresolvedReference) return;
   taskCommandController.moveTaskAsSubtask(sourceTask, targetTask);
 }
 
@@ -4017,7 +4112,23 @@ function moveTaskAsSubtask(sourceTask: any, targetTask: any): void {
  * Output: result produced by this function.
  */
 function reorderKanbanTask(sourceTask: any, targetTask: any, position: any, options: any = {}) {
+  if (sourceTask.origin || targetTask.origin) return runReferencedHierarchy(sourceTask, targetTask, (controller, source, target) => controller.reorderTask(source, target, position, options));
+  if (sourceTask.unresolvedReference || targetTask.unresolvedReference) return false;
   return taskCommandController.reorderTask(sourceTask, targetTask, position, options);
+}
+
+function runReferencedHierarchy(sourceTask: any, targetTask: any, run: (controller: ReturnType<typeof createTaskCommandController>, source: any, target: any) => unknown): boolean {
+  const sourceDocument = sourceTask.origin?.documentId || spaceTabs?.active?.id;
+  const targetDocument = targetTask.origin?.documentId || spaceTabs?.active?.id;
+  if (sourceDocument !== targetDocument) { showToast('Move the original task to this tab before changing its parent here.', 'error'); return false; }
+  const origin = sourceTask.origin || targetTask.origin;
+  const parsed = parseTasks(origin.source);
+  const source = parsed.allTasks.find(task => task.lineIndex === taskSourceLine(sourceTask));
+  const target = parsed.allTasks.find(task => task.lineIndex === taskSourceLine(targetTask));
+  if (!source || !target) return false;
+  let result: unknown;
+  runOriginCommand({ origin }, controller => { result = run(controller, source, target); });
+  return result !== false;
 }
 
 /**
@@ -4229,6 +4340,8 @@ function applyStableTaskIds({ allTasks }: { allTasks: any[] }): void {
  * Output: void.
  */
 function toggleCheckboxAtLine(lineIndex: any, checked: any = null): void {
+  const reference = state.referenceLines?.get(lineIndex);
+  if (reference) { runOriginCommand({ origin: reference.origin }, controller => controller.toggleCheckboxAtLine(reference.line, checked)); return; }
   taskCommandController.toggleCheckboxAtLine(lineIndex, checked);
 }
 
@@ -4488,6 +4601,8 @@ function decodeSystemSharedValue(raw: any): any {
  * Output: void.
  */
 function applySystemSharedSnapshot(rawSnapshot: any): void {
+  if (rawSnapshot?.tabs_revision) window.dispatchEvent(new Event("space-tabs-changed"));
+  if (Array.isArray(rawSnapshot?.tabs_notices) && rawSnapshot.tabs_notices.length) showToast(rawSnapshot.tabs_notices.join(" "), "error");
   const snapshot = rawSnapshot && typeof rawSnapshot === "object" ? rawSnapshot : {};
   const jiraProjectsRaw = decodeSystemSharedValue(snapshot[SYSTEM_SHARED_KEY_JIRA_PROJECT_KEYS]);
   const jiraProjectKeys = Array.isArray(jiraProjectsRaw)
@@ -5350,8 +5465,8 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
     });
   });
 
-  const activeSpaceId = typeof collab.spaceId === "string" ? collab.spaceId.trim() : "";
-  const activeSpacePath = typeof collab.spacePath === "string" ? collab.spacePath.trim() : "";
+  const activeSpaceId = spaceTabs?.space?.name || (typeof collab.spaceId === "string" ? collab.spaceId.trim() : "");
+  const activeSpacePath = spaceTabs?.space?.access || (typeof collab.spacePath === "string" ? collab.spacePath.trim() : "");
   const activeSpaceEntry = activeSpacePath
     ? allSpaces.find((space: any) => resolveSpacePath(space) === activeSpacePath)
     : (activeSpaceId ? allSpaces.find((space: any) => space.id === activeSpaceId) : null);
@@ -5404,7 +5519,7 @@ function renderSpaceList(spaces: any, folders: any[] = []) {
     row.className = "space-item";
     const spacePath = resolveSpacePath(space);
     const isActiveSpace = (
-      (collab.spacePath && collab.spacePath === spacePath)
+      ((spaceTabs?.space?.access || collab.spacePath) === spacePath)
       || (!collab.spacePath && collab.spaceId === space.id)
     );
     if (isActiveSpace) {
@@ -5837,7 +5952,7 @@ async function loadSpaceList({ showLoading = true } = {}) {
     updateCreateFolderButton();
     const spaces = result.spaces || [];
     const folders = sortFolderIds(result.folders || []);
-    if (collab.spaceId) {
+    if (collab.spaceId && !spaceTabs?.space) {
       const currentByPath = collab.spacePath
         ? spaces.find((space: any) => resolveSpacePath(space) === collab.spacePath)
         : null;
@@ -8009,6 +8124,7 @@ function updateConnectButtonLabel() {
  * Output: result produced by this function.
  */
 function disconnectSpace() {
+  spaceTabs?.disconnect();
   syncEngine.disconnectSpace();
   updateHistoryButtonState();
 }
@@ -8036,6 +8152,57 @@ function scheduleCollabSync() {
  * Input: spaceId: any, spacePath: any = "", { showLoader = true }: { showLoader?: boolean } = {}.
  * Output: result produced by this function.
  */
+function getSpaceTabs() {
+  if (spaceTabs) return spaceTabs;
+  spaceTabs = createSpaceTabs({
+    base: REMOTE_BASE, wsBase: WS_BASE, headers: () => authHeaders(), collab,
+    modules: loadCollabModules,
+    connect: async id => {
+      if (historyMode.viewerActive) setHistoryViewerMode(false);
+      await syncEngine.connectToSpace(id, id);
+      await waitForInitialConnectionReady();
+      sync();
+    },
+    disconnect: () => syncEngine.disconnectSpace(true),
+    definitions: text => { sharedDefinitions = text; if (editorController) sync(); },
+    mode: kind => {
+      tabMode = kind;
+      state.definitionsMode = kind === "defs";
+      document.documentElement.dataset["tabMode"] = kind;
+      editorController?.setReadOnly?.(kind === "empty");
+      dom.graphAddTask?.toggleAttribute("disabled", kind !== "task");
+      if (kind === "empty") { editorController?.setValue(""); sync(); }
+    },
+    capture: () => ({ editorScroll: editorController.getScroll?.(), selection: editorController.getSelectionRange?.(),
+      selectedTaskId: state.selectedTaskId, transform: state.transform, timeline: timelineController.getView(),
+      graphView, searchQuery: state.searchQuery, kanbanHeight: document.documentElement.style.getPropertyValue("--kanban-height"), selectedTags: [...state.selectedTags], selectedPeople: [...state.selectedPeople],
+      leftWidth: document.querySelector<HTMLElement>(".app")?.style.getPropertyValue("--left-width") }),
+    restore: value => {
+      state.searchQuery = typeof value.searchQuery === "string" ? value.searchQuery : "";
+      if (dom.searchInput) dom.searchInput.value = state.searchQuery;
+      if (value.kanbanHeight) document.documentElement.style.setProperty("--kanban-height", value.kanbanHeight);
+      if (value.transform) Object.assign(state.transform, value.transform);
+      state.selectedTaskId = value.selectedTaskId || null;
+      for (const key of ["selectedTags", "selectedPeople"] as const) if (Array.isArray(value[key])) state[key] = new Set(value[key]);
+      if (value.selection) editorController.setSelectionRange?.(value.selection.start, value.selection.end);
+      if (value.editorScroll) editorController.setScroll?.(value.editorScroll);
+      if (value.timeline) timelineController.setView(value.timeline);
+      if (value.graphView) viewSwitch.querySelector<HTMLButtonElement>(`[data-view="${value.graphView}"]`)?.click();
+      if (value.leftWidth) document.querySelector<HTMLElement>(".app")?.style.setProperty("--left-width", value.leftWidth);
+      canvasController.renderGraph();
+    },
+    release: id => syncEngine.forgetDocument(id),
+    acquire: id => syncEngine.acquireDocument(id),
+    referencesChanged: () => { requestAnimationFrame(() => sync()); },
+    notify: (message, kind) => showToast(message, kind as any), layout: () => {
+      state.tabNames = spaceTabs?.space?.tabs.map(tab => tab.name) || [];
+      updateBoardConnectionLabel(); updateResponsiveLayoutOffsets();
+    },
+    canEdit: () => !state.historyViewerActive && collab.isAuthenticated,
+  });
+  return spaceTabs;
+}
+
 async function connectToSpace(
   spaceId: any,
   spacePath: any = "",
@@ -8045,10 +8212,16 @@ async function connectToSpace(
     setBootLoaderVisible(true, "Connecting to board...");
   }
   try {
-    const result = await syncEngine.connectToSpace(spaceId, spacePath);
+    let result;
+    try {
+      result = await getSpaceTabs().openSpace(spacePath || spaceId);
+    } catch (error: any) {
+      if (error?.message === "Space not found.") result = await syncEngine.connectToSpace(spaceId, spacePath);
+      else throw error;
+    }
     void connectSystemSharedChannel();
     if (collab.spaceId) {
-      setStoredLastSpaceRef(collab.spaceId, collab.spacePath || spacePath || collab.spaceId);
+      setStoredLastSpaceRef(spaceTabs?.space?.name || collab.spaceId, spaceTabs?.space?.access || collab.spacePath || spacePath || collab.spaceId);
       if (showLoader) {
         await waitForInitialConnectionReady();
       }
@@ -8230,6 +8403,7 @@ function setHistoryViewerMode(active: boolean): void {
     return;
   }
   historyMode.viewerActive = next;
+  spaceTabs?.render();
   state.historyViewerActive = next;
   document.documentElement.toggleAttribute("data-history-viewer", next);
   dom.boardHistoryMode?.classList.toggle("hidden", !next);
@@ -8592,12 +8766,14 @@ async function selectHistoryCheckpoint(index: number): Promise<void> {
   }
   if (!historyMode.viewerActive) {
     if (historyMode.wasConnected) {
-      disconnectSpace();
+      syncEngine.disconnectSpace(true);
     }
     setHistoryViewerMode(true);
   }
   try {
     const cacheKey = String(selected.id);
+    const defsResponse = await fetch(`${spaceApiUrl(historyMode.spacePath || historyMode.spaceId, historyMode.spaceId, "/history")}/${encodeURIComponent(cacheKey)}/definitions`, { headers: authHeaders() });
+    historyDefinitions = defsResponse.ok ? await defsResponse.text() : "";
     let content = historyMode.cache.get(cacheKey);
     if (typeof content !== "string") {
       content = await fetchSpaceHistoryCheckpointContent(historyMode.spaceId, cacheKey, historyMode.spacePath || "");

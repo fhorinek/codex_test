@@ -30,6 +30,7 @@ type MarkdownListItemRenderArgs = {
 };
 // Defines the ParsedConfigEntry type structure for this module.
 type ParsedConfigEntry = {
+  _explicit?: string[];
   key: string;
   name: string;
   color: string;
@@ -69,6 +70,7 @@ type ParsedTaskRecord = {
   children: ParsedTaskRecord[];
   lineIndex: number;
   _childSeq?: number;
+  referenceTarget?: { tab: string; name: string; includeSubtasks: boolean };
 };
 
 /**
@@ -429,7 +431,7 @@ export function renderMarkdown(text: string, options: RenderMarkdownOptions = {}
  * Input: lines: string[].
  * Output: result produced by this function.
  */
-function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: number } {
+export function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: number } {
   const config: ParsedConfigShape = {
     boardName: "Task Script",
     states: [
@@ -476,7 +478,7 @@ function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: 
     if (indent === 8 && currentSection) {
       const match = trimmed.match(/^([^\s:]+)\s*:\s*(.*)?$/);
       const key = (match?.[1] || trimmed).trim();
-      const entry: ParsedConfigEntry = { key, name: key, color: "" };
+      const entry: ParsedConfigEntry = { key, name: key, color: "", _explicit: [] };
       if (currentSection === "people") {
         entry.email = "";
       }
@@ -485,6 +487,7 @@ function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: 
       }
       if (match && match[2]) {
         entry.name = match[2].trim() || entry.name;
+        entry._explicit!.push("name");
       }
       if (currentSection === "states") {
         config.states.push(entry);
@@ -502,6 +505,8 @@ function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: 
         const prop = (propMatch[1] || "").toLowerCase();
         const propKey = prop.replace(/[_-]/g, "");
         const value = (propMatch[2] || "").trim();
+        const explicitKey = propKey === "mail" ? "email" : ["jira", "jirastate"].includes(propKey) ? "jiraState" : propKey;
+        currentEntry._explicit!.push(explicitKey);
         if (propKey === "name") {
           currentEntry.name = value || currentEntry.name;
         } else if (propKey === "color") {
@@ -527,9 +532,26 @@ function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: 
  * Input: text: string.
  * Output: ParsedTaskDocument.
  */
-export function parseTasks(text: string): ParsedTaskDocument {
+export function parseTasks(text: string, sharedDefinitions = ""): Omit<ParsedTaskDocument, 'tasks' | 'allTasks'> & { tasks: ParsedTaskRecord[]; allTasks: ParsedTaskRecord[]; config: ParsedConfigShape } {
   const lines = text.split("\n");
   const { config, startIndex } = parseConfig(lines);
+  if (sharedDefinitions) {
+    const shared = parseConfig(sharedDefinitions.split("\n")).config;
+    for (const section of ["tags", "people", "states"] as const) {
+      const merged = new Map(shared[section].map(entry => [entry.key, { ...entry }]));
+      for (const local of config[section]) {
+        if (!local._explicit) continue;
+        const inherited = merged.get(local.key);
+        if (!inherited) merged.set(local.key, local);
+        else {
+          const combined: any = { ...inherited, _explicit: local._explicit };
+          for (const property of local._explicit) combined[property] = (local as any)[property];
+          merged.set(local.key, combined);
+        }
+      }
+      config[section] = [...merged.values()];
+    }
+  }
   const tasks: ParsedTaskRecord[] = [];
   const stack: Array<{ indent: number; task: ParsedTaskRecord }> = [];
   let rootCounter = 0;
@@ -562,7 +584,9 @@ export function parseTasks(text: string): ParsedTaskDocument {
       return;
     }
     const raw = line;
-    const taskMatch = raw.match(/^(\s*)%(\.)?\s+(.*)$/);
+    const referenceMatch = raw.match(/^(\s*)%{2,3}\s+([A-Za-z0-9_-]+)::(.+?)\s*$/);
+    if (/^\s*%%/.test(raw) && !referenceMatch) { currentTask = null; return; }
+    const taskMatch = referenceMatch ? [raw, referenceMatch[1], '', referenceMatch[3]] : raw.match(/^(\s*)%(\.)?\s+(.*)$/);
     if (taskMatch) {
       const indent = (taskMatch[1] ?? "").length;
       const ownArchived = Boolean(taskMatch[2]);
@@ -602,6 +626,7 @@ export function parseTasks(text: string): ParsedTaskDocument {
         incomingReferences: [],
         children: [],
         lineIndex: index,
+        ...(referenceMatch ? { referenceTarget: { tab: referenceMatch[2]!, name: referenceMatch[3]!, includeSubtasks: !raw.trimStart().startsWith('%%%') } } : {}),
       };
       if (!parentEntry) {
         rootCounter += 1;
@@ -615,7 +640,7 @@ export function parseTasks(text: string): ParsedTaskDocument {
         task.parent = parent;
       }
       stack.push({ indent, task });
-      currentTask = task;
+      currentTask = referenceMatch ? null : task;
       return;
     }
 

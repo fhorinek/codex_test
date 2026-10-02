@@ -1,19 +1,9 @@
 {
   "sessions": {
-    "QxS_QuS5aWKTfWTxagadFVs7BPnZFRIHRz4GuXU-WOk": {
+    "l7JsUK_NiRUbgZP2t8lyjjQQX11lqH4Rie5bmiFDCVE": {
       "username": "admin",
-      "created_at": 1786436686,
-      "expires_at": 1789028686
-    },
-    "Opc4iWaRHtuBE-93XLK35ffyukynROR3AoqSkD0LPhI": {
-      "username": "admin",
-      "created_at": 1788162965,
-      "expires_at": 1790754965
-    },
-    "UF5ZJcUerHOtReYicgZnvlfoCL0qvHPokeklpXjVKbg": {
-      "username": "huszarova",
-      "created_at": 1788265064,
-      "expires_at": 1790857064
+      "created_at": 1790885393,
+      "expires_at": 1793477393
     }
   }
 }

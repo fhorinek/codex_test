@@ -1,3 +1,4 @@
+import { parseConfig } from "./task.js";
 // @ts-check
 
 /**
@@ -432,6 +433,11 @@ function renameSlugConfigEntries(
 
   let changed = false;
   if (entryStart !== -1) {
+    if (metadata === undefined) {
+      const original = lines[entryStart]!;
+      lines[entryStart] = original.replace(/^(\s*)[^\s:]+/, `$1${newSlug}`);
+      return { changed: original !== lines[entryStart] };
+    }
     const existingBlock = lines.slice(entryStart, entryEnd);
     const updatedBlock = updateSlugConfigEntryBlock(existingBlock, {
       kind,
@@ -544,6 +550,9 @@ type PendingSlugRename = {
 
 // Defines the SlugRenameModalControllerOptions type structure for this module.
 type SlugRenameModalControllerOptions = {
+  getSharedValue?: () => string;
+  saveShared?: (change: RenameWholeFileOptions) => Promise<void>;
+
   dom: SlugRenameModalDom;
   slugRenameUi: SlugRenameUiApi;
   /**
@@ -609,6 +618,39 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
   } = options;
 
   let pendingSlugRename: PendingSlugRename | null = null;
+  let scope: HTMLSelectElement | null = null;
+  if (options.getSharedValue && dom.slugRenameMessage) {
+    const label = document.createElement("label"); label.className = "modal-field";
+    label.textContent = "Save definition in";
+    scope = document.createElement("select"); scope.setAttribute("aria-label", "Definition scope");
+    for (const [value, text] of [["local", "This tab only"], ["shared", "Shared across this space"]]) {
+      const item = document.createElement("option"); item.value = value!; item.textContent = text!; scope.append(item);
+    }
+    label.append(scope); dom.slugRenameMessage.after(label);
+  }
+
+  function showScopeValues() {
+    const pending = pendingSlugRename;
+    if (!pending) return;
+    const shared = options.getSharedValue?.() || "";
+    const config = scope?.value === "shared" ? parseConfig(shared.split("\n")).config : getConfig();
+    pending.metadata = buildSlugRenameMetadataFromConfig(config, pending.kind, pending.slug);
+    if (dom.slugRenameDisplayName) dom.slugRenameDisplayName.value = pending.metadata.name || "";
+    slugRenameUi.setColorValue(pending.metadata.color || "");
+    slugRenameUi.setBackgroundValue(pending.metadata.background || "");
+    if (dom.slugRenameEmail) dom.slugRenameEmail.value = pending.metadata.email || "";
+    if (dom.slugRenameJiraState) dom.slugRenameJiraState.value = pending.metadata.jiraState || "";
+    if (dom.slugRenameMessage) {
+      const section = getSlugSection(pending.kind) as "tags" | "people" | "states";
+      const own = parseConfig(getEditorValue().split("\n")).config[section].find(entry => entry.key === pending.slug);
+      const inherited = parseConfig(shared.split("\n")).config[section].find(entry => entry.key === pending.slug);
+      const props = inherited?._explicit?.filter(prop => !own?._explicit?.includes(prop)) || [];
+      dom.slugRenameMessage.textContent = scope?.value === "shared"
+        ? "Changes apply across this space, including closed tabs. Local overrides remain."
+        : `Changes apply only to this tab.${props.length ? " Inherited properties: " + props.join(", ") + "." : ""}`;
+    }
+  }
+  scope?.addEventListener("change", showScopeValues);
 
   /**
    * Handles the close function logic.
@@ -657,6 +699,19 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
       metadata: buildSlugRenameMetadataFromConfig(getConfig(), kind, slug),
     };
     pendingSlugRename = pending;
+    if (scope) {
+      const shared = options.getSharedValue?.() || "";
+      const section = kind === "tag" ? "tags" : kind === "person" ? "people" : "states";
+      const hasEntry = (text: string) => {
+        const lines = text.split("\n"); let active = false;
+        return lines.some(line => {
+          if (/^ {4}\S/.test(line)) active = line.trim() === section + ":";
+          return active && new RegExp("^ {8}" + slug + "(?::|$)").test(line);
+        });
+      };
+      scope.parentElement!.classList.toggle("hidden", !shared);
+      scope.value = shared && hasEntry(shared) && !hasEntry(getEditorValue()) ? "shared" : "local";
+    }
     if (dom.slugRenameMessage) {
       dom.slugRenameMessage.textContent =
         `Rename ${slugKindLabel(kind).toLowerCase()} slug "${prefix}${slug}" in whole file.`;
@@ -681,6 +736,7 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
     if (dom.slugRenameJiraState) {
       dom.slugRenameJiraState.value = pending.metadata.jiraState || "";
     }
+    if (scope && !scope.parentElement!.classList.contains("hidden")) showScopeValues();
     dom.slugRenameModal.classList.remove("hidden");
     dom.slugRenameNew?.focus();
     dom.slugRenameNew?.select();
@@ -691,7 +747,7 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
    * Input: none.
    * Output: void.
    */
-  function submit(): void {
+  async function submit(): Promise<void> {
     const pending = pendingSlugRename;
     if (!pending) {
       close();
@@ -723,6 +779,14 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
       close();
       return;
     }
+    if (scope?.value === "shared" && options.saveShared) {
+      try {
+        await options.saveShared({ kind: pending.kind, prefix: pending.prefix, oldSlug: pending.slug, newSlug: nextSlug, metadata: nextMetadata });
+        if (slugChanged && isTaskEditModalOpen()) setTaskEditModalValue(replaceSlugTokenOccurrences(getTaskEditModalValue(), `${pending.prefix}${pending.slug}`, `${pending.prefix}${nextSlug}`).text);
+        showToast("Shared definition saved."); close();
+      } catch (error: any) { showToast(error.message || "Unable to save shared definition.", "error"); }
+      return;
+    }
     const original = getEditorValue();
     const oldToken = `${pending.prefix}${pending.slug}`;
     const result = renameSlugInWholeFile(original, {
@@ -735,6 +799,29 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
     if (!result.changed) {
       showToast(`No '${oldToken}' slug occurrences found.`, "error");
       return;
+    }
+    if (options.getSharedValue?.() && scope?.value === "local") {
+      const section = getSlugSection(pending.kind) as "tags" | "people" | "states";
+      const own = parseConfig(original.split("\n")).config[section].find(entry => entry.key === pending.slug);
+      const explicit = new Set(own?._explicit || []);
+      const desired = getSlugConfigProps(pending.kind).filter(prop => explicit.has(prop) || pending.metadata[prop] !== nextMetadata[prop]);
+      const lines = result.text.split("\n");
+      let inSection = false, entryStart = -1, entryEnd = lines.length;
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i]!;
+        if (entryStart >= 0 && line.trim() && (line.match(/^ */)?.[0].length || 0) <= 8) { entryEnd = i; break; }
+        if (/^ {4}\S/.test(line)) inSection = line.trim() === section + ":";
+        if (inSection && new RegExp("^ {8}" + nextSlug + "(?::|$)").test(line)) entryStart = i;
+      }
+      if (entryStart >= 0) {
+        const body = lines.slice(entryStart + 1, entryEnd).filter(line => {
+          const match = /^ {12}([^:]+):/.exec(line);
+          return !match || !normalizeSlugConfigPropName(match[1]!);
+        });
+        for (const prop of desired) body.push(formatSlugConfigPropLine(pending.kind, prop, nextMetadata[prop] || ""));
+        lines.splice(entryStart, entryEnd - entryStart, `        ${nextSlug}:`, ...body);
+        result.text = lines.join("\n");
+      }
     }
     applyEditorValue(result.text);
 

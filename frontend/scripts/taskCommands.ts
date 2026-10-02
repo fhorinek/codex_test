@@ -685,6 +685,15 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     return Math.max(0, block.start - 1);
   }
 
+  function removeTaskReferenceAtLine(lineIndex: number): number | null {
+    const lines = getEditorValue().split("\n");
+    if (!/^\s*%{2,3}\s+/.test(lines[lineIndex] || "")) return null;
+    lines.splice(lineIndex, 1);
+    applyEditorValue(lines.join("\n"));
+    syncEditorState();
+    return Math.max(0, lineIndex - 1);
+  }
+
   /**
    * Handles the deleteTaskKeepSubtasksAtLine function logic.
    * Input: lineIndex: number.
@@ -791,6 +800,7 @@ export function createTaskCommandController(options: TaskCommandControllerOption
   }
 
   return {
+    removeTaskReferenceAtLine,
     setTaskDates,
     deleteTaskAtLine,
     deleteTaskKeepSubtasksAtLine,

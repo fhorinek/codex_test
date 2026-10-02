@@ -268,7 +268,7 @@ function lineHasNestedConfigSection(state: any, line: any, firstTaskLineNumber: 
             return false;
         }
         const key = text.trim().replace(/:$/, "").toLowerCase();
-        if (indent > baseIndent && (key === "states" || key === "people" || key === "tags")) {
+        if (indent > baseIndent && (key === "states" || key === "people" || key === "tags" || key === "tabs")) {
             return true;
         }
     }
@@ -353,7 +353,7 @@ function taskTitleRangeFromLine(line: any) {
         return null;
     }
     const text = line.text;
-    const taskMatch = text.match(/^(\s*)%\.?\s+/);
+    const taskMatch = text.match(/^(\s*)%(?:%{1,2}|\.)?\s+/);
     if (!taskMatch) {
         return null;
     }
@@ -498,7 +498,7 @@ function buildDecorations(view: any, appState: any, incomingReferenceSources = n
                     decoration: errorLineDecoration,
                 });
             }
-            const taskMatch = text.match(/^(\s*)%\.?\s+/);
+            const taskMatch = text.match(/^(\s*)%(?:%{1,2}|\.)?\s+/);
             if (taskMatch) {
                 const indent = taskMatch[1].length;
                 ranges.push({
@@ -785,9 +785,9 @@ function findFirstTaskLineNumber(doc: any) {
  * Input: doc: any, lineNumber: number, firstTaskLineNumber: number.
  * Output: SlugSection | "".
  */
-function currentHeaderSectionForLine(doc: any, lineNumber: number, firstTaskLineNumber: number): SlugSection | "" {
+function currentHeaderSectionForLine(doc: any, lineNumber: number, firstTaskLineNumber: number): SlugSection | "tabs" | "" {
     const maxLine = Math.min(lineNumber, firstTaskLineNumber - 1);
-    let section: SlugSection | "" = "";
+    let section: SlugSection | "tabs" | "" = "";
     for (let current = 1; current <= maxLine; current += 1) {
         const text = doc.line(current).text;
         const trimmed = text.trim();
@@ -797,7 +797,7 @@ function currentHeaderSectionForLine(doc: any, lineNumber: number, firstTaskLine
         const indent = text.match(/^\s*/)?.[0].length || 0;
         if (indent === 4 && trimmed.endsWith(":")) {
             const key = trimmed.slice(0, -1).trim().toLowerCase();
-            section = key === "states" || key === "people" || key === "tags" ? key as SlugSection : "";
+            section = key === "tabs" ? "tabs" : key === "states" || key === "people" || key === "tags" ? key as SlugSection : "";
         }
     }
     return section;
@@ -889,6 +889,16 @@ function collectJiraMarkerValues(state: any): string[] {
  * Output: result produced by this function.
  */
 function buildTokenCompletions(context: any, state: any) {
+    const reference = context.matchBefore(/^\s*%{2,3}\s+[^\n]*$/);
+    if (reference) {
+        const marker = reference.text.search(/%{2,3}/) + reference.text.match(/%{2,3}/)![0].length;
+        const prefix = reference.text.slice(marker).match(/^\s*/)?.[0].length || 0;
+        const partial = reference.text.slice(marker + prefix).toLowerCase();
+        const options = (state.taskReferenceCompletions || []).filter((entry: any) => entry.label.toLowerCase().includes(partial))
+            .map((entry: any) => ({ ...entry, type: 'reference', detail: 'Task in another tab' }));
+        return { from: reference.from + marker + prefix, options, validFor: /[^\n]*/ };
+    }
+
     const before = context.matchBefore(/(?:^|\s)([#@!{\[])([^\s\]}]*)$/);
     if (!before) {
         return null;
@@ -965,6 +975,7 @@ function buildHeaderConfigCompletions(context: any, state: any) {
             { label: "states:", type: "state" },
             { label: "people:", type: "person" },
             { label: "tags:", type: "tag" },
+            ...(state?.definitionsMode ? [{ label: "tabs:", type: "property" }] : []),
         ].filter((option) => option.label.toLowerCase().includes(partial.toLowerCase()));
         if (!options.length) {
             return null;
@@ -989,7 +1000,7 @@ function buildHeaderConfigCompletions(context: any, state: any) {
             states: "state",
         };
         const optionType = entryTypeBySection[currentSection as SlugSection] || "text";
-        const options = collectConfigSlugValues(currentSection, state)
+        const options = (currentSection === "tabs" ? (state?.tabNames || []) as string[] : collectConfigSlugValues(currentSection, state))
             .filter((slug) => slug.toLowerCase().includes(partial.toLowerCase()))
             .map((slug) => ({
             label: slug,
@@ -1013,7 +1024,7 @@ function buildHeaderConfigCompletions(context: any, state: any) {
             return null;
         }
         const options = [
-            { label: "name:", type: "property", apply: "name: " },
+            ...(currentSection === "tabs" ? [{ label: "icon:", type: "property", apply: "icon: " }] : [{ label: "name:", type: "property", apply: "name: " }]),
             { label: "color:", type: "property", apply: "color: " },
             ...(currentSection === "tags" ? [{ label: "background:", type: "property", apply: "background: " }] : []),
         ].filter((option) => option.label.toLowerCase().includes(partial.toLowerCase()));
@@ -1091,7 +1102,7 @@ function getTaskContextForLine(doc: any, lineNumber: number) {
     const safeLine = Math.max(1, Math.min(lineNumber, doc.lines));
     for (let current = safeLine; current >= 1; current -= 1) {
         const text = doc.line(current).text;
-        const taskMatch = text.match(/^(\s*)%\.?\s+/);
+        const taskMatch = text.match(/^(\s*)%(?:%{1,2}|\.)?\s+/);
         if (taskMatch) {
             return {
                 taskLineNumber: current,
@@ -1827,6 +1838,7 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
              * Output: result produced by this function.
              */
             setCollabExtensions: () => { },
+            setUndoManager: (_manager: any) => { },
             /**
              * Handles the setReadOnly function logic.
              * Input: none.
@@ -1838,6 +1850,7 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
     let suppressTextareaInput = false;
     let suppressTextareaUpdate = false;
     let view: any;
+    let collaborativeUndo: any = null;
     const editorRoot = host.classList.contains("code-editor")
         ? host
         : host.closest(".code-editor");
@@ -2037,6 +2050,9 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
                 autocompletion({ override: [completionSource] }),
                 search({ top: true }),
                 keymap.of([
+                    { key: "Mod-z", run: () => { if (!collaborativeUndo) return false; collaborativeUndo.undo(); return true; } },
+                    { key: "Mod-Shift-z", run: () => { if (!collaborativeUndo) return false; collaborativeUndo.redo(); return true; } },
+                    { key: "Mod-y", run: () => { if (!collaborativeUndo) return false; collaborativeUndo.redo(); return true; } },
                     {
                         key: "Tab",
                         /**
@@ -2235,6 +2251,10 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
          * Output: result produced by this function.
          */
         getValue: () => view.state.doc.toString(),
+        lineAtPoint: (x: number, y: number) => {
+            const position = view.posAtCoords({ x, y });
+            return position === null ? view.state.doc.lines : view.state.doc.lineAt(position).number - 1;
+        },
         /**
          * Handles the setValue function logic.
          * Input: nextValue: string.
@@ -2460,7 +2480,8 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
          * Output: result produced by this function.
          */
         undo: () => {
-            undo(view);
+            if (collaborativeUndo) collaborativeUndo.undo();
+            else undo(view);
         },
         /**
          * Handles the redo function logic.
@@ -2468,7 +2489,8 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
          * Output: result produced by this function.
          */
         redo: () => {
-            redo(view);
+            if (collaborativeUndo) collaborativeUndo.redo();
+            else redo(view);
         },
         /**
          * Handles the getDisplaySelectionRects function logic.
@@ -2488,6 +2510,7 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
          * Input: extensions: any[] | any = [].
          * Output: result produced by this function.
          */
+        setUndoManager: (manager: any) => { collaborativeUndo = manager; },
         setCollabExtensions: (extensions: any[] | any = []) => {
             const normalized = Array.isArray(extensions) ? extensions : [extensions];
             view.dispatch({

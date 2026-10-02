@@ -779,6 +779,7 @@ function renderKanbanCardContent({
   selectTask,
   getTaskById,
 }: any): void {
+  state = { ...state, ...task.originMeta };
   const wasDragging = card.classList.contains("dragging");
   card.className = "kanban-card";
   applyTaskBackground(card, task, state.tagMeta, '#101420');

@@ -127,6 +127,7 @@ type SyncEngineOptions = {
  * Output: result produced by this function.
  */
 export function createSyncEngine(options: SyncEngineOptions) {
+  const documents = new Map<string, { ydoc: any; provider: any; undoManager: any; wired?: boolean }>();
   const {
     collab,
     dom,
@@ -170,19 +171,18 @@ export function createSyncEngine(options: SyncEngineOptions) {
    * Input: none.
    * Output: result produced by this function.
    */
-  function disconnectSpace() {
+  function disconnectSpace(preserveDocuments = false) {
     stopPresenceHeartbeat(collab.spaceId);
     stopIdleWatch();
     const editorController = getEditorController();
+    editorController?.setUndoManager?.(null);
     editorController?.setCollabExtensions?.([]);
     if (collab.binding?.destroy) {
       collab.binding.destroy();
     }
-    if (collab.provider) {
-      collab.provider.destroy();
-    }
-    if (collab.ydoc) {
-      collab.ydoc.destroy();
+    if (!preserveDocuments) {
+      for (const item of documents.values()) { item.provider.destroy(); item.undoManager.destroy(); item.ydoc.destroy(); }
+      documents.clear();
     }
     if (collab.saveTimer) {
       clearTimeout(collab.saveTimer);
@@ -298,11 +298,12 @@ export function createSyncEngine(options: SyncEngineOptions) {
     if (!yCollab) {
       return;
     }
-    disconnectSpace();
+    disconnectSpace(true);
     stopOfflineDraftTimer();
     collab.offlineDraftDirty = false;
 
-    const ydoc = new Y.Doc();
+    const cached = documents.get(normalizedPath);
+    const ydoc = cached?.ydoc || new Y.Doc();
     collab.synced = false;
     setConnectionStatus("connecting");
     startIdleWatch();
@@ -311,18 +312,22 @@ export function createSyncEngine(options: SyncEngineOptions) {
       wsParams["user"] = collab.username;
       wsParams["pass"] = collab.authToken;
     }
-    const provider = new WebsocketProvider(wsBase, normalizedPath, ydoc, {
+    const provider = cached?.provider || new WebsocketProvider(wsBase, normalizedPath, ydoc, {
       params: wsParams,
     });
     const ytext = ydoc.getText("content");
+    const undoManager = cached?.undoManager || new Y.UndoManager(ytext);
+    const documentRecord = cached || { ydoc, provider, undoManager };
+    documents.set(normalizedPath, documentRecord);
 
     // y-codemirror.next applies Y.Text deltas onto the existing CodeMirror document.
-    // Clear the pre-connect local editor content first so remote hydration/sync doesn't
-    // prepend/merge with whatever was previously open (sample/offline draft/local space).
-    editorController?.setValue("");
+    // Initialize from Y.Text, which may already be populated synchronously through
+    // another provider in this browser (notably the always-subscribed definitions).
+    editorController?.setValue(ytext.toString());
 
-    const collabExtension = yCollab(ytext, provider.awareness);
+    const collabExtension = yCollab(ytext, provider.awareness, { undoManager });
     editorController?.setCollabExtensions?.([collabExtension]);
+    editorController?.setUndoManager?.(undoManager);
     const binding = {
       /**
        * Handles the destroy function logic.
@@ -348,7 +353,15 @@ export function createSyncEngine(options: SyncEngineOptions) {
     updateBoardConnectionLabel();
     startPresenceHeartbeat(spaceId);
 
+    if (cached) {
+      collab.synced = provider.synced;
+      setConnectionStatus(provider.wsconnected ? "connected" : "connecting");
+      syncEditorState();
+      if (documentRecord.wired) return;
+    }
+    documentRecord.wired = true;
     provider.on("status", ({ status }: any) => {
+      if (collab.ydoc !== ydoc) return;
       const isOnline =
         navigatorRef && typeof navigatorRef.onLine === "boolean"
           ? navigatorRef.onLine
@@ -367,6 +380,7 @@ export function createSyncEngine(options: SyncEngineOptions) {
     });
 
     provider.on("sync", (synced: any) => {
+      if (collab.ydoc !== ydoc) return;
       collab.synced = synced;
       if (synced) {
         markActivity();
@@ -382,6 +396,7 @@ export function createSyncEngine(options: SyncEngineOptions) {
     });
 
     ytext.observe((event: any, transaction: any) => {
+      if (collab.ydoc !== ydoc) return;
       void event;
       void transaction;
       markActivity();
@@ -390,6 +405,30 @@ export function createSyncEngine(options: SyncEngineOptions) {
   }
 
   return {
+    async acquireDocument(id: string) {
+      let item = documents.get(id);
+      if (!item) {
+        const { Y, WebsocketProvider } = await loadCollabModules();
+        const ydoc = new Y.Doc();
+        const params: Record<string, string> = {};
+        if (collab.username && collab.authToken) { params['user'] = collab.username; params['pass'] = collab.authToken; }
+        const provider = new WebsocketProvider(wsBase, id, ydoc, { params });
+        item = { ydoc, provider, undoManager: new Y.UndoManager(ydoc.getText('content')) };
+        documents.set(id, item);
+      }
+      const current = item;
+      if (!current.provider.synced) await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => { current.provider.off('sync', synced); reject(new Error('Could not load task references.')); }, 15000);
+        const synced = (ready: boolean) => { if (ready) { clearTimeout(timeout); current.provider.off('sync', synced); resolve(); } };
+        current.provider.on('sync', synced); if (current.provider.synced) synced(true);
+      });
+      return { ...current, text: current.ydoc.getText('content') };
+    },
+    forgetDocument(id: string) {
+      const item = documents.get(id);
+      if (!item || item.ydoc === collab.ydoc) return;
+      item.provider.destroy(); item.undoManager.destroy(); item.ydoc.destroy(); documents.delete(id);
+    },
     connectToSpace,
     disconnectSpace,
     hydrateFromRemote,

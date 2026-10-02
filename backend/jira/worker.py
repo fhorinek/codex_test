@@ -1,6 +1,7 @@
 # Module: Jira sync worker logic for parsing tasks and reconciling Jira and space state.
 
 import asyncio
+import copy
 import argparse
 import difflib
 import json
@@ -146,6 +147,11 @@ LOG_BORDER_WIDTH = 60
 # Input: none.
 # Output: List[str].
 def iter_space_room_ids() -> List[str]:
+    index = SPACES_DIR.parent / "space-index.json"
+    if index.exists():
+        data = json.loads(index.read_text(encoding="utf-8"))
+        return sorted(d["id"] for d in data["documents"].values() if d["kind"] == "task" and not d.get("deleted")
+                      and not data["spaces"][d["space_id"]].get("deleted") and not data["spaces"][d["space_id"]]["access"].startswith("personal/"))
     room_ids: Set[str] = set()
     for path in SPACES_DIR.rglob("*.txt"):
         if not path.is_file():
@@ -473,6 +479,12 @@ def normalize_space_room_path(value: Any) -> str:
 # Input: room_id: str.
 # Output: Optional[Path].
 def space_file_for_room_id(room_id: str) -> Optional[Path]:
+    index = SPACES_DIR.parent / "space-index.json"
+    if index.exists():
+        data = json.loads(index.read_text(encoding="utf-8"))
+        doc = data["documents"].get(room_id)
+        if doc and not doc.get("deleted"):
+            return SPACES_DIR / data["spaces"][doc["space_id"]]["path"] / doc["filename"]
     normalized = normalize_space_room_path(room_id)
     if not normalized:
         return None
@@ -510,6 +522,11 @@ def worker_can_access_space(room_id: str) -> Tuple[bool, str]:
     if not isinstance(record, dict):
         return False, "worker user is not configured"
     role = str(record.get("role") or "user").strip().lower()
+    index = SPACES_DIR.parent / "space-index.json"
+    if index.exists():
+        data = json.loads(index.read_text(encoding="utf-8"))
+        doc = data["documents"].get(normalized_room_id)
+        if doc: normalized_room_id = data["spaces"][doc["space_id"]]["access"]
     space_id = normalized_room_id.split("/")[-1]
     is_personal = normalized_room_id.startswith("personal/")
     if is_personal:
@@ -3420,6 +3437,21 @@ async def fetch_changed_jira_issue_keys(
 # Handles the sync_space_with_jira function logic.
 # Input: client: JiraClient, session: SpaceSession, project_key: str, force_direction: Optional[str] = None, ignore_dirty: bool = False, changed_issue_keys: Optional[Set[str]] = None,.
 # Output: Set[str].
+def local_definition_changes(local, original, resolved):
+    """Persist Jira discoveries without copying inherited properties into a task tab."""
+    result = copy.deepcopy(local)
+    for key, properties in resolved.items():
+        previous = original.get(key)
+        if previous is None:
+            result[key] = copy.deepcopy(properties)
+        elif previous != properties:
+            target = result.setdefault(key, copy.deepcopy(previous))
+            for prop, value in vars(properties).items():
+                if getattr(previous, prop) != value:
+                    setattr(target, prop, value)
+    return result
+
+
 async def sync_space_with_jira(
     client: JiraClient,
     session: SpaceSession,
@@ -3460,6 +3492,17 @@ async def sync_space_with_jira(
     original_lines = list(lines)
     people_config, people_order, people_block = parse_people_config(lines)
     states_config, states_order, states_block = parse_states_config(lines)
+    local_people, local_states = copy.deepcopy(people_config), copy.deepcopy(states_config)
+    tab_path = space_file_for_room_id(session.space_id)
+    if tab_path and tab_path.parent.name.endswith(".space"):
+        from space_tabs import resolved_definition_source
+        defs_path = tab_path.parent / "defs.txt"
+        if not defs_path.exists(): defs_path = tab_path.parent / ".defs.txt"
+        shared = defs_path.read_text(encoding="utf-8") if defs_path.exists() else ""
+        resolved = resolved_definition_source(content, shared).split("\n")
+        people_config, people_order, _ = parse_people_config(resolved)
+        states_config, states_order, _ = parse_states_config(resolved)
+    original_people, original_states = copy.deepcopy(people_config), copy.deepcopy(states_config)
     tasks = parse_space_tasks(lines)
     assign_space_task_parents(tasks)
     used_projects = collect_task_jira_projects(tasks)
@@ -3837,7 +3880,8 @@ async def sync_space_with_jira(
     if states_changed:
         before_lines = list(lines)
         lines, states_block = apply_states_config(
-            lines, states_config, states_order, states_block
+            lines, local_definition_changes(local_states, original_states, states_config),
+            [key for key in states_order if key in local_states or states_config[key] != original_states.get(key)], states_block
         )
         _, _, people_block = parse_people_config(lines)
         change_log = render_space_change_log(
@@ -3850,7 +3894,8 @@ async def sync_space_with_jira(
     if people_changed:
         before_lines = list(lines)
         lines, people_block = apply_people_config(
-            lines, people_config, people_order, people_block
+            lines, local_definition_changes(local_people, original_people, people_config),
+            [key for key in people_order if key in local_people or people_config[key] != original_people.get(key)], people_block
         )
         change_log = render_space_change_log(
             session.space_id, before_lines, lines

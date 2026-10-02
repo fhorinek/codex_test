@@ -316,3 +316,101 @@ zoom, or drag within the workload area to pan and move through the person rows.
 Drag a tag or person pill out of a timeline task and drop it on empty space to remove
 that assignment. Dropping on another task assigns it there and keeps the original;
 dropping back on the source task or cancelling the drag leaves it unchanged.
+
+## Spaces and tabs
+
+A space is a folder such as `01_project.space`. Its task scripts are tabs:
+
+```text
+01_project.space/
+  defs.txt
+  01_main.txt
+  02_release.txt
+  .03_backlog.txt
+```
+
+**Open** reopens a closed tab; **Add** creates a new one. Right-click a tab to open its context menu
+with Icon, Color, Close, Rename, Copy, Delete, and movement commands. Click outside
+or press Escape to dismiss it. Shift+F10 opens the same menu from the keyboard.
+Use the tab's × to close it, the folder icon to reopen a tab, and + to create one.
+You can also drag tabs to reorder them. When all tabs are closed, the workspace
+lists every tab with its icon and color; click a row to reopen it. Closing adds a leading dot to
+the filename; deletion removes its task file. Closing and ordering affect everyone
+in the space, while the active tab and view position are personal.
+
+Names accept ASCII letters, numbers, underscores, and hyphens. Spaces, extra dots,
+and accented characters are not allowed. Order numbers sort numerically and grow
+past `99` when needed. Closed tabs also reserve their names.
+
+`defs.txt` shares tag, person, and state definitions with all task tabs in its
+space. It can be closed as `.defs.txt` without disabling its definitions. Its name
+and position are fixed, and it cannot be deleted or copied through the interface.
+Task content belongs in task tabs, not in `defs.txt`.
+
+Local definitions override only properties they explicitly specify. An empty
+property resets that property instead of inheriting it. Definition dialogs let
+you choose **Shared across this space** or **This tab only**. Renaming a shared
+slug updates references in both open and closed tabs.
+
+Tab appearance is also stored in `defs.txt`:
+
+```text
+Definitions:
+    tags:
+        urgent:
+            background: #551188
+    tabs:
+        main:
+            icon: 🦄
+            color: #8b5cf6
+        release:
+            icon: ⭐
+            color: #f59e0b
+```
+
+Use the tab's Appearance menu to choose an emoji (including unicorn, star, dog,
+and cat) and a palette/custom color in the same dialog. No icon and Default clear these
+settings. Appearance keys omit filename numbers, extensions, and the close-dot.
+The picker sets one emoji. For any other text, edit `icon:` directly in `defs.txt`,
+for example `icon: Release candidate 🦄`.
+Renaming and copying tabs maintain these settings automatically.
+
+The server imports manual filename/content changes after they settle. If a file
+edit conflicts with live collaborative edits, both versions are preserved: the
+external version appears in a recovery tab and editors receive a notice. Invalid
+or duplicate filenames are reported rather than silently merged.
+
+On the first server startup with this version, legacy space files are converted
+automatically. Definitions are extracted into `defs.txt`, tasks remain in
+`01_main.txt`, and existing history and access rules are retained. Backups live
+under `backend/space-migration-backup/`. A restart resumes an interrupted migration.
+Do not remove the backup until you have verified the converted spaces.
+
+`backend/space-index.json` preserves space/document identities independently of
+filenames. Include it, the space folders, `ystore`, and `history` in backups. The
+transaction journal is automatically replayed after interrupted filesystem writes.
+
+Task references show an original task from another tab in the same space:
+
+```text
+%% main::Task name
+%%% main::Task name
+```
+
+Use the tab name without its number or extension and the task's exact, unique
+title. `%%` includes the task's children; `%%%` shows only the original task.
+Both appear in graph, kanban, and
+(for dated tasks) timeline. Editing a reference's title, body, tokens, checkboxes,
+or dates changes the original. Closed source tabs remain available. Missing,
+ambiguous, or circular references show a diagnostic above the editor.
+
+Type `%% ` or `%%% ` for task suggestions. To place a task in another tab, drag it over
+that tab for one second, then drop onto graph, kanban, timeline, or the editor.
+The drop menu offers **Move task here**, **Reference this task only**, and
+**Reference task and subtasks**. Move transfers the task and its children;
+either reference option leaves the original in place. Deleting a reference
+removes only its local entry. Dropping on a
+kanban column sets the original state; dropping on the timeline sets its dates.
+Escape or dropping outside those panels cancels. Tab renames and GUI task title
+changes update matching references; manual title changes require updating their
+reference text. Moves are checked against both documents and recorded in history.

@@ -2,7 +2,7 @@
  * Module: Task description rendering and decoration helpers for markdown and tokens.
  */
 
-type BackgroundTask = { tags: string[]; parent?: BackgroundTask | null };
+type BackgroundTask = { tags: string[]; parent?: BackgroundTask | null; originMeta?: { tagMeta: Map<string, { background?: string }> }; originBackground?: string };
 
 const foregroundCache = new Map<string, string>();
 let colorCanvas: CanvasRenderingContext2D | null = null;
@@ -45,11 +45,12 @@ export function applyTaskBackground(element: HTMLElement, task: BackgroundTask, 
 
 /** The nearest configured background wins, fading by twenty percentage points per level. */
 export function taskBackground(task: BackgroundTask | string[], tagMeta?: Map<string, { background?: string }>): string {
+  if (!Array.isArray(task) && task.originBackground) return task.originBackground;
   let current: BackgroundTask | null | undefined = Array.isArray(task) ? { tags: task } : task;
   let depth = 0;
   while (current) {
     for (const tag of current.tags) {
-      const background = tagMeta?.get(tag)?.background;
+      const background = (current.originMeta?.tagMeta || tagMeta)?.get(tag)?.background;
       if (background) return depth === 0 ? background
         : `color-mix(in srgb, ${background} ${Math.max(0, 100 - depth * 20)}%, transparent)`;
     }

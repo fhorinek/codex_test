@@ -15,14 +15,6 @@
       "must_change_password": false,
       "password_salt": "499f75f1fd16fee0",
       "password_hash": "98e0829a271b0087d1cab8b7fd51c146"
-    },
-    "huszarova": {
-      "display_name": "Patrícia Huszarová",
-      "role": "manager",
-      "spaces": [],
-      "must_change_password": false,
-      "password_salt": "b904129c3d2c6a86",
-      "password_hash": "817842d663e9d7c2d6f3c6daf9b7eaec"
     }
   }
 }

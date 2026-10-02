@@ -7,7 +7,7 @@
 import type { AppDom } from "./appDom.js";
 
 // Stores the SLUG_RENAME_SWATCH_COLORS module constant.
-const SLUG_RENAME_SWATCH_COLORS = [
+export const SLUG_RENAME_SWATCH_COLORS = [
   "#e85d75",
   "#f28a2e",
   "#d6b100",

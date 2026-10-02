@@ -1,3 +1,4 @@
+import { taskSource, taskSourceLine } from './taskReferences.js';
 import { buildDailyWorkload, workloadBoxSize } from "./timelineWorkload.js";
 import { layoutTimeline, timelineSeparatorWidth } from "./timelineLayout.js";
 import { decorateDescriptionPills, createTaskStatePill, applyTaskBackground } from "./taskDescription.js";
@@ -21,6 +22,7 @@ type Gesture = {
 };
 const RULER_HEIGHT = 72;
 
+function datesForTask(source: string | string[], task: Task) { return findTaskDates(taskSource(task, source), taskSourceLine(task)); }
 export function createTimeline(options: Options) {
   const { host, state, getSource } = options;
   const viewport = document.createElement('div');
@@ -69,8 +71,9 @@ export function createTimeline(options: Options) {
     (state.tasks || []).forEach(visit); return result;
   }
   function makeBar(task: Task, dates: TaskDates): HTMLElement {
+    const taskMetadata = (task as any).originMeta || state;
     const bar = node('div', 'timeline-bar');
-    applyTaskBackground(bar, task, state.tagMeta);
+    applyTaskBackground(bar, task, taskMetadata.tagMeta);
     bar.dataset['taskId'] = task.id; bar.dataset['kind'] = 'move'; bar.tabIndex = 0;
     bar.setAttribute('role', 'button'); bar.setAttribute('aria-label', `${task.name}, ${formatDates(dates)}. Enter to edit.`);
     if (state.selectedTaskId === task.id) bar.classList.add('selected');
@@ -113,7 +116,7 @@ export function createTimeline(options: Options) {
       });
     };
     if (task.state) {
-      const meta = state.stateMeta?.get(task.state);
+      const meta = taskMetadata.stateMeta?.get(task.state);
       if (meta?.color) bar.style.borderColor = meta.color;
       const pill = createTaskStatePill(task.state, meta);
       wirePill(pill, 'state', task.state); metadata.append(pill);
@@ -125,7 +128,7 @@ export function createTimeline(options: Options) {
       }
     }
     decorateDescriptionPills(metadata, {
-      tagMeta: state.tagMeta, peopleMeta: state.peopleMeta,
+      tagMeta: taskMetadata.tagMeta, peopleMeta: taskMetadata.peopleMeta,
       selectedTags: state.selectedTags, selectedPeople: state.selectedPeople,
       onPill: ({ pill, type, value }) => wirePill(pill, type, value),
     });
@@ -142,7 +145,7 @@ export function createTimeline(options: Options) {
   function renderWorkload(visible: Task[], sourceLines: string[], todayX: number, yearBoundaries: number[], monthBoundaries: number[]) {
     const data = buildDailyWorkload(visible.map(task => ({
       people: task.people,
-      dates: gesture?.task?.id === task.id && gesture.preview ? gesture.preview : findTaskDates(sourceLines, task.lineIndex)!,
+      dates: gesture?.task?.id === task.id && gesture.preview ? gesture.preview : datesForTask(sourceLines, task)!,
     })), Math.floor(origin), Math.ceil(origin + availableWidth() / scale) - 1);
     const scrollTop = workload.scrollTop;
     workload.replaceChildren();
@@ -260,9 +263,9 @@ export function createTimeline(options: Options) {
         line.style.left = `${x}px`; line.setAttribute('aria-hidden', 'true'); container.append(line);
       }
     }
-    const visible = tasks().filter(task => findTaskDates(sourceLines, task.lineIndex));
+    const visible = tasks().filter(task => datesForTask(sourceLines, task));
     const bands = layoutTimeline<Task>(state.tasks || [], task => {
-      const dates = findTaskDates(sourceLines, task.lineIndex);
+      const dates = datesForTask(sourceLines, task);
       if (!dates) return null;
       const start = dates.start === null ? (dates.end! + 1) * scale - 130 : dates.start * scale;
       const end = dates.end === null ? start + 130 : (dates.end + 1) * scale;
@@ -275,7 +278,7 @@ export function createTimeline(options: Options) {
       const ancestors: Task[] = [];
       let ancestor = band.tasks[0]!.task.parent;
       while (ancestor) {
-        if (!findTaskDates(sourceLines, ancestor.lineIndex)) ancestors.unshift(ancestor);
+        if (!datesForTask(sourceLines, ancestor)) ancestors.unshift(ancestor);
         ancestor = ancestor.parent;
       }
       let shared = 0;
@@ -303,7 +306,7 @@ export function createTimeline(options: Options) {
       const track = node('div', 'timeline-track');
       let firstVisible: { left: number; right: number } | null = null;
       for (const { task, lane } of band.tasks) {
-        const dates = gesture?.task?.id === task.id && gesture.preview ? gesture.preview : findTaskDates(sourceLines, task.lineIndex);
+        const dates = gesture?.task?.id === task.id && gesture.preview ? gesture.preview : datesForTask(sourceLines, task);
         if (dates) {
           const bar = makeBar(task, dates);
           bar.style.top = `${lane * rowHeight + 7}px`;
@@ -405,7 +408,7 @@ export function createTimeline(options: Options) {
     const taskNode = target.closest<HTMLElement>('[data-task-id]');
     const task = taskNode ? tasks().find(t => t.id === taskNode.dataset['taskId']) || null : null;
 
-    const source = getSource(), dates = task ? findTaskDates(source, task.lineIndex) : null;
+    const source = task ? taskSource(task, getSource()) as string : getSource(), dates = task ? datesForTask(source, task) : null;
     const kind = task ? (target.closest<HTMLElement>('[data-kind]')?.dataset['kind'] || 'move') as Gesture['kind'] : 'pan';
     gesture = { task, kind, source, dates, preview: null, x: event.clientX, y: event.clientY,
       lastX: event.clientX, lastY: event.clientY, origin, scroll: viewport.scrollTop,
@@ -415,7 +418,7 @@ export function createTimeline(options: Options) {
   viewport.addEventListener('pointermove', (event) => {
     const g = gesture;
     if (!g || g.pointer !== event.pointerId) return;
-    if (getSource() !== g.source) { cancel(); return; }
+    if ((g.task ? taskSource(tasks().find(task => task.id === g.task!.id), getSource()) : getSource()) !== g.source) { cancel(); return; }
     if (g.task && !options.canEdit()) return;
     g.lastX = event.clientX; g.lastY = event.clientY;
     if (!g.moved && Math.hypot(g.lastX - g.x, g.lastY - g.y) < 5) return;
@@ -440,7 +443,7 @@ export function createTimeline(options: Options) {
       return;
     }
     if (g.moved) suppressClickUntil = Date.now() + 300;
-    const valid = getSource() === g.source && options.canEdit();
+    const valid = (g.task ? taskSource(tasks().find(task => task.id === g.task!.id), getSource()) : getSource()) === g.source && options.canEdit();
     const trash = g.task && g.moved && isOverTrash(event.clientX, event.clientY);
     const commit = g.task && g.moved && g.preview && isInTaskRow(g, event.clientX, event.clientY);
     const column = g.task && ['move', 'schedule'].includes(g.kind)
@@ -550,7 +553,7 @@ export function createTimeline(options: Options) {
     } catch { /* Plain-text task ID fallback. */ }
     if (!isInTimeline(event.clientX, event.clientY)) return;
     const task = tasks().find(t => t.id === id); if (!task) return;
-    const source = getSource(), dates = findTaskDates(source, task.lineIndex), day = Math.floor(dayAt(event.clientX));
+    const source = taskSource(task, getSource()) as string, dates = datesForTask(source, task), day = Math.floor(dayAt(event.clientX));
     options.onDates(task, dates ? moveDates(dates, day - (dates.start ?? dates.end!)) : { start: day, end: null }, source);
     window.dispatchEvent(new CustomEvent('taskdragend'));
   });
@@ -572,7 +575,7 @@ export function createTimeline(options: Options) {
     if (!active || !options.canEdit() || !isInTimeline(clientX, clientY)) return;
     if (externalDragSource !== null && externalDragSource !== getSource()) return;
     const task = tasks().find(item => item.id === taskId); if (!task) return;
-    const source = getSource(), dates = findTaskDates(source, task.lineIndex), day = Math.floor(dayAt(clientX));
+    const source = taskSource(task, getSource()) as string, dates = datesForTask(source, task), day = Math.floor(dayAt(clientX));
     options.onDates(task, dates ? moveDates(dates, day - (dates.start ?? dates.end!)) : { start: day, end: null }, source);
   });
   window.addEventListener('taskdragstart', () => { if (!gesture) externalDragSource = getSource(); });
@@ -593,6 +596,13 @@ export function createTimeline(options: Options) {
     host.querySelectorAll<HTMLElement>('.timeline-today-line').forEach(element => { element.style.left = left; });
   }, 60000);
   const controller = {
+    dayAtPoint(clientX: number) { return Math.floor(dayAt(clientX)); },
+    getView() { return { origin, scale, rowHeight, scrollTop: viewport.scrollTop }; },
+    setView(value: { origin: number; scale: number; rowHeight: number; scrollTop: number }) {
+      if (![value.origin, value.scale, value.rowHeight, value.scrollTop].every(Number.isFinite)) return;
+      cancel(); origin = value.origin; scale = Math.max(2, Math.min(100, value.scale)); rowHeight = Math.max(36, Math.min(180, value.rowHeight));
+      initialized = true; paint(); viewport.scrollTop = Math.max(0, value.scrollTop);
+    },
     setActive(value: boolean) { cancel(); active = value; host.hidden = !value; if (value) paint(); },
     focusOnTask(task: Task, onlyIfClipped = false) {
       if (!active || gesture?.kind === 'start' || gesture?.kind === 'end') return;
@@ -601,7 +611,7 @@ export function createTimeline(options: Options) {
       if (onlyIfClipped) {
         const bounds = bar.getBoundingClientRect(), view = viewport.getBoundingClientRect();
         if (bounds.left >= view.left && bounds.right <= view.left + viewport.clientWidth
-          && bounds.top >= view.top + RULER_HEIGHT && bounds.bottom <= view.top + viewport.clientHeight) return;
+          && bounds.top >= view.top + RULER_HEIGHT && bounds.bottom <= view.top + viewport.clientHeight) { cancelAnimationFrame(focusFrame); focusFrame = 0; return; }
       }
       cancelAnimationFrame(focusFrame); focusFrame = 0;
       const visibleHeight = viewport.clientHeight - RULER_HEIGHT;

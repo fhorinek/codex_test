@@ -1,6 +1,7 @@
 # Module: HTTP and websocket backend server with auth, spaces, history, and collaboration APIs.
 
 import asyncio
+from functools import wraps
 import base64
 import json
 import hashlib
@@ -8,6 +9,8 @@ import logging
 import os
 import re
 import secrets
+import shutil
+from space_tabs import TabStore, digest
 import tempfile
 import threading
 import time
@@ -30,6 +33,7 @@ from ypy_websocket.yutils import YMessageType
 import uvicorn
 from uvicorn.protocols.utils import ClientDisconnected
 from websockets.exceptions import ConnectionClosedOK
+from jira import config as jira_storage_config
 from jira.client import JiraClient, build_issue_type_hierarchy_levels
 from jira.config import (
     JIRA_DAEMON_USERNAME,
@@ -54,6 +58,20 @@ FRONTEND_STATIC_DIR = FRONTEND_DIST_DIR if FRONTEND_DIST_DIR.exists() else FRONT
 # Stores the SPACES_DIR module constant.
 SPACES_DIR = Path(__file__).resolve().parent / "spaces"
 SPACES_DIR.mkdir(parents=True, exist_ok=True)
+_tab_store = None
+
+def tab_store():
+    global _tab_store
+    if _tab_store is not None and _tab_store.root != SPACES_DIR:
+        _tab_store = None
+    if _tab_store is None and (SPACES_DIR.parent / "space-index.json").exists():
+        _tab_store = TabStore(SPACES_DIR)
+    return _tab_store
+
+def tab_document(ref, hint=None):
+    store = tab_store()
+    return store.document(hint or ref) if store else None
+
 # Stores the YSTORE_DIR module constant.
 YSTORE_DIR = Path(__file__).resolve().parent / "ystore"
 YSTORE_DIR.mkdir(parents=True, exist_ok=True)
@@ -616,6 +634,10 @@ def get_session_last_space(token: Optional[str], auth: AuthUser) -> str:
             data["sessions"] = sessions
             _save_sessions_data(data)
             return ""
+        store = tab_store()
+        space = store.space(normalized_candidate) if store else None
+        if space and can_access_space(auth, space["name"], space_path_hint=space["access"]):
+            return space["access"]
         safe_id = normalized_candidate.split("/")[-1]
         if (
             not space_path(safe_id, space_path_hint=normalized_candidate).exists()
@@ -635,6 +657,10 @@ def get_session_last_space(token: Optional[str], auth: AuthUser) -> str:
 # Input: token: Optional[str], space_id: str.
 # Output: None.
 def set_session_last_space(token: Optional[str], space_path_value: str) -> None:
+    store = tab_store()
+    space = store.space(space_path_value) if store else None
+    if space:
+        space_path_value = space["access"]
     if not token:
         return
     normalized = normalize_folder_name(space_path_value)
@@ -728,6 +754,12 @@ def _normalize_users_store(raw_users: Any) -> Tuple[Dict[str, Dict[str, Any]], b
 # Input: username: str.
 # Output: None.
 def ensure_personal_space(username: str) -> None:
+    store = tab_store()
+    if store:
+        access = f"personal/{username}"
+        if not store.space(access):
+            store.create_space(access)
+        return
     ensure_personal_folder()
     target = personal_space_path(username)
     # Migrate only a root-level legacy personal file; do not touch same-name spaces in folders.
@@ -846,7 +878,7 @@ def list_space_folder_names() -> List[str]:
     folders: Set[str] = set()
     ensure_personal_folder()
     for entry in SPACES_DIR.rglob("*"):
-        if not entry.is_dir():
+        if not entry.is_dir() or any(p.name.endswith(".space") for p in [entry, *entry.parents]):
             continue
         try:
             relative = entry.relative_to(SPACES_DIR).as_posix()
@@ -864,7 +896,7 @@ def list_space_folder_names() -> List[str]:
 def iter_space_files() -> List[Path]:
     files: List[Path] = []
     for path in SPACES_DIR.rglob("*.txt"):
-        if path.is_file():
+        if path.is_file() and not any(p.name.endswith(".space") for p in path.parents):
             files.append(path)
     return files
 
@@ -903,6 +935,12 @@ def canonical_space_path_for_file(path: Path, users: Optional[Dict[str, Dict[str
 # Input: users: Optional[Dict[str, Dict[str, Any]]] = None.
 # Output: List[Dict[str, Any]].
 def list_space_entries(users: Optional[Dict[str, Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    store = tab_store()
+    if store:
+        return [{"id": item["name"], "path": item["access"], "folder": "/".join(item["access"].split("/")[:-1]),
+                 "personal": item["access"].startswith("personal/"), "file": store.path(store.document(item["id"])),
+                 "space_id": item["id"], "directory": item["path"]}
+                for item in sorted(store.data["spaces"].values(), key=lambda x: x["path"]) if not item.get("deleted")]
     users = users or load_users_store()
     entries: List[Dict[str, Any]] = []
     for path in iter_space_files():
@@ -981,6 +1019,9 @@ def resolve_space_file(
     users: Optional[Dict[str, Dict[str, Any]]] = None,
     space_path_hint: Optional[str] = None,
 ) -> Optional[Path]:
+    document = tab_document(space_id, space_path_hint)
+    if document and not document.get("deleted"):
+        return tab_store().path(document)
     safe_id = sanitize_space(space_id)
     users = users or load_users_store()
     normalized_hint = normalize_folder_name(space_path_hint)
@@ -999,6 +1040,10 @@ def folder_for_space(
     users: Dict[str, Dict[str, Any]],
     space_path_hint: Optional[str] = None,
 ) -> str:
+    store = tab_store()
+    space = store.space(space_path_hint or space_id) if store else None
+    if space:
+        return "/".join(space["access"].split("/")[:-1])
     if space_id in users:
         return PERSONAL_FOLDER_NAME
     path = resolve_space_file(space_id, users=users, space_path_hint=space_path_hint)
@@ -1209,6 +1254,11 @@ def can_access_space(
     users: Optional[Dict[str, Dict[str, Any]]] = None,
     space_path_hint: Optional[str] = None,
 ) -> bool:
+    store = tab_store()
+    item = store.space(space_path_hint or space_id) if store else None
+    if item:
+        space_path_hint = item["access"]
+        space_id = item["name"]
     users = users or load_users_store()
     if is_personal_space(space_id, users, space_path_hint=space_path_hint):
         if auth.role == "admin":
@@ -1475,6 +1525,9 @@ def storage_path_for_space(
     users: Optional[Dict[str, Dict[str, Any]]] = None,
     space_path_hint: Optional[str] = None,
 ) -> str:
+    document = tab_document(space_id, space_path_hint)
+    if document:
+        return document["id"]
     safe = sanitize_space(space_id)
     users = users or load_users_store()
     normalized_hint = normalize_folder_name(space_path_hint)
@@ -1778,6 +1831,12 @@ def create_history_checkpoint(
     checkpoint_path = history_checkpoint_path(space_key, checkpoint_id)
     with HISTORY_LOCK:
         _atomic_write_text(checkpoint_path, text)
+        document = tab_document(space_key)
+        if document:
+            store = tab_store()
+            space = store.space(space_key)
+            definitions = store.read(store.defs(space))
+            _atomic_write_text(checkpoint_path.with_suffix(".defs"), definitions)
         checkpoints = load_history_index(space_key)
         checkpoints.append(metadata)
         save_history_index(space_key, checkpoints)
@@ -1823,6 +1882,11 @@ def maybe_create_auto_history_checkpoint(
 # Input: space_id: str, content: str, *, space_path_hint: Optional[str] = None.
 # Output: None.
 def write_space_text_and_maybe_checkpoint(space_id: str, content: str, *, space_path_hint: Optional[str] = None) -> None:
+    document = tab_document(space_id, space_path_hint)
+    if document:
+        tab_store().write(document, content)
+        maybe_create_auto_history_checkpoint(document["id"], content)
+        return
     text = content if isinstance(content, str) else str(content or "")
     _atomic_write_text(space_path(space_id, space_path_hint=space_path_hint), text)
     maybe_create_auto_history_checkpoint(history_key_for_space(space_id, space_path_hint=space_path_hint), text)
@@ -1832,6 +1896,9 @@ def write_space_text_and_maybe_checkpoint(space_id: str, content: str, *, space_
 # Input: space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None.
 # Output: str.
 def room_name(space_id: str, *, users: Optional[Dict[str, Dict[str, Any]]] = None, space_path_hint: Optional[str] = None) -> str:
+    document = tab_document(space_id, space_path_hint)
+    if document:
+        return f"/ws/{document['id']}"
     safe_id = sanitize_space(space_id)
     normalized_hint = normalize_folder_name(space_path_hint)
     if normalized_hint and normalized_hint.split("/")[-1] == safe_id:
@@ -2187,6 +2254,18 @@ async def hydrate_room_from_storage(space_id: str, room, *, space_path_hint: Opt
                     await room.ystore.encode_state_as_update(room.ydoc)
                 except Exception:
                     logger.exception("Failed to seed ystore for %s from snapshot", space_id)
+    document = tab_document(space_id, space_path_hint)
+    if document and loaded_from_ystore:
+        store = tab_store()
+        disk = store.read(document)
+        live = ydoc_to_text(room.ydoc)
+        if document.get("pending_snapshot") == digest(disk) or (digest(disk) != document.get("disk_hash") and digest(live) == document.get("disk_hash")):
+            replace_ydoc_text(room.ydoc, disk)
+            await room.ystore.encode_state_as_update(room.ydoc)
+            store.write(document, disk)
+    if document:
+        document.pop("pending_snapshot", None)
+        tab_store().save()
     room.ready = True
     schedule_space_snapshot(space_id, room, space_path_hint=space_path_hint)
 
@@ -2616,6 +2695,214 @@ def delete_user(username: str, user: AuthUser = Depends(require_auth)) -> Dict[s
 # Handles the list_spaces function logic.
 # Input: user: AuthUser = Depends(require_auth).
 # Output: Dict[str, Any].
+def read_tab_live(doc):
+    room = websocket_server.rooms.get(f"/ws/{doc['id']}")
+    if room:
+        return ydoc_to_text(room.ydoc)
+    store = tab_store()
+    return store.read(doc) if store.path(doc).exists() else ""
+
+
+async def publish_tab_changes():
+    await publish_system_shared_values({"tabs_revision": time.time_ns()})
+
+
+def authorized_tab_space(ref, user):
+    store = tab_store()
+    space = store.space(ref) if store else None
+    if not space:
+        raise HTTPException(404, "Space not found.")
+    ensure_space_access(user, space["name"], space_path_hint=space["access"])
+    return store, space
+
+
+@app.get("/api/tab-spaces")
+async def get_tab_space(ref: str, user: AuthUser = Depends(require_auth)):
+    store, space = authorized_tab_space(ref, user)
+    return store.listing(space, read_tab_live)
+
+
+@app.get("/api/tab-spaces/{space_id}/contents")
+async def tab_contents(space_id: str, user: AuthUser = Depends(require_auth)):
+    store, space = authorized_tab_space(space_id, user)
+    return {"documents": [{"id": d["id"], "kind": d["kind"], "text": read_tab_live(d)} for d in store.docs(space)]}
+
+
+_tab_operation_locks = {}
+
+
+def serialize_tab_operation(function):
+    @wraps(function)
+    async def serialized(space_id: str, *args, **kwargs):
+        lock = _tab_operation_locks.setdefault(space_id, asyncio.Lock())
+        async with lock:
+            return await function(space_id, *args, **kwargs)
+    return serialized
+
+
+@app.post("/api/tab-spaces/{space_id}/definitions")
+@app.post("/api/tab-spaces/{space_id}/documents")
+@serialize_tab_operation
+async def change_shared_definitions(space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth)):
+    store, space = authorized_tab_space(space_id, user)
+    if any(not store.path(doc).exists() or digest(store.read(doc)) != doc.get("disk_hash") for doc in store.docs(space)):
+        raise HTTPException(409, "Files changed on disk. Wait for synchronization and retry.")
+    changes = payload.get("changes")
+    if not isinstance(changes, list): raise HTTPException(400, "Invalid changes.")
+    with store.lock:
+        writes, changed = {}, []
+        for change in changes:
+            doc = store.data["documents"].get(change.get("id"))
+            if not doc or doc["space_id"] != space["id"] or doc.get("deleted"): raise HTTPException(404, "Tab not found.")
+            if read_tab_live(doc) != change.get("expected"): raise HTTPException(409, "A tab changed while editing. Retry your change.")
+            if not isinstance(change.get("text"), str): raise HTTPException(400, "Invalid document text.")
+            writes[str(store.path(doc).relative_to(store.root))] = change["text"]
+            changed.append(doc)
+        for doc in changed:
+            create_history_checkpoint(doc["id"], read_tab_live(doc), kind="manual", label="Before tab document change")
+        store.transaction(writes)
+        for doc in changed:
+            room = websocket_server.rooms.get(f"/ws/{doc['id']}")
+            text = store.read(store.document(doc['id']))
+            if room:
+                replace_ydoc_text(room.ydoc, text)
+                await room.ystore.encode_state_as_update(room.ydoc)
+                store.document(doc["id"]).pop("pending_snapshot", None)
+            create_history_checkpoint(doc["id"], text, kind="manual", label="Tab document change")
+    store.save()
+    await publish_tab_changes()
+    return {"ok": True}
+
+
+@app.post("/api/tab-spaces/{space_id}/flush")
+@serialize_tab_operation
+async def flush_tab(space_id: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth)):
+    store, space = authorized_tab_space(space_id, user)
+    doc = store.data["documents"].get(payload.get("id"))
+    if not doc or doc["space_id"] != space["id"] or doc.get("deleted"):
+        raise HTTPException(404, "Tab not found.")
+    update = payload.get("update")
+    if not isinstance(update, list) or len(update) > 20_000_000 or any(type(b) is not int or not 0 <= b <= 255 for b in update):
+        raise HTTPException(400, "Invalid collaboration update.")
+    room = await websocket_server.get_room(f"/ws/{doc['id']}")
+    try:
+        Y.apply_update(room.ydoc, bytes(update))
+    except Exception:
+        raise HTTPException(400, "Invalid collaboration update.")
+    write_space_text_and_maybe_checkpoint(doc["id"], ydoc_to_text(room.ydoc))
+    return {"ok": True}
+
+
+@app.post("/api/tab-spaces/{space_id}/tabs/{action}")
+@serialize_tab_operation
+async def change_tab(space_id: str, action: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth)):
+    store, space = authorized_tab_space(space_id, user)
+    if any(not store.path(doc).exists() or digest(store.read(doc)) != doc.get("disk_hash") for doc in store.docs(space)):
+        raise HTTPException(409, "Files changed on disk. Wait for synchronization and retry.")
+    try:
+        created = store.mutate(space, action, payload, read_tab_live)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    # Stable rooms stay attached across filename changes; definitions updates use
+    # the same Y document as direct editor changes.
+    for doc in store.docs(store.space(space_id)):
+        room = websocket_server.rooms.get(f"/ws/{doc['id']}")
+        if room:
+            text = store.read(doc)
+            if text != ydoc_to_text(room.ydoc):
+                replace_ydoc_text(room.ydoc, text)
+            if doc.get("pending_snapshot"):
+                await room.ystore.encode_state_as_update(room.ydoc)
+                doc.pop("pending_snapshot", None)
+    store.save()
+    if action == "delete":
+        await disconnect_space_clients(payload.get("id", ""))
+    await publish_tab_changes()
+    return {**store.listing(store.space(space_id), read_tab_live), "created": created["id"] if created else None}
+
+
+async def reconcile_tabs_loop():
+    previous_files = None
+    previous_notices = []
+    while True:
+        await asyncio.sleep(1)
+        store = tab_store()
+        if not store:
+            continue
+        try:
+            files = tuple(sorted((str(p), p.stat().st_mtime_ns, p.stat().st_size) for p in store.root.rglob("*.txt") if p.is_file() and not p.is_symlink()))
+            if files != previous_files:
+                previous_files = files
+                continue
+            changed, notices = store.reconcile(lambda doc: read_tab_live(doc) if store.path(doc).exists() or f"/ws/{doc['id']}" in websocket_server.rooms else None)
+            for ident in changed:
+                doc = store.data["documents"][ident]
+                room = websocket_server.rooms.get(f"/ws/{ident}")
+                if room and not doc.get("deleted"):
+                    text = store.read(doc)
+                    if text != ydoc_to_text(room.ydoc):
+                        replace_ydoc_text(room.ydoc, text)
+                elif doc.get("deleted"):
+                    await disconnect_space_clients(ident)
+                elif (YSTORE_DIR / f"{ident}.ystore").exists():
+                    text = store.read(doc)
+                    room = await websocket_server.get_room(f"/ws/{ident}")
+                    replace_ydoc_text(room.ydoc, text)
+                    await room.ystore.encode_state_as_update(room.ydoc)
+            if changed or notices != previous_notices:
+                previous_notices = notices
+                await publish_system_shared_values({"tabs_revision": time.time_ns(), "tabs_notices": notices})
+        except Exception:
+            logger.exception("Tab filesystem reconciliation failed")
+
+
+async def migrate_tab_spaces():
+    global _tab_store
+    backup = SPACES_DIR.parent / "space-migration-backup"
+    if not (SPACES_DIR.parent / "space-index.json").exists():
+        backup.mkdir(exist_ok=True)
+        for directory in [YSTORE_DIR, HISTORY_DIR]:
+            if directory.exists() and not (backup / directory.name).exists():
+                shutil.copytree(directory, backup / directory.name)
+        for file in [jira_storage_config.USERS_CONFIG_PATH, jira_storage_config.JIRA_CONFIG_PATH, SESSIONS_FILE]:
+            if file.exists() and not (backup / file.name).exists():
+                shutil.copy2(file, backup / file.name)
+    recovered = {}
+    for file in iter_space_files():
+        relative = file.relative_to(SPACES_DIR).as_posix()[:-4]
+        store_file = YSTORE_DIR / (relative + ".ystore")
+        if store_file.exists():
+            doc = Y.YDoc()
+            try:
+                await FileYStore(str(store_file)).apply_updates(doc)
+                recovered[relative] = ydoc_to_text(doc)
+            except Exception:
+                logger.exception("Cannot recover collaborative data for %s; refusing migration", relative)
+                raise
+    _tab_store = TabStore(SPACES_DIR)
+    _tab_store.migrate(lambda ref, text: recovered.get(ref, text))
+    for space in _tab_store.data["spaces"].values():
+        legacy = space.get("legacy_history")
+        if legacy:
+            old = HISTORY_DIR / legacy
+            new = HISTORY_DIR / space["main"]
+            if old.exists() and not new.exists():
+                shutil.copytree(old, new)
+            if not _tab_store.document(space["main"]).get("deleted"):
+                maybe_create_auto_history_checkpoint(space["main"], _tab_store.read(_tab_store.document(space["id"])))
+    for space in list(_tab_store.data["spaces"].values()):
+        if space.get("deleted"): continue
+        for doc in _tab_store.docs(space):
+            store_file = YSTORE_DIR / f"{doc['id']}.ystore"
+            if not store_file.exists() or not _tab_store.path(doc).exists(): continue
+            room = YRoom(ready=False, ystore=FileYStore(str(store_file)), log=websocket_server.log)
+            websocket_server.rooms[f"/ws/{doc['id']}"] = room
+            await hydrate_room_from_storage(doc["id"], room)
+            attach_snapshot_hook(doc["id"], room)
+            attach_awareness_hook(room)
+            write_space_text_and_maybe_checkpoint(doc["id"], ydoc_to_text(room.ydoc))
+
+
 @app.get("/api/spaces")
 def list_spaces(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
     visible_entries = filter_history_key_alias_space_entries(list_visible_space_entries(user))
@@ -2701,6 +2988,20 @@ def set_space_folder(
     payload: Dict[str, Any] = Body(default={}),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
+    store = tab_store()
+    space = store.space(space_path_value) if store else None
+    if space:
+        if not can_manage_spaces(user): raise HTTPException(403, "Not allowed.")
+        folder = payload.get("folder", payload.get("name", "")) or ""
+        if space["access"].startswith("personal/") or is_personal_folder_name(folder): raise HTTPException(400, "Personal spaces cannot be moved.")
+        folder = sanitize_folder_name(folder) if folder else ""
+        try:
+            old, new = store.relocate(space, folder=folder)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+        update_access_paths_for_space_change(old, new)
+        update_last_space_for_renamed_space(old, new)
+        return {"ok": True, "folder": folder, "path": new}
     if not can_manage_spaces(user):
         raise HTTPException(status_code=403, detail="Not allowed.")
     if not isinstance(payload, dict):
@@ -2802,6 +3103,14 @@ def read_space_history(
 # Handles the read_space_history_checkpoint function logic.
 # Input: space_id: str, checkpoint_id: str, path: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth),.
 # Output: Response.
+@app.get("/api/spaces/{space_path_value:path}/history/{checkpoint_id}/definitions")
+def read_history_definitions(space_path_value: str, checkpoint_id: str, user: AuthUser = Depends(require_auth)):
+    safe, hint = parse_space_api_path(space_path_value)
+    ensure_space_access(user, safe, space_path_hint=hint)
+    path = history_checkpoint_path(history_key_for_space(safe, space_path_hint=hint), checkpoint_id).with_suffix(".defs")
+    return Response(path.read_text(encoding="utf-8") if path.exists() else "", media_type="text/plain")
+
+
 @app.get("/api/spaces/{space_path_value:path}/history/{checkpoint_id}")
 def read_space_history_checkpoint(
     space_path_value: str,
@@ -3066,6 +3375,15 @@ def create_space(space_path_value: str, user: AuthUser = Depends(require_auth)) 
         folder = folder_path(folder_name)
         if not folder.exists() or not folder.is_dir():
             raise HTTPException(status_code=404, detail="Folder not found.")
+    store = tab_store()
+    if store:
+        if store.space(canonical_path):
+            raise HTTPException(409, "Space already exists.")
+        try:
+            item = store.create_space(canonical_path)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        return {"ok": True, "id": safe_id, "path": canonical_path, "space_id": item["id"]}
     target_path = canonical_space_file_path(canonical_path)
     if target_path.exists():
         raise HTTPException(status_code=409, detail="Space already exists.")
@@ -3082,6 +3400,23 @@ async def delete_space(
     space_path_value: str,
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
+    store = tab_store()
+    space = store.space(space_path_value) if store else None
+    if space:
+        if not can_manage_spaces(user): raise HTTPException(403, "Not allowed.")
+        if space["access"].startswith("personal/"): raise HTTPException(400, "Personal spaces cannot be deleted.")
+        for doc in store.docs(space):
+            await disconnect_space_clients(doc["id"])
+            task = space_save_tasks.pop(room_name(doc["id"]), None)
+            if task: task.cancel()
+            store.path(doc).unlink(missing_ok=True)
+            doc["deleted"] = True
+        store.safe_path(space["path"]).rmdir()
+        space["deleted"] = True
+        store.save()
+        clear_last_space_for_deleted_space(space["access"])
+        await publish_tab_changes()
+        return {"ok": True}
     if not can_manage_spaces(user):
         raise HTTPException(status_code=403, detail="Not allowed.")
     safe_id, request_path_hint = parse_space_api_path(space_path_value)
@@ -3126,6 +3461,18 @@ def rename_space(
     payload: Dict[str, Any] = Body(default={}),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
+    store = tab_store()
+    space = store.space(space_path_value) if store else None
+    if space:
+        if not can_manage_spaces(user): raise HTTPException(403, "Not allowed.")
+        if space["access"].startswith("personal/"): raise HTTPException(400, "Personal spaces cannot be renamed.")
+        try:
+            old, new = store.relocate(space, name=payload.get("name") or payload.get("id") or payload.get("space"))
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
+        update_access_paths_for_space_change(old, new)
+        update_last_space_for_renamed_space(old, new)
+        return {"ok": True, "id": new.split("/")[-1], "path": new}
     if not can_manage_spaces(user):
         raise HTTPException(status_code=403, detail="Not allowed.")
     source_id, source_path_hint = parse_space_api_path(space_path_value)
@@ -3435,6 +3782,9 @@ class PersistentWebsocketServer(WebsocketServer):
     # Input: self, name: str.
     # Output: value produced by this function.
     async def get_room(self, name: str):
+        ref = space_ref_from_ws_path(name)
+        if ref and tab_document(*ref):
+            name = room_name(ref[0], space_path_hint=ref[1])
         if is_system_shared_ws_path(name):
             if name not in self.rooms.keys():
                 room = YRoom(ready=self.rooms_ready, log=self.log)
@@ -3618,7 +3968,7 @@ app.mount("/", StaticFiles(directory=FRONTEND_STATIC_DIR, html=True), name="stat
 async def main() -> None:
     global system_shared_presence_task, system_shared_presence_refresh_task
     load_users_store()
-    await sync_snapshots_from_ystore_on_startup()
+    await migrate_tab_spaces()
     port_value = os.getenv("PORT", "5000").strip()
     try:
         port = int(port_value)
@@ -3646,7 +3996,12 @@ async def main() -> None:
             system_shared_presence_task = asyncio.create_task(
                 system_shared_presence_sync_loop()
             )
-            await server.serve()
+            tabs_task = asyncio.create_task(reconcile_tabs_loop())
+            try:
+                await server.serve()
+            finally:
+                tabs_task.cancel()
+                await asyncio.gather(tabs_task, return_exceptions=True)
     except BaseException as exc:
         if BASE_EXCEPTION_GROUP_TYPE is not None and isinstance(exc, BASE_EXCEPTION_GROUP_TYPE):
             _benign, remainder = exc.split(_is_benign_shutdown_error)

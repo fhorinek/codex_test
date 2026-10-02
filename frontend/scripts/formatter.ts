@@ -91,7 +91,7 @@ export function prependTokenToLine(line: string, token: string): string {
  * Output: string[].
  */
 function compactBlankLines(lines: string[]): string[] {
-  const firstTaskIndex = lines.findIndex((line) => /^\s*%\s+/.test(line));
+  const firstTaskIndex = lines.findIndex((line) => /^\s*%(?:%{1,2}|\.)?\s+/.test(line));
   const compact: string[] = [];
   let blankCount = 0;
   for (let i = 0; i < lines.length; i += 1) {
@@ -119,7 +119,7 @@ function compactBlankLines(lines: string[]): string[] {
  * Output: string[].
  */
 function ensureConfigTaskSeparator(lines: string[]): string[] {
-  const firstTaskIndex = lines.findIndex((line) => /^\s*%\s+/.test(line));
+  const firstTaskIndex = lines.findIndex((line) => /^\s*%(?:%{1,2}|\.)?\s+/.test(line));
   if (firstTaskIndex <= 0) {
     return lines;
   }

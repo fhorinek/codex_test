@@ -36,3 +36,7 @@ frontend/coverage/
 frontend/.nyc_output/
 backend/history/**
 frontend/.build-cache/**
+
+backend/space-index.json
+backend/space-tabs-journal.json
+backend/space-migration-backup/

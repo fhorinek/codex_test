@@ -1207,10 +1207,11 @@ export function createCanvas({
   };
 
   const renderTaskNodeContent = (node: any, task: any): void => {
+    const metadata = task.originMeta || state;
     const wasDragging = node.classList.contains("dragging");
     node.className = "task-node";
-    applyTaskBackground(node, task, state.tagMeta);
-    node.style.borderColor = state.stateMeta?.get(task.state)?.color || "";
+    applyTaskBackground(node, task, metadata.tagMeta);
+    node.style.borderColor = metadata.stateMeta?.get(task.state)?.color || "";
     if (wasDragging) {
       node.classList.add("dragging");
     }
@@ -1273,7 +1274,7 @@ export function createCanvas({
         : `★ ${formatStoryPointsNumber(ownStoryPoints)}`)
       : (subtaskStoryPoints > 0 ? `★ +${formatStoryPointsNumber(subtaskStoryPoints)}` : "");
     if (task.state) {
-      const statePill = createTaskStatePill(task.state, state.stateMeta?.get(task.state));
+      const statePill = createTaskStatePill(task.state, metadata.stateMeta?.get(task.state));
       statePill.draggable = !isResponsiveDragDisabled();
       statePill.addEventListener("dragstart", (event: any) => {
         if (isResponsiveDragDisabled()) {
@@ -1365,8 +1366,8 @@ export function createCanvas({
         },
       });
       decorateDescriptionPills(desc, {
-        tagMeta: state.tagMeta,
-        peopleMeta: state.peopleMeta,
+        tagMeta: metadata.tagMeta,
+        peopleMeta: metadata.peopleMeta,
         selectedTags: state.selectedTags,
         selectedPeople: state.selectedPeople,
         /**
