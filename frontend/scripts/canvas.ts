@@ -7,6 +7,7 @@
 import { colorFromString } from "./task.js";
 import {
   createTaskStatePill,
+  createTaskOriginIcon,
   applyTaskBackground,
   decorateDescriptionPills,
   decorateDescriptionReferences,
@@ -1248,6 +1249,8 @@ export function createCanvas({
 
     const title = document.createElement("h4");
     const displayTitle = task.name || "Untitled task";
+    const originIcon = createTaskOriginIcon(task);
+    if (originIcon) title.append(originIcon);
     title.append(displayTitle);
     const referenceIndicator = createReferenceIndicator(task);
     if (referenceIndicator) {
@@ -1739,6 +1742,10 @@ export function createCanvas({
     const pill = document.createElement("button");
     pill.type = "button";
     pill.className = `pill ${active ? "active" : ""}`;
+    if (text.startsWith('#') || text.startsWith('@') || text.startsWith('!')) {
+      pill.dataset['type'] = text.startsWith('#') ? 'tag' : text.startsWith('@') ? 'person' : 'state';
+      pill.dataset['value'] = text;
+    }
     let label = meta?.name || text;
     if (text.startsWith("#")) {
       const tagLabel = meta?.name || text.replace("#", "");

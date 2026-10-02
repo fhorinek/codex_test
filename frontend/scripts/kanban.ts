@@ -8,6 +8,7 @@ import { splitIndent, normalizeContent, prependTokenToLine } from "./formatter.j
 import { parseJiraTitle } from "./task.js";
 import {
   buildTaskDescriptionText,
+  createTaskOriginIcon,
   applyTaskBackground,
   decorateDescriptionPills,
   decorateDescriptionReferences,
@@ -801,6 +802,8 @@ function renderKanbanCardContent({
   titleNode.className = "kanban-card-title";
   const displayTitle = task.name || "Untitled task";
   const jiraKey = task.jiraKey || parseJiraTitle(task.name || "").key;
+  const originIcon = createTaskOriginIcon(task);
+  if (originIcon) titleNode.append(originIcon);
   titleNode.append(displayTitle);
   const referenceIndicator = createReferenceIndicator(task, { selectTask, getTaskById });
   if (referenceIndicator) {

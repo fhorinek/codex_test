@@ -49,6 +49,20 @@ def validate_name(name):
     return name
 
 
+def plain_definitions(source):
+    if not re.search(r'^Definitions:\s*$', source, re.MULTILINE):
+        return source
+    return '\n'.join(line[4:] if line.startswith('    ') else line
+                     for line in source.split('\n') if not re.fullmatch(r'Definitions:\s*', line))
+
+
+def definitions_config_source(source):
+    config = re.split(r'^\s*%', source, maxsplit=1, flags=re.MULTILINE)[0]
+    if not re.search(r'^(tags|people|states|tabs):\s*$', config, re.MULTILINE):
+        return source
+    return 'Definitions:\n' + '\n'.join('    ' + line if line else line for line in source.split('\n'))
+
+
 def extract_definitions(source):
     lines = source.splitlines(keepends=True)
     shared, local = [], []
@@ -66,10 +80,11 @@ def extract_definitions(source):
         elif line.strip() and not line.startswith(' '):
             take = False
         (shared if take else local).append(line)
-    return 'Definitions:\n' + ''.join(shared), ''.join(local)
+    return plain_definitions('Definitions:\n' + ''.join(shared)), ''.join(local)
 
 
 def appearance(source):
+    source = definitions_config_source(source)
     result, active, key = {}, False, None
     for line in source.splitlines():
         section = re.match(r'^ {4}([^\s:]+):\s*$', line)
@@ -90,6 +105,11 @@ def appearance(source):
 
 def edit_appearance(source, name, values=None, rename=None):
     """Edit one entry, leaving other sections and unrecognized lines untouched."""
+    normalized = definitions_config_source(source)
+    if normalized == source and not re.search(r'^Definitions:\s*$', source, re.MULTILINE):
+        normalized = 'Definitions:\n' + source
+    if normalized != source:
+        return plain_definitions(edit_appearance(normalized, name, values, rename))
     lines = source.splitlines()
     start = next((i for i, l in enumerate(lines) if l.strip() == 'tabs:' and l.startswith('    ') and not l.startswith('     ')), None)
     if start is None:
@@ -104,7 +124,7 @@ def edit_appearance(source, name, values=None, rename=None):
     if rename is not None:
         if entry is not None:
             lines[entry] = f'        {rename}:'
-        return '\n'.join(lines) + '\n'
+        return plain_definitions('\n'.join(lines) + '\n')
     if values is None:
         if entry is not None:
             del lines[entry:stop]
@@ -125,7 +145,7 @@ def edit_appearance(source, name, values=None, rename=None):
                 stop += 1
         if stop == entry + 1:
             del lines[entry]
-    return '\n'.join(lines) + '\n'
+    return plain_definitions('\n'.join(lines) + '\n')
 
 
 class TabStore:
@@ -547,7 +567,7 @@ def resolved_definition_source(local, shared):
     def parse(text):
         data = {section: {} for section in SECTIONS}
         section = key = None
-        for line in text.splitlines():
+        for line in definitions_config_source(text).splitlines():
             if re.match(r'^\s*%', line): break
             header = re.match(r'^ {4}([^\s:]+):\s*$', line)
             if header:

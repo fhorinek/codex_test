@@ -44,6 +44,15 @@ class SpaceTabsTest(unittest.TestCase):
         again.migrate()
         self.assertEqual(again.space('legacy')['id'], space['id'])
 
+    def test_definitions_have_no_wrapper_and_appearance_stays_headerless(self):
+        defs = self.store.defs(self.store.space(self.sid))
+        self.assertTrue(self.store.read(defs).startswith('tags:\n'))
+        self.mutate('appearance', id=self.store.document(self.sid)['id'], appearance={'icon': '🦄', 'color': '#123456'})
+        text = self.store.read(defs)
+        self.assertNotIn('Definitions:', text)
+        self.assertIn('\ntabs:\n', text)
+        self.assertEqual(appearance(text)['main']['color'], '#123456')
+
     def test_appearance_rename_copy_close_and_reorder(self):
         main = self.store.document(self.sid)['id']
         self.mutate('appearance', id=main, appearance={'icon': '🦄', 'color': '#123456'})

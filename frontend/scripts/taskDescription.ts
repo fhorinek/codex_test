@@ -4,6 +4,21 @@
 
 type BackgroundTask = { tags: string[]; parent?: BackgroundTask | null; originMeta?: { tagMeta: Map<string, { background?: string }> }; originBackground?: string };
 
+export function createTaskOriginIcon(task: any): HTMLElement | null {
+  const reference = task?.origin || task?.referenceTarget;
+  if (!reference) return null;
+  const icon = document.createElement('span');
+  icon.className = 'task-origin-icon';
+  icon.setAttribute('role', 'img');
+  icon.setAttribute('aria-label', 'Reference task');
+  icon.title = `Reference to ${reference.tab}::${reference.name}. Ctrl-click to open original.`;
+  const glyph = document.createElement('i');
+  glyph.className = 'fa-solid fa-link';
+  glyph.setAttribute('aria-hidden', 'true');
+  icon.append(glyph);
+  return icon;
+}
+
 const foregroundCache = new Map<string, string>();
 let colorCanvas: CanvasRenderingContext2D | null = null;
 

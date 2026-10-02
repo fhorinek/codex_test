@@ -526,6 +526,7 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     if (!sourceBlock || !targetBlock) {
       return;
     }
+    if (/^\s*%%/.test(lines[targetBlock.start] || '')) return;
     if (targetIsDescendantOfSource) {
       if (targetBlock.start <= sourceBlock.start || targetBlock.end > sourceBlock.end) {
         return;
@@ -694,6 +695,14 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     return Math.max(0, lineIndex - 1);
   }
 
+  function archiveTaskAtLine(lineIndex: number, archived = true): void {
+    const lines = getEditorValue().split("\n");
+    if (!/^\s*%\.?\s+/.test(lines[lineIndex] || "")) return;
+    lines[lineIndex] = lines[lineIndex]!.replace(/^(\s*)%\.?\s+/, archived ? '$1%. ' : '$1% ');
+    applyEditorValue(lines.join("\n"));
+    syncEditorState();
+  }
+
   /**
    * Handles the deleteTaskKeepSubtasksAtLine function logic.
    * Input: lineIndex: number.
@@ -760,8 +769,10 @@ export function createTaskCommandController(options: TaskCommandControllerOption
     let taskRange = requestedRange;
     let indent = requestedIndent;
     if (creatingTask && params.parentLine !== undefined) {
-      const parent = findTaskBlock(getEditorValue().split("\n"), params.parentLine);
+      const parentLines = getEditorValue().split("\n");
+      const parent = findTaskBlock(parentLines, params.parentLine);
       if (!parent) return { ok: false, error: "The selected parent task is no longer available." };
+      if (/^\s*%%/.test(parentLines[parent.start] || '')) return { ok: false, error: "References cannot have new children." };
       taskRange = { start: parent.end, end: parent.end };
       indent = `${parent.indent}    `;
     }
@@ -800,6 +811,7 @@ export function createTaskCommandController(options: TaskCommandControllerOption
   }
 
   return {
+    archiveTaskAtLine,
     removeTaskReferenceAtLine,
     setTaskDates,
     deleteTaskAtLine,

@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { parseTasks } = require('../scripts/task.ts');
-const { resolveTaskReferences, transferTask, taskSource, taskSourceLine, rewriteTaskReferences } = require('../scripts/taskReferences.ts');
+const { resolveTaskReferences, transferTask, importTaskSelection, taskSource, taskSourceLine, rewriteTaskReferences } = require('../scripts/taskReferences.ts');
 const { findTaskDates, updateTaskDates, parseDay } = require('../scripts/taskDates.ts');
 const { formatTaskScript } = require('../scripts/formatter.ts');
 const { createTaskCommandController } = require('../scripts/taskCommands.ts');
@@ -58,6 +58,41 @@ test('task-only references stay task-only through reference chains', () => {
   assert.equal(parsed.allTasks.length, 1);
   assert.equal(parsed.tasks[0].origin.documentId, 'main-id');
 });
+test('references can receive a parent but cannot receive new children', () => {
+  for (const marker of ['%%', '%%%']) {
+    let text = `% Parent\n${marker} main::Original\n% Local child\n`;
+    const commands = createTaskCommandController({ getEditorValue: () => text, applyEditorValue: value => { text = value; }, syncEditorState: () => {} });
+    let parsed = parseTasks(text);
+    commands.moveTaskAsSubtask(parsed.tasks[1], parsed.tasks[0]);
+    assert.match(text, new RegExp(`% Parent\\n    ${marker} main::Original`));
+    parsed = parseTasks(text);
+    const before = text;
+    commands.moveTaskAsSubtask(parsed.tasks[1], parsed.tasks[0].children[0]);
+    assert.equal(text, before);
+    const result = commands.saveTaskEdit({ creatingTask: true, parentLine: 1, rawTitle: 'New child', bodyText: '', taskRange: {start: 3, end: 3}, indent: '' });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /References cannot have new children/);
+    assert.equal(text, before);
+    const projected = resolve(text).tasks[0].children[0];
+    assert.equal(projected.children.length, marker === '%%' ? 1 : 0);
+    assert.equal(documents[0].text, source);
+  }
+});
+test('multi-task imports preserve siblings, parent indentation, originals, and move references', () => {
+  const text = '% First\n    % Child\n% Second\n';
+  const docs = [{ id: 'source', name: 'main', text }, { id: 'target', name: 'next', text: '% Parent\n% After\n' }];
+  const origins = parseTasks(text).allTasks.map(task => ({ documentId: 'source', tab: 'main', name: task.name, lineIndex: task.lineIndex, source: text }));
+  const ref = importTaskSelection(docs, origins, 'target', 'reference', 0);
+  assert.equal(ref.length, 1);
+  assert.equal(ref[0].text, '% Parent\n    %% main::First\n    %% main::Second\n% After\n');
+  const moved = importTaskSelection(docs, origins, 'target', 'move', 0, true);
+  assert.equal(moved.find(change => change.id === 'source').text, '%% next::First\n%% next::Second');
+  assert.match(moved.find(change => change.id === 'target').text, /% Parent\n    % First\n        % Child\n    % Second/);
+  const only = importTaskSelection(docs, [origins[0]], 'target', 'reference-only');
+  assert.match(only[0].text, /%%% main::First/);
+  assert.throws(() => importTaskSelection(docs, [{ ...origins[0], source: 'changed' }], 'target', 'move'), /changed/);
+  assert.throws(() => importTaskSelection([docs[0], { ...docs[1], text: '%% main::First' }], [origins[0]], 'target', 'reference-only', 0), /parent task changed/);
+});
 test('missing, ambiguous, malformed, and cyclic references are diagnostic', () => {
   assert.match(resolve('%% missing::Original').referenceDiagnostics[0], /not found/);
   assert.match(resolve('%% main::').referenceDiagnostics[0], /use %%/);
@@ -77,6 +112,20 @@ test('reference insertion leaves original intact; move includes descendants', ()
   assert.match(moved.destination, /\n% Child\n4\.10\.2026/);
   const whole = transferTask(source, 0, '', 0, 'main', 'move');
   assert.equal(whole.source, '% Other\n'); assert.match(whole.destination, /    % Child/);
+});
+test('moving can leave a reference at the original position, preserving indentation and subtasks', () => {
+  const moved = transferTask(source, 4, '% Destination\n', 2, 'main', 'move', 'next');
+  assert.match(moved.source, /    %% next::Child\n% Other/);
+  assert.match(moved.destination, /% Child\n4\.10\.2026/);
+  assert.doesNotMatch(moved.source, /4\.10\.2026/);
+  let archived = source;
+  const commands = createTaskCommandController({ getEditorValue: () => archived, applyEditorValue: value => { archived = value; }, syncEditorState: () => {} });
+  commands.archiveTaskAtLine(0);
+  assert.ok(archived.startsWith('%. Original\n'));
+  assert.equal(parseTasks(archived).allTasks[1].archived, true);
+  commands.archiveTaskAtLine(0, false);
+  assert.equal(archived, source);
+  assert.equal(parseTasks(archived).allTasks[1].archived, false);
 });
 test('reject stale line, projections, and duplicate source names', () => {
   assert.throws(() => transferTask(source, 100, '', 0, 'main', 'move'));

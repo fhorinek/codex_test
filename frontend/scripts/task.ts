@@ -445,7 +445,9 @@ export function parseConfig(lines: string[]): { config: ParsedConfigShape; start
   let index = 0;
   const headerLine = lines[index]?.trim();
   let statesOverridden = false;
-  if (headerLine && !headerLine.startsWith("%") && headerLine.endsWith(":")) {
+  const firstTask = lines.findIndex(line => /^\s*%/.test(line));
+  const sectionIndent = lines.slice(0, firstTask < 0 ? lines.length : firstTask).some(line => /^(?:tags|people|states|tabs):\s*$/.test(line)) ? 0 : 4;
+  if (headerLine && !headerLine.startsWith("%") && headerLine.endsWith(":") && !(sectionIndent === 0 && /^(?:tags|people|states|tabs):$/.test(headerLine))) {
     config.boardName = headerLine.slice(0, -1).trim() || config.boardName;
     index += 1;
   }
@@ -461,7 +463,7 @@ export function parseConfig(lines: string[]): { config: ParsedConfigShape; start
     }
     const indent = raw.match(/^\s*/)?.[0].length || 0;
     const trimmed = raw.trim();
-    if (indent === 4 && trimmed.endsWith(":")) {
+    if (indent === sectionIndent && trimmed.endsWith(":")) {
       const nextSection = trimmed.slice(0, -1).toLowerCase();
       currentSection = (
         nextSection === "states" || nextSection === "people" || nextSection === "tags"
@@ -475,7 +477,7 @@ export function parseConfig(lines: string[]): { config: ParsedConfigShape; start
       currentEntry = null;
       continue;
     }
-    if (indent === 8 && currentSection) {
+    if (indent === sectionIndent + 4 && currentSection) {
       const match = trimmed.match(/^([^\s:]+)\s*:\s*(.*)?$/);
       const key = (match?.[1] || trimmed).trim();
       const entry: ParsedConfigEntry = { key, name: key, color: "", _explicit: [] };
@@ -499,7 +501,7 @@ export function parseConfig(lines: string[]): { config: ParsedConfigShape; start
       currentEntry = entry;
       continue;
     }
-    if (indent === 12 && currentEntry) {
+    if (indent === sectionIndent + 8 && currentEntry) {
       const propMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9_-]*)\s*:\s*(.*)$/);
       if (propMatch) {
         const prop = (propMatch[1] || "").toLowerCase();

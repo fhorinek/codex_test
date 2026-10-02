@@ -55,16 +55,7 @@ export function normalizeHexColorValue(value: string) {
   return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
 }
 
-/**
- * Handles the createSlugRenameUi function logic.
- * Input: dom: AppDom, doc: Document = document.
- * Output: result produced by this function.
- */
-export function createSlugRenameUi(dom: AppDom, doc: Document = document) {
-  let colorControlsBound = false;
-  const domAny: any = dom;
-
-  function createColorControls(controls: any) {
+export function createSlugColorControls(controls: any, doc: Document = document, onChange?: (value: string, commit: boolean) => void) {
     /**
      * @param {string} value
      */
@@ -126,6 +117,7 @@ export function createSlugRenameUi(dom: AppDom, doc: Document = document) {
           button.setAttribute("aria-pressed", "false");
           button.addEventListener("click", () => {
             setColorValue(color);
+            onChange?.(color, true);
           });
           controls.slugRenameColorSwatches.appendChild(button);
         });
@@ -133,23 +125,35 @@ export function createSlugRenameUi(dom: AppDom, doc: Document = document) {
       controls.slugRenameColorPicker?.addEventListener("input", (event: Event) => {
         const target = event.currentTarget as HTMLInputElement | null;
         setColorValue(target?.value || "");
+        onChange?.(target?.value || "", false);
       });
       controls.slugRenameColorClear?.addEventListener("click", () => {
         setColorValue("");
+        onChange?.("", true);
       });
       setColorValue("");
     }
 
     return { setColorValue, bindControls };
   }
-  const color = createColorControls(domAny);
-  const background = createColorControls({
+
+/**
+ * Handles the createSlugRenameUi function logic.
+ * Input: dom: AppDom, doc: Document = document.
+ * Output: result produced by this function.
+ */
+export function createSlugRenameUi(dom: AppDom, doc: Document = document) {
+  let colorControlsBound = false;
+  const domAny: any = dom;
+
+  const color = createSlugColorControls(domAny, doc);
+  const background = createSlugColorControls({
     slugRenameColor: domAny.slugRenameBackground,
     slugRenameColorPicker: domAny.slugRenameBackgroundPicker,
     slugRenameColorSwatches: domAny.slugRenameBackgroundSwatches,
     slugRenameColorClear: domAny.slugRenameBackgroundClear,
     slugRenameColorPreview: domAny.slugRenameBackgroundPreview,
-  });
+  }, doc);
   function ensureColorControls() {
     if (colorControlsBound) return;
     colorControlsBound = true;

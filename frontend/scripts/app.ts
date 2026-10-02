@@ -5,7 +5,8 @@ let tabMode: "task" | "defs" | "empty" = "task";
 import { createSpaceTabs } from "./spaceTabs.js";
 import { resolveTaskReferences, taskSource, taskSourceLine, type TaskOrigin } from './taskReferences.js';
 import { createCrossTabDrag } from './crossTabDrag.js';
-import { findTaskDates, updateTaskDates, moveDates } from './taskDates.js';
+import { createTaskContextMenu, confirmTaskMove } from './taskContextMenu.js';
+import { findTaskDates, updateTaskDates, moveDates, formatDay } from './taskDates.js';
 /**
  * Module: Main frontend application orchestration, state management, and UI event wiring.
  */
@@ -32,6 +33,7 @@ import {
 } from "./slugRenameModal.js";
 import {
   decorateDescriptionPills,
+  createTaskOriginIcon,
   applyTaskBackground,
   decorateDescriptionReferences,
   renderTaskDescriptionNode,
@@ -2351,19 +2353,86 @@ const timelineController = createTimeline({
   matchesFilters: canvasController.matchesFiltersTask,
   matchesSearch: canvasController.matchesSearch,
 });
-createCrossTabDrag({
-  getOrigin: id => {
-    const task = state.allTasks.find((task: any) => task.id === id);
+function taskOriginForMenu(task: any): TaskOrigin | null {
     if (!task || task.unresolvedReference || !spaceTabs?.active || spaceTabs.active.kind !== 'task') return null;
     return task.origin || { documentId: spaceTabs.active.id, tab: spaceTabs.active.name,
       lineIndex: task.lineIndex, source: editorController.getValue(), name: task.name };
+}
+document.addEventListener('pointerdown', event => {
+  if (event.button !== 0 || (!event.ctrlKey && !event.metaKey)) return;
+  const node = (event.target as Element)?.closest<HTMLElement>('.task-node[data-task-id], .kanban-card[data-task-id], .timeline-bar[data-task-id]');
+  if (node && state.allTasks.find((task: any) => task.id === node.dataset['taskId'])?.origin) {
+    // Keep the reference intact until click; timeline selection normally redraws
+    // its bar on pointer-up and would lose the click's task target.
+    event.preventDefault(); event.stopImmediatePropagation();
+  }
+}, true);
+document.addEventListener('click', event => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  const node = (event.target as Element)?.closest<HTMLElement>('.task-node[data-task-id], .kanban-card[data-task-id], .timeline-bar[data-task-id]');
+  const task = node && state.allTasks.find((task: any) => task.id === node.dataset['taskId']);
+  const origin = task?.origin as TaskOrigin | undefined;
+  if (!origin || !spaceTabs) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  void (async () => {
+    await spaceTabs!.openDocument(origin.documentId);
+    const originals = state.allTasks.filter((task: any) => !task.origin && !task.referenceTarget && task.name === origin.name);
+    const original = originals.find((task: any) => task.lineIndex === origin.lineIndex) || (originals.length === 1 ? originals[0] : null);
+    if (!original) throw new Error('The original task changed or is no longer available.');
+    selectTask(original);
+  })().catch(error => showToast(error.message, 'error'));
+}, true);
+createTaskContextMenu({
+  task: id => state.allTasks.find((task: any) => task.id === id),
+  origin: taskOriginForMenu,
+  tabs: () => spaceTabs?.space?.tabs || [],
+  canEdit: () => !state.historyViewerActive && collab.isAuthenticated && tabMode === 'task',
+  archive: (task, archived) => {
+    if (task.origin) runOriginCommand(task, controller => controller.archiveTaskAtLine(taskSourceLine(task), archived));
+    else taskCommandController.archiveTaskAtLine(task.lineIndex, archived);
   },
+  remove: openTaskDeleteModal,
+  createTab: name => spaceTabs!.createTaskTab(name),
+  activeTab: () => spaceTabs?.active,
+  documents: () => spaceTabs?.sourceDocuments() || [],
+  newTask: (parent, point) => {
+    openTaskCreateModal();
+    creatingTaskParentId = parent?.id || null;
+    creatingTaskDefaultAsSubtask = Boolean(parent);
+    updateTaskEditDeleteButtonVisibility();
+    if (point.timeline) {
+      const body = formatDay(timelineController.dayAtPoint(point.x));
+      modalEditorController?.setValue(body);
+      if (dom.taskEditCode) dom.taskEditCode.value = body;
+      updateTaskEditPreviewFromText(body);
+    }
+  },
+  importTasks: async (origins, mode, parent, point, leave, expectedTarget) => {
+    const day = point.timeline ? timelineController.dayAtPoint(point.x) : null;
+    const prepare = day === null ? undefined : (source: string, line: number) => {
+      const dates = findTaskDates(source, line);
+      return updateTaskDates(source, line, dates ? moveDates(dates, day - (dates.start ?? dates.end!)) : { start: day, end: null });
+    };
+    await spaceTabs!.importTasks(origins, mode, parent?.lineIndex, expectedTarget, leave, prepare);
+  },
+  transfer: async (origin, tab, mode, leave) => {
+    const target = spaceTabs!.sourceDocuments().find(doc => doc.id === tab.id);
+    if (!target) throw new Error('The target tab is no longer available.');
+    await spaceTabs!.transfer(origin, mode, target.text ? target.text.split('\n').length : 0, undefined, tab.id, leave);
+    if (mode === 'move') await spaceTabs!.activate(tab.id);
+  },
+  notify: message => showToast(message, 'error'),
+});
+createCrossTabDrag({
+  getOrigin: id => taskOriginForMenu(state.allTasks.find((task: any) => task.id === id)),
   activeDocument: () => spaceTabs?.active?.id,
   activate: id => spaceTabs!.activate(id),
   canEdit: () => !state.historyViewerActive && collab.isAuthenticated && tabMode === 'task',
   notify: message => showToast(message, 'error'),
   drop: async (origin, mode, target, x, y) => {
     if (!spaceTabs) return;
+    const leave = mode === 'move' ? await confirmTaskMove(spaceTabs.active!.name) : false;
+    if (leave === null) return;
     const column = target.closest<HTMLElement>('.kanban-column');
     const timeline = target.querySelector('.timeline-host:not([hidden])');
     const code = target.closest('.editor-wrapper');
@@ -2381,7 +2450,7 @@ createCrossTabDrag({
       }
       return source;
     };
-    await spaceTabs.transfer(origin, mode, line, prepare);
+    await spaceTabs.transfer(origin, mode, line, prepare, spaceTabs.active!.id, leave);
   },
 });
 let graphView = "graph";
@@ -2485,8 +2554,9 @@ let modalEditorState: any = null;
 
 // Stores the slugRenameModalController module constant.
 const slugRenameModalController = createSlugRenameModalController({
+  getRootName: () => tabMode === 'task' ? spaceTabs?.active?.name : undefined,
   getSharedValue: () => tabMode === "task" && spaceTabs?.space ? (sharedDefinitions || "Definitions:\n") : "",
-  saveShared: change => getSpaceTabs().saveShared(change),
+  saveShared: (change, moveLocal) => getSpaceTabs().saveShared(change, moveLocal),
   dom,
   slugRenameUi,
   /**
@@ -3094,6 +3164,7 @@ let editingTaskJiraKey: any = null;
 let editingTaskRef: any = null;
 // Stores the creatingTask module constant.
 let creatingTask = false;
+let creatingTaskDefaultAsSubtask = false;
 let creatingTaskParentId: string | null = null;
 // Stores the pendingDeleteTask module constant.
 let pendingDeleteTask: any = null;
@@ -3179,6 +3250,8 @@ function renderTaskEditTokenList(container: any, tokens: any[], metaMap: any, ty
     const pill = document.createElement("button");
     pill.type = "button";
     pill.className = "pill";
+    pill.dataset['type'] = type;
+    pill.dataset['value'] = token;
     const meta = metaMap?.get(token);
     if (meta?.color) {
       pill.style.borderColor = meta.color;
@@ -3363,12 +3436,16 @@ function updateTaskEditPreviewFromText(text: any): void {
   const header = document.createElement("div");
   header.className = "task-header";
   const title = document.createElement("h4");
+  const originIcon = createTaskOriginIcon(editingTaskRef);
+  if (originIcon) title.append(originIcon);
   title.append(displayTitle);
   header.appendChild(title);
   if (parsed.state) {
     const stateToken = parsed.state;
     const pill = document.createElement("span");
     pill.className = "pill state-pill";
+    pill.dataset['type'] = 'state';
+    pill.dataset['value'] = stateToken;
     pill.draggable = true;
     const stateMeta = state.stateMeta?.get(stateToken);
     pill.textContent = stateMeta?.name || stateToken.replace(/^!/, "");
@@ -3626,10 +3703,10 @@ function getTaskEditDeleteTarget(): any {
  * Output: void.
  */
 function updateTaskEditDeleteButtonVisibility(): void {
-  if (dom.taskEditSave) dom.taskEditSave.textContent = creatingTask ? "Create" : "Save";
-  const parent = creatingTask && state.allTasks.find((task: any) => task.id === creatingTaskParentId);
+  if (dom.taskEditSave) dom.taskEditSave.textContent = creatingTask ? creatingTaskDefaultAsSubtask ? 'Create as subtask' : "Create" : "Save";
+  const parent = creatingTask && state.allTasks.find((task: any) => task.id === creatingTaskParentId && !task.origin && !task.referenceTarget);
   if (dom.taskEditSaveSubtask) {
-    dom.taskEditSaveSubtask.classList.toggle("hidden", !parent);
+    dom.taskEditSaveSubtask.classList.toggle("hidden", !parent || creatingTaskDefaultAsSubtask);
     dom.taskEditSaveSubtask.textContent = parent ? `Create as subtask of ${parent.name}` : "Create as subtask";
   }
   if (!dom.taskEditDelete) {
@@ -3694,7 +3771,9 @@ function openTaskCreateModal() {
     return;
   }
   creatingTask = true;
-  creatingTaskParentId = state.selectedTaskId;
+  creatingTaskDefaultAsSubtask = false;
+  const selectedParent = state.allTasks.find((task: any) => task.id === state.selectedTaskId);
+  creatingTaskParentId = selectedParent && !selectedParent.origin && !selectedParent.referenceTarget ? selectedParent.id : null;
   editingTaskRef = null;
   const lines = editorController.getValue().split("\n");
   const draft = buildTaskCreateDraft(lines);
@@ -3814,6 +3893,41 @@ function submitBoardRename() {
 function openSlugRenameModal(token: any): void {
   slugRenameModalController.open(token);
 }
+
+// Wait for a possible double-click before toggling or removing a GUI token.
+// Otherwise the first click can redraw the pill before the edit gesture finishes.
+const guiTokenClicks = new Map<HTMLElement, ReturnType<typeof setTimeout>>();
+const guiTokenTarget = (event: MouseEvent) => (event.target as Element)?.closest<HTMLElement>(
+  '.pill[data-type][data-value], .inline-pill[data-type][data-value]'
+);
+document.addEventListener('click', event => {
+  const pill = guiTokenTarget(event);
+  if (!pill || !['tag', 'person', 'state'].includes(pill.dataset['type'] || '') || event.detail === 0) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  const pending = guiTokenClicks.get(pill);
+  if (pending) clearTimeout(pending);
+  guiTokenClicks.delete(pill);
+  if (event.detail > 1) return;
+  const documentId = spaceTabs?.active?.id;
+  const inEditor = dom.taskEditModal?.contains(pill);
+  const editedTask = editingTaskRef;
+  guiTokenClicks.set(pill, setTimeout(() => {
+    guiTokenClicks.delete(pill);
+    if (spaceTabs?.active?.id !== documentId || (inEditor && (dom.taskEditModal?.classList.contains('hidden') || editingTaskRef !== editedTask))) return;
+    pill.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 0 }));
+  }, 350));
+}, true);
+document.addEventListener('dblclick', event => {
+  const pill = guiTokenTarget(event);
+  if (!pill || !['tag', 'person', 'state'].includes(pill.dataset['type'] || '')) return;
+  event.preventDefault(); event.stopImmediatePropagation();
+  const pending = guiTokenClicks.get(pill);
+  if (pending) clearTimeout(pending);
+  guiTokenClicks.delete(pill);
+  if (state.historyViewerActive || !collab.isAuthenticated) return;
+  const value = pill.dataset['value']!;
+  openSlugRenameModal({ type: pill.dataset['type'], prefix: value[0], slug: value.slice(1) });
+}, true);
 
 /**
  * Handles the closeSlugRenameModal function logic.
@@ -4025,7 +4139,7 @@ function highlightTaskDeletePreview(task: any, includeSubtasks: any): void {
  * Input: none.
  * Output: result produced by this function.
  */
-function saveTaskEditModal(asSubtask = false) {
+function saveTaskEditModal(asSubtask = creatingTask && creatingTaskDefaultAsSubtask) {
   if (state.historyViewerActive) return;
   if (!dom.taskEditModal) {
     return;
@@ -4046,7 +4160,7 @@ function saveTaskEditModal(asSubtask = false) {
   const parent = asSubtask && creatingTask
     ? state.allTasks.find((task: any) => task.id === creatingTaskParentId)
     : null;
-  if (asSubtask && !parent) {
+  if (asSubtask && (!parent || parent.origin || parent.referenceTarget)) {
     if (dom.taskEditError) {
       dom.taskEditError.textContent = "The selected parent task is no longer available.";
       dom.taskEditError.classList.remove("hidden");
@@ -4101,6 +4215,7 @@ function saveTaskEditModal(asSubtask = false) {
  * Output: void.
  */
 function moveTaskAsSubtask(sourceTask: any, targetTask: any): void {
+  if (targetTask.origin || targetTask.referenceTarget) { showToast('References cannot have new children.', 'error'); return; }
   if (sourceTask.origin || targetTask.origin) { runReferencedHierarchy(sourceTask, targetTask, (controller, source, target) => controller.moveTaskAsSubtask(source, target)); return; }
   if (sourceTask.unresolvedReference || targetTask.unresolvedReference) return;
   taskCommandController.moveTaskAsSubtask(sourceTask, targetTask);
@@ -4118,16 +4233,16 @@ function reorderKanbanTask(sourceTask: any, targetTask: any, position: any, opti
 }
 
 function runReferencedHierarchy(sourceTask: any, targetTask: any, run: (controller: ReturnType<typeof createTaskCommandController>, source: any, target: any) => unknown): boolean {
-  const sourceDocument = sourceTask.origin?.documentId || spaceTabs?.active?.id;
-  const targetDocument = targetTask.origin?.documentId || spaceTabs?.active?.id;
-  if (sourceDocument !== targetDocument) { showToast('Move the original task to this tab before changing its parent here.', 'error'); return false; }
-  const origin = sourceTask.origin || targetTask.origin;
-  const parsed = parseTasks(origin.source);
-  const source = parsed.allTasks.find(task => task.lineIndex === taskSourceLine(sourceTask));
-  const target = parsed.allTasks.find(task => task.lineIndex === taskSourceLine(targetTask));
+  if (state.historyViewerActive) return false;
+  const projectedChild = (task: any) => task.origin && task.parent?.origin && task.lineIndex === task.parent.lineIndex;
+  if (projectedChild(sourceTask) || projectedChild(targetTask)) {
+    showToast('Change the parent of the reference itself, or open the original tab to reparent its subtasks.', 'error'); return false;
+  }
+  const parsed = parseTasks(editorController.getValue());
+  const source = parsed.allTasks.find(task => task.lineIndex === sourceTask.lineIndex);
+  const target = parsed.allTasks.find(task => task.lineIndex === targetTask.lineIndex);
   if (!source || !target) return false;
-  let result: unknown;
-  runOriginCommand({ origin }, controller => { result = run(controller, source, target); });
+  const result = run(taskCommandController, source, target);
   return result !== false;
 }
 

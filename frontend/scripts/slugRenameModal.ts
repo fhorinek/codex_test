@@ -1,3 +1,4 @@
+import { definitionsConfigSource, plainDefinitions } from './definitionsSource.js';
 import { parseConfig } from "./task.js";
 // @ts-check
 
@@ -19,6 +20,7 @@ type SlugRenameMetadata = { name: string; color: string; background: string; ema
 type SlugRenameTokenInput = { type?: string; prefix?: string; slug?: string } | null | undefined;
 // Defines the RenameWholeFileOptions type structure for this module.
 type RenameWholeFileOptions = {
+  rootName?: string | undefined;
   kind: string;
   prefix: string;
   oldSlug: string;
@@ -471,8 +473,26 @@ function renameSlugConfigEntries(
  */
 export function renameSlugInWholeFile(
   text: string,
-  { kind, prefix, oldSlug, newSlug, metadata }: RenameWholeFileOptions
-) {
+  { kind, prefix, oldSlug, newSlug, metadata, rootName }: RenameWholeFileOptions
+): { oldToken: string; newToken: string; text: string; changed: boolean; replacements: number; configChanged: boolean } {
+  if (rootName && hasSlugMetadataInput(kind, normalizeSlugMetadata(kind, metadata))) {
+    const lines = text.split('\n');
+    const taskStart = lines.findIndex(line => /^\s*%/.test(line));
+    const configEnd = taskStart < 0 ? lines.length : taskStart;
+    const first = lines.slice(0, configEnd).find(line => line.trim());
+    const hasRoot = first && /^\S.*:\s*$/.test(first) && !/^(?:tags|people|states|tabs):\s*$/.test(first);
+    if (!hasRoot) {
+      const flat = lines.slice(0, configEnd).some(line => /^(?:tags|people|states|tabs):\s*$/.test(line));
+      if (flat) for (let i = 0; i < configEnd; i++) if (lines[i]!.trim()) lines[i] = '    ' + lines[i];
+      const result = renameSlugInWholeFile(`${rootName}:\n${lines.join('\n')}`, { kind, prefix, oldSlug, newSlug, metadata });
+      return { ...result, changed: result.text !== text };
+    }
+  }
+  const legacy = definitionsConfigSource(text);
+  if (legacy !== text) {
+    const result = renameSlugInWholeFile(legacy, { kind, prefix, oldSlug, newSlug, metadata });
+    return { ...result, text: plainDefinitions(result.text) };
+  }
   const oldToken = `${prefix}${oldSlug}`;
   const newToken = `${prefix}${newSlug}`;
   const tokenResult =
@@ -550,8 +570,9 @@ type PendingSlugRename = {
 
 // Defines the SlugRenameModalControllerOptions type structure for this module.
 type SlugRenameModalControllerOptions = {
+  getRootName?: () => string | undefined;
   getSharedValue?: () => string;
-  saveShared?: (change: RenameWholeFileOptions) => Promise<void>;
+  saveShared?: (change: RenameWholeFileOptions, moveLocal?: boolean) => Promise<void>;
 
   dom: SlugRenameModalDom;
   slugRenameUi: SlugRenameUiApi;
@@ -604,6 +625,29 @@ type SlugRenameModalControllerOptions = {
  * Input: options: SlugRenameModalControllerOptions.
  * Output: result produced by this function.
  */
+export function definitionScopeFor(source: string, kind: SlugKind, slug: string): 'local' | 'shared' {
+  const section = getSlugSection(kind) as 'tags' | 'people' | 'states';
+  return parseConfig(source.split('\n')).config[section].some(entry => entry.key === slug && entry._explicit !== undefined) ? 'local' : 'shared';
+}
+
+export function removeSlugDefinition(source: string, kind: SlugKind, slug: string): string {
+  const normalized = definitionsConfigSource(source);
+  if (normalized !== source) return plainDefinitions(removeSlugDefinition(normalized, kind, slug));
+  const lines = source.split('\n');
+  const section = getSlugSection(kind);
+  let active = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (/^\s*%/.test(line)) break;
+    if (/^ {4}\S/.test(line)) active = line.trim() === section + ':';
+    if (!active || !new RegExp('^ {8}' + escapeRegExp(slug) + '(?::|$)').test(line)) continue;
+    let end = i + 1;
+    while (end < lines.length && (!lines[end]!.trim() || (lines[end]!.match(/^ */)?.[0].length || 0) > 8)) end++;
+    lines.splice(i, end - i); break;
+  }
+  return lines.join('\n');
+}
+
 export function createSlugRenameModalController(options: SlugRenameModalControllerOptions) {
   const {
     dom,
@@ -618,15 +662,24 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
   } = options;
 
   let pendingSlugRename: PendingSlugRename | null = null;
-  let scope: HTMLSelectElement | null = null;
+  let scope: { value: string; parentElement: HTMLElement } | null = null;
+  let moveGlobal: HTMLButtonElement | null = null;
+  const scopeButtons: HTMLButtonElement[] = [];
+  function updateScopeButtons() {
+    for (const button of scopeButtons) button.setAttribute('aria-pressed', String(button.dataset['scope'] === scope?.value));
+  }
   if (options.getSharedValue && dom.slugRenameMessage) {
-    const label = document.createElement("label"); label.className = "modal-field";
-    label.textContent = "Save definition in";
-    scope = document.createElement("select"); scope.setAttribute("aria-label", "Definition scope");
-    for (const [value, text] of [["local", "This tab only"], ["shared", "Shared across this space"]]) {
-      const item = document.createElement("option"); item.value = value!; item.textContent = text!; scope.append(item);
+    const row = document.createElement('div'); row.className = 'definition-scope-row';
+    const controls = document.createElement('div'); controls.className = 'definition-scope-switch'; controls.setAttribute('role', 'group'); controls.setAttribute('aria-label', 'Definition scope');
+    scope = { value: 'shared', parentElement: row };
+    for (const [value, text] of [["shared", "Global definition"], ["local", "This tab only"]]) {
+      const button = document.createElement('button'); button.type = 'button'; button.dataset['scope'] = value!; button.textContent = text!;
+      button.onclick = () => { scope!.value = value!; updateScopeButtons(); showScopeValues(); };
+      scopeButtons.push(button); controls.append(button);
     }
-    label.append(scope); dom.slugRenameMessage.after(label);
+    moveGlobal = document.createElement('button'); moveGlobal.type = 'button'; moveGlobal.className = 'toolbar-button'; moveGlobal.textContent = 'Move to global definitions';
+    moveGlobal.onclick = () => { void submit(true); };
+    row.append(controls, moveGlobal); dom.slugRenameMessage.after(row);
   }
 
   function showScopeValues() {
@@ -650,7 +703,6 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
         : `Changes apply only to this tab.${props.length ? " Inherited properties: " + props.join(", ") + "." : ""}`;
     }
   }
-  scope?.addEventListener("change", showScopeValues);
 
   /**
    * Handles the close function logic.
@@ -701,16 +753,11 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
     pendingSlugRename = pending;
     if (scope) {
       const shared = options.getSharedValue?.() || "";
-      const section = kind === "tag" ? "tags" : kind === "person" ? "people" : "states";
-      const hasEntry = (text: string) => {
-        const lines = text.split("\n"); let active = false;
-        return lines.some(line => {
-          if (/^ {4}\S/.test(line)) active = line.trim() === section + ":";
-          return active && new RegExp("^ {8}" + slug + "(?::|$)").test(line);
-        });
-      };
+      const hasLocalEntry = definitionScopeFor(getEditorValue(), kind, slug) === 'local';
       scope.parentElement!.classList.toggle("hidden", !shared);
-      scope.value = shared && hasEntry(shared) && !hasEntry(getEditorValue()) ? "shared" : "local";
+      scope.value = hasLocalEntry || !shared ? 'local' : 'shared';
+      if (moveGlobal) moveGlobal.disabled = !hasLocalEntry;
+      updateScopeButtons();
     }
     if (dom.slugRenameMessage) {
       dom.slugRenameMessage.textContent =
@@ -747,7 +794,7 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
    * Input: none.
    * Output: void.
    */
-  async function submit(): Promise<void> {
+  async function submit(moveLocal = false): Promise<void> {
     const pending = pendingSlugRename;
     if (!pending) {
       close();
@@ -775,21 +822,22 @@ export function createSlugRenameModalController(options: SlugRenameModalControll
       pending.metadata,
       nextMetadata
     );
-    if (!slugChanged && !metadataChanged) {
+    if (!slugChanged && !metadataChanged && !moveLocal) {
       close();
       return;
     }
-    if (scope?.value === "shared" && options.saveShared) {
+    if ((scope?.value === "shared" || moveLocal) && options.saveShared) {
       try {
-        await options.saveShared({ kind: pending.kind, prefix: pending.prefix, oldSlug: pending.slug, newSlug: nextSlug, metadata: nextMetadata });
+        await options.saveShared({ kind: pending.kind, prefix: pending.prefix, oldSlug: pending.slug, newSlug: nextSlug, metadata: nextMetadata }, moveLocal);
         if (slugChanged && isTaskEditModalOpen()) setTaskEditModalValue(replaceSlugTokenOccurrences(getTaskEditModalValue(), `${pending.prefix}${pending.slug}`, `${pending.prefix}${nextSlug}`).text);
-        showToast("Shared definition saved."); close();
+        showToast(moveLocal ? "Definition moved to global definitions." : "Global definition saved."); close();
       } catch (error: any) { showToast(error.message || "Unable to save shared definition.", "error"); }
       return;
     }
     const original = getEditorValue();
     const oldToken = `${pending.prefix}${pending.slug}`;
     const result = renameSlugInWholeFile(original, {
+      rootName: options.getRootName?.(),
       kind: pending.kind,
       prefix: pending.prefix,
       oldSlug: pending.slug,

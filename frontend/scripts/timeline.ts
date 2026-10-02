@@ -1,7 +1,7 @@
 import { taskSource, taskSourceLine } from './taskReferences.js';
 import { buildDailyWorkload, workloadBoxSize } from "./timelineWorkload.js";
 import { layoutTimeline, timelineSeparatorWidth } from "./timelineLayout.js";
-import { decorateDescriptionPills, createTaskStatePill, applyTaskBackground } from "./taskDescription.js";
+import { decorateDescriptionPills, createTaskStatePill, createTaskOriginIcon, applyTaskBackground } from "./taskDescription.js";
 import { findTaskDates, formatDay, formatDates, todayDay, moveDates, resizeDates, type TaskDates } from './taskDates.js';
 
 type Task = { id: string; name: string; lineIndex: number; depth: number; parent?: Task | null; children: Task[]; archived?: boolean; tags: string[]; people: string[]; state: string | null; jiraKey: string | null };
@@ -86,7 +86,10 @@ export function createTimeline(options: Options) {
     bar.style.left = `${startX}px`; bar.style.width = `${Math.max(scale, endX - startX)}px`;
     if (dates.start === null) bar.classList.add('open-start');
     if (dates.end === null) bar.classList.add('open-end');
-    bar.append(node('strong', 'timeline-title', task.name));
+    const title = node('strong', 'timeline-title', task.name);
+    const originIcon = createTaskOriginIcon(task);
+    if (originIcon) title.prepend(originIcon);
+    bar.append(title);
     bar.append(node('span', 'timeline-dates', formatDates(dates)));
     const metadata = node('div', 'timeline-metadata');
     const wirePill = (pill: HTMLElement, type: string, value: string) => {

@@ -36,7 +36,13 @@ export function resolveTaskReferences(parsed: any, documents: ReferenceDocument[
         diagnostics.push(`${key}: ${visited.has(key) ? 'circular reference' : matches.length > 1 ? 'ambiguous task name' : 'task not found'}.`);
         return { ...task, parent, depth, lineIndex: anchor, children: [], unresolvedReference: true };
       }
-      return expand(matches[0], parent, depth, anchor, prefix, new Set([...visited, key]), document, includeChildren && target.includeSubtasks !== false);
+      const nextVisited = new Set([...visited, key]);
+      const resolved = expand(matches[0], parent, depth, anchor, prefix, nextVisited, document, includeChildren && target.includeSubtasks !== false);
+      if (includeChildren) {
+        resolved.children.push(...task.children.map((child: any, index: number) => expand(child, resolved, depth + 1,
+          owner ? anchor : child.lineIndex, owner ? `${prefix}/local-reference-${index}` : child.id, nextVisited, owner)));
+      }
+      return resolved;
     }
     const clone: any = { ...task, parent, depth, children: [] };
     clone.archived = Boolean(task.archived || parent?.archived);
@@ -69,7 +75,7 @@ export function resolveTaskReferences(parsed: any, documents: ReferenceDocument[
   return { ...parsed, referenceDiagnostics: diagnostics, referenceLines };
 }
 
-export function transferTask(source: string, taskLine: number, destination: string, line: number, tab: string, mode: 'move' | 'reference' | 'reference-only') {
+export function transferTask(source: string, taskLine: number, destination: string, line: number, tab: string, mode: 'move' | 'reference' | 'reference-only', leaveReferenceTab?: string) {
   const lines = source.split('\n');
   const block = findTaskBlock(lines, taskLine);
   if (!block || /^\s*%%/.test(lines[taskLine]!)) throw new Error('Drag the original task to move or reference it.');
@@ -86,7 +92,54 @@ export function transferTask(source: string, taskLine: number, destination: stri
   const target = destination.split('\n');
   const position = Math.max(0, Math.min(line, target.length));
   target.splice(position, 0, ...incoming);
-  if (mode === 'move') lines.splice(block.start, block.end - block.start);
+  if (mode === 'move') {
+    if (leaveReferenceTab && sourceTasks.filter(item => !item.referenceTarget && item.name === task.name).length !== 1) throw new Error('Give the task a unique name before leaving a reference.');
+    lines.splice(block.start, block.end - block.start, ...(leaveReferenceTab ? [`${block.indent}%% ${leaveReferenceTab}::${task.name}`] : []));
+  }
   const names = [...new Set(movedTasks.filter(item => sourceTasks.filter(other => !other.referenceTarget && other.name === item.name).length === 1).map(item => item.name))];
   return { source: lines.join('\n'), destination: target.join('\n'), name: task.name, names, insertedLine: position };
+}
+
+/** Build one recoverable multi-document import, using the exact source snapshots. */
+export function importTaskSelection(documents: ReferenceDocument[], origins: TaskOrigin[], destinationId: string,
+  mode: 'move' | 'reference' | 'reference-only', parentLine?: number, leaveReference = false,
+  prepare?: (source: string, line: number) => string) {
+  const destination = documents.find(doc => doc.id === destinationId);
+  if (!destination) throw new Error('The destination tab is no longer available.');
+  const sources = new Map(documents.map(doc => [doc.id, doc.text]));
+  const blocks = origins.map(origin => {
+    const source = documents.find(doc => doc.id === origin.documentId);
+    if (!source || source.id === destinationId || source.text !== origin.source) throw new Error('A selected task changed. Reopen the task list and try again.');
+    const block = findTaskBlock(source.text.split('\n'), origin.lineIndex);
+    if (!block) throw new Error('A selected task is no longer available.');
+    return { origin, block, source };
+  });
+  // Selecting a parent already includes its children when moving or referencing its subtree.
+  const selected = blocks.filter(item => mode === 'reference-only' || !blocks.some(other => other !== item && other.source.id === item.source.id && other.block.start < item.block.start && other.block.end > item.block.start));
+  selected.sort((a, b) => a.source.id.localeCompare(b.source.id) || b.origin.lineIndex - a.origin.lineIndex);
+  const parent = parentLine === undefined ? null : findTaskBlock(destination.text.split('\n'), parentLine);
+  if (parentLine !== undefined && (!parent || /^\s*%%/.test(destination.text.split('\n')[parentLine]!))) throw new Error('The parent task changed. Reopen the menu and try again.');
+  let target = destination.text;
+  const renames: { tab: string; name: string }[] = [];
+  for (const { origin, source } of selected) {
+    let current = sources.get(source.id)!;
+    if (prepare) current = prepare(current, origin.lineIndex);
+    const insertion = parent ? parent.end : destination.text ? destination.text.split('\n').length : 0;
+    const transferred = transferTask(current, origin.lineIndex, target, insertion, source.name, mode, leaveReference ? destination.name : undefined);
+    if (parent) {
+      const before = target.split('\n'), after = transferred.destination.split('\n');
+      const count = after.length - before.length;
+      const indent = parent.indent + '    ';
+      for (let i = insertion; i < insertion + count; i++) if (after[i]!.trim()) after[i] = indent + after[i];
+      target = after.join('\n');
+    } else target = transferred.destination;
+    sources.set(source.id, transferred.source);
+    if (mode === 'move') for (const name of transferred.names) renames.push({ tab: source.name, name });
+  }
+  sources.set(destinationId, target);
+  return documents.map(doc => {
+    let text = sources.get(doc.id)!;
+    for (const rename of renames) text = rewriteTaskReferences(text, rename.tab, rename.name, destination.name, rename.name);
+    return { id: doc.id, expected: doc.text, text };
+  }).filter(change => change.text !== change.expected);
 }

@@ -785,7 +785,7 @@ function findFirstTaskLineNumber(doc: any) {
  * Input: doc: any, lineNumber: number, firstTaskLineNumber: number.
  * Output: SlugSection | "".
  */
-function currentHeaderSectionForLine(doc: any, lineNumber: number, firstTaskLineNumber: number): SlugSection | "tabs" | "" {
+function currentHeaderSectionForLine(doc: any, lineNumber: number, firstTaskLineNumber: number, sectionIndent = 4): SlugSection | "tabs" | "" {
     const maxLine = Math.min(lineNumber, firstTaskLineNumber - 1);
     let section: SlugSection | "tabs" | "" = "";
     for (let current = 1; current <= maxLine; current += 1) {
@@ -795,7 +795,7 @@ function currentHeaderSectionForLine(doc: any, lineNumber: number, firstTaskLine
             continue;
         }
         const indent = text.match(/^\s*/)?.[0].length || 0;
-        if (indent === 4 && trimmed.endsWith(":")) {
+        if (indent === sectionIndent && trimmed.endsWith(":")) {
             const key = trimmed.slice(0, -1).trim().toLowerCase();
             section = key === "tabs" ? "tabs" : key === "states" || key === "people" || key === "tags" ? key as SlugSection : "";
         }
@@ -965,7 +965,8 @@ function buildHeaderConfigCompletions(context: any, state: any) {
         return null;
     }
     const linePrefix = line.text.slice(0, context.pos - line.from);
-    const sectionMatch = linePrefix.match(/^(\s{4})([A-Za-z-]*)$/);
+    const sectionIndent = state?.definitionsMode && !/^Definitions:/m.test(doc.toString()) ? 0 : 4;
+    const sectionMatch = linePrefix.match(new RegExp(`^(\\s{${sectionIndent}})([A-Za-z-]*)$`));
     if (sectionMatch) {
         const partial = sectionMatch[2] || "";
         if (!context.explicit && !partial) {
@@ -987,8 +988,8 @@ function buildHeaderConfigCompletions(context: any, state: any) {
             validFor: /[A-Za-z-]*/,
         };
     }
-    const currentSection = currentHeaderSectionForLine(doc, line.number, firstTaskLineNumber);
-    const entryMatch = linePrefix.match(/^(\s{8})([A-Za-z0-9_-]*)$/);
+    const currentSection = currentHeaderSectionForLine(doc, line.number, firstTaskLineNumber, sectionIndent);
+    const entryMatch = linePrefix.match(new RegExp(`^(\\s{${sectionIndent + 4}})([A-Za-z0-9_-]*)$`));
     if (entryMatch && currentSection) {
         const partial = entryMatch[2] || "";
         if (!context.explicit && !partial) {
@@ -1017,7 +1018,7 @@ function buildHeaderConfigCompletions(context: any, state: any) {
             validFor: /[A-Za-z0-9_-]*/,
         };
     }
-    const propertyMatch = linePrefix.match(/^(\s{12})([A-Za-z]*)$/);
+    const propertyMatch = linePrefix.match(new RegExp(`^(\\s{${sectionIndent + 8}})([A-Za-z]*)$`));
     if (propertyMatch && currentSection) {
         const partial = propertyMatch[2] || "";
         if (!context.explicit && !partial) {
@@ -2089,7 +2090,7 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
         textarea.scrollLeft = view.scrollDOM.scrollLeft;
         syncTextareaOverlayMetrics();
     }
-    foldInitialBoardConfig(view);
+    if (!state?.definitionsMode) foldInitialBoardConfig(view);
     textarea.addEventListener("input", () => {
         if (suppressTextareaInput) {
             return;
@@ -2267,7 +2268,7 @@ export function createEditor({ state, dom, onSync, onSelectTask, onLocalChange, 
             view.dispatch({
                 changes: { from: 0, to: view.state.doc.length, insert: nextValue },
             });
-            foldInitialBoardConfig(view);
+            if (!state?.definitionsMode) foldInitialBoardConfig(view);
         },
         /**
          * Handles the setValueFromRemote function logic.

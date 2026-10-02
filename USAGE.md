@@ -191,7 +191,7 @@ My board:
 ## Editor Interactions
 
 - Double-click `%` task title in code editor: open task edit modal.
-- Double-click slug (`#tag`, `@person`, `!state`): open slug rename modal.
+- Double-click a tag, person, or state in code, task views, legends, or the GUI task editor: open its definition dialog. Single-click still assigns, removes, or filters as usual.
 - Slug rename also works for config header slugs and in task-edit code view.
 - Double-click checkbox token (`[ ]` / `[x]`) in code editor toggles it.
 - Press `Esc` inside search box to clear search.
@@ -349,27 +349,28 @@ Task content belongs in task tabs, not in `defs.txt`.
 
 Local definitions override only properties they explicitly specify. An empty
 property resets that property instead of inheriting it. Definition dialogs let
-you choose **Shared across this space** or **This tab only**. Renaming a shared
+you choose **Global definition** or **This tab only**. The switch defaults to a
+local definition when one exists, otherwise to global. **Move to global definitions**
+saves the entry in `defs.txt` and removes its local override. Renaming a shared
 slug updates references in both open and closed tabs.
 
-Tab appearance is also stored in `defs.txt`:
+The definitions editor stays unfolded. Sections in `defs.txt` need no `Definitions:` header. Tab appearance is also stored there:
 
 ```text
-Definitions:
-    tags:
-        urgent:
-            background: #551188
-    tabs:
-        main:
-            icon: 🦄
-            color: #8b5cf6
-        release:
-            icon: ⭐
-            color: #f59e0b
+tags:
+    urgent:
+        background: #551188
+tabs:
+    main:
+        icon: 🦄
+        color: #8b5cf6
+    release:
+        icon: ⭐
+        color: #f59e0b
 ```
 
 Use the tab's Appearance menu to choose an emoji (including unicorn, star, dog,
-and cat) and a palette/custom color in the same dialog. No icon and Default clear these
+and cat) and a palette/custom color in the same dialog. No icon and Auto clear these
 settings. Appearance keys omit filename numbers, extensions, and the close-dot.
 The picker sets one emoji. For any other text, edit `icon:` directly in `defs.txt`,
 for example `icon: Release candidate 🦄`.
@@ -403,6 +404,11 @@ Both appear in graph, kanban, and
 (for dated tasks) timeline. Editing a reference's title, body, tokens, checkboxes,
 or dates changes the original. Closed source tabs remain available. Missing,
 ambiguous, or circular references show a diagnostic above the editor.
+Ctrl-click a reference (Cmd-click on macOS) to open its source tab and focus the
+original task. A closed source tab reopens for space editors.
+Reparenting or reordering a reference moves its entry in the current tab and
+leaves the original hierarchy unchanged. A reference can have an original task
+as its parent, but new children cannot be added to a reference.
 
 Type `%% ` or `%%% ` for task suggestions. To place a task in another tab, drag it over
 that tab for one second, then drop onto graph, kanban, timeline, or the editor.
@@ -414,3 +420,18 @@ kanban column sets the original state; dropping on the timeline sets its dates.
 Escape or dropping outside those panels cancels. Tab renames and GUI task title
 changes update matching references; manual title changes require updating their
 reference text. Moves are checked against both documents and recorded in history.
+
+Right-click a task in graph, kanban, or timeline to archive or delete it, move it
+to a new or existing tab, or add either kind of reference to another tab.
+Move actions ask whether to just move the task or leave a reference behind.
+The original task and its subtasks move together; a reference stays at the
+original position when that option is chosen. Click outside a menu or press
+Escape to close it. Use arrow keys to navigate its tab submenus.
+
+Right-click empty graph or timeline space to add a task or bring tasks here from
+other tabs. Move and reference actions open a searchable list with a tab filter
+and multiple selection. The same actions on an original task place the new tasks
+under it. A reference's context menu displays “This is reference” and hides
+these four child-creation actions. Archive, delete, move, and outgoing reference
+actions remain available; deleting removes only the local reference. Timeline
+placement schedules imported or newly created tasks on the clicked day.

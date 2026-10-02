@@ -1,7 +1,8 @@
-import { renameSlugInWholeFile, replaceSlugTokenOccurrences } from "./slugRenameModal.js";
+import { renameSlugInWholeFile, replaceSlugTokenOccurrences, removeSlugDefinition } from "./slugRenameModal.js";
 import { parseTasks } from "./task.js";
-import { normalizeHexColorValue, SLUG_RENAME_SWATCH_COLORS } from "./slugRenameUi.js";
-import { transferTask, rewriteTaskReferences, type TaskOrigin, type ReferenceDocument } from './taskReferences.js';
+import { definitionsConfigSource, plainDefinitions } from './definitionsSource.js';
+import { normalizeHexColorValue, createSlugColorControls } from "./slugRenameUi.js";
+import { transferTask, importTaskSelection, rewriteTaskReferences, type TaskOrigin, type ReferenceDocument } from './taskReferences.js';
 /** Space navigation. Names/order/visibility come from filenames; looks live in defs.txt. */
 export type SpaceTab = { id: string; name: string; filename: string; kind: 'task' | 'defs'; order: number; closed: boolean; appearance: { icon?: string; color?: string } };
 type Listing = { id: string; name: string; access: string; revision: number; tabs: SpaceTab[]; created?: string };
@@ -24,7 +25,7 @@ export function parseTabAppearance(source: string) {
   const entries: Record<string, { icon?: string; color?: string }> = {};
   const diagnostics: string[] = [];
   let section = '', key = '';
-  for (const line of source.split('\n')) {
+  for (const line of definitionsConfigSource(source).split('\n')) {
     if (/^\s*%/.test(line)) diagnostics.push('Tasks are not allowed in defs.txt.');
     const header = /^ {4}([^\s:]+):\s*$/.exec(line);
     if (header) { section = header[1]!; key = ''; }
@@ -267,6 +268,11 @@ export function createSpaceTabs(options: Options) {
       active = id;
       options.mode(tab.kind);
       await options.connect(id);
+      const definitions = defsText?.toString() || '';
+      const plain = plainDefinitions(definitions);
+      if (plain !== definitions && defsProvider?.synced && options.canEdit()) {
+        defsDoc.transact(() => { defsText.delete(0, definitions.length); defsText.insert(0, plain); });
+      }
       localStorage.setItem('active-tab:' + listing!.id, id);
       const saved = localStorage.getItem('tab-view:' + id);
       if (saved) { try { options.restore(JSON.parse(saved)); } catch { /* Ignore obsolete preferences. */ } }
@@ -342,22 +348,23 @@ export function createSpaceTabs(options: Options) {
     const preview = document.createElement('div'); preview.className = 'tab-color-preview';
     const sample = document.createElement('span'); sample.className = 'tab-color-preview-tab'; preview.append(sample);
     const heading = (title: string) => { const h = document.createElement('h3'); h.className = 'tab-appearance-heading'; h.textContent = title; return h; };
-    const choices = document.createElement('div'); choices.className = 'tab-color-choices'; choices.setAttribute('role', 'group'); choices.setAttribute('aria-label', 'Tab color choices');
-    const field = document.createElement('label'); field.className = 'modal-field'; field.textContent = 'Custom color';
-    const controls = document.createElement('div'); controls.className = 'tab-color-custom';
+    const choices = document.createElement('div'); choices.className = 'slug-color-swatches'; choices.setAttribute('role', 'group'); choices.setAttribute('aria-label', 'Tab color choices');
+    const field = document.createElement('label'); field.className = 'modal-field'; field.textContent = 'Color';
+    const controls = document.createElement('div'); controls.className = 'slug-color-controls';
     const picker = document.createElement('input'); picker.type = 'color'; picker.className = 'slug-color-picker';
-    picker.value = selectedColor || '#5d6bff'; picker.setAttribute('aria-label', 'Custom tab color');
-    const hex = document.createElement('input'); hex.type = 'text'; hex.className = 'tab-color-hex';
-    hex.value = picker.value; hex.maxLength = 7; hex.spellcheck = false; hex.setAttribute('aria-label', 'Hex color'); hex.placeholder = '#5d6bff';
+    picker.value = selectedColor || '#cfe8ff'; picker.setAttribute('aria-label', 'Custom tab color');
+    const valueInput = document.createElement('input'); valueInput.type = 'hidden';
+    const auto = document.createElement('button'); auto.type = 'button'; auto.className = 'toolbar-button'; auto.textContent = 'Auto';
+    const colorPreview = document.createElement('span'); colorPreview.className = 'slug-color-preview';
     const updatePreview = () => {
       sample.textContent = `${selectedIcon} ${tab.name}`.trim();
-      sample.style.setProperty('--tab-preview-color', customDirty ? picker.value : selectedColor || 'var(--timeline-border)');
+      sample.style.setProperty('--tab-preview-color', (customDirty ? normalizeHexColorValue(valueInput.value) : selectedColor) || 'var(--timeline-border)');
     };
     const set = (kind: 'icon' | 'color', value: string) => {
       const save = pending.then(async () => {
         await mutate('appearance', tab, { appearance: { [kind]: value } });
         if (kind === 'icon') selectedIcon = value;
-        else { selectedColor = value; customDirty = false; picker.value = value || '#5d6bff'; hex.value = picker.value; hex.setCustomValidity(''); }
+        else { selectedColor = value; customDirty = false; colorUi.setColorValue(value); }
         content.querySelectorAll<HTMLButtonElement>(`[data-appearance-kind="${kind}"]`).forEach(item => item.setAttribute('aria-pressed', String(item.dataset['value'] === value)));
         updatePreview();
       });
@@ -368,27 +375,20 @@ export function createSpaceTabs(options: Options) {
       item.dataset['appearanceKind'] = kind; item.dataset['value'] = value;
       item.setAttribute('aria-pressed', String((kind === 'icon' ? selectedIcon : selectedColor).toLowerCase() === value.toLowerCase()));
     };
-    const reset = iconButton('Default', 'rotate-left', () => set('color', '')); reset.className = 'slug-color-swatch tab-color-default';
-    mark(reset, 'color', ''); choices.append(reset);
-    for (const color of SLUG_RENAME_SWATCH_COLORS) {
-      const item = button('', () => set('color', color)); item.className = 'slug-color-swatch';
-      item.style.setProperty('--swatch-color', color); item.setAttribute('aria-label', color); item.title = color;
-      mark(item, 'color', color); choices.append(item);
-    }
-    picker.addEventListener('input', () => { customDirty = true; hex.value = picker.value; hex.setCustomValidity(''); updatePreview(); });
-    hex.addEventListener('input', () => { customDirty = true; const color = normalizeHexColorValue(hex.value); hex.setCustomValidity(color ? '' : 'Enter a hex color such as #8b5cf6.'); if (color) { picker.value = color; updatePreview(); } });
+    const colorUi = createSlugColorControls({ slugRenameColor: valueInput, slugRenameColorPicker: picker,
+      slugRenameColorSwatches: choices, slugRenameColorClear: auto, slugRenameColorPreview: colorPreview }, document,
+      (value, commit) => { customDirty = true; updatePreview(); if (commit) void set('color', value).catch(error => options.notify(error.message, 'error')); });
+    colorUi.bindControls(); colorUi.setColorValue(selectedColor);
     const applyCustom = async () => {
       if (!customDirty) return true;
-      const color = normalizeHexColorValue(hex.value); hex.setCustomValidity(color ? '' : 'Enter a hex color such as #8b5cf6.');
-      if (!hex.reportValidity()) return false;
+      const color = normalizeHexColorValue(valueInput.value);
       await set('color', color); return true;
     };
     const saveCustom = () => { void applyCustom().catch(error => options.notify(error.message, 'error')); };
-    picker.addEventListener('change', saveCustom); hex.addEventListener('change', saveCustom);
-    hex.addEventListener('keydown', event => { if (event.key === 'Enter') { event.preventDefault(); saveCustom(); } });
+    picker.addEventListener('change', saveCustom);
     const done = button('Done', async () => { await pending; if (await applyCustom()) d.close(); }); done.className = 'toolbar-button primary'; footer.append(done);
-    controls.append(picker, hex); field.append(controls);
-    content.append(help, preview, heading('Color'), choices, field, heading('Icon'));
+    controls.append(picker, auto, colorPreview); field.append(valueInput, choices, controls);
+    content.append(help, preview, field, heading('Icon'));
     const icons = document.createElement('div'); icons.className = 'tab-icon-choices'; icons.setAttribute('role', 'group'); icons.setAttribute('aria-label', 'Tab icons');
     const choice = (emoji: string, name: string) => {
       const item = button(emoji, () => set('icon', emoji)); item.className = 'tab-icon-choice';
@@ -427,7 +427,7 @@ export function createSpaceTabs(options: Options) {
     // Use positions captured before the preview shifts tabs so the target remains
     // stable while the pointer crosses the animated gap.
     const x = event.clientX - scroll;
-    if (!dragRects.length || x < dragRects[0]!.left) { clearTabDrop(); return; }
+    if (!dragRects.length) { clearTabDrop(); return; }
     const target = dragRects.find(rect => x <= rect.right) || dragRects[dragRects.length - 1]!;
     if (target.id === draggedTabId) { clearTabDrop(); return; }
     const after = x >= (target.left + target.right) / 2;
@@ -560,24 +560,48 @@ export function createSpaceTabs(options: Options) {
   window.setInterval(() => void refresh(), 3000);
   window.addEventListener('beforeunload', saveView);
   return {
+    async openDocument(id: string) {
+      const tab = listing?.tabs.find(tab => tab.id === id);
+      if (!tab) throw new Error('The source tab is no longer available.');
+      if (tab.closed) {
+        if (!options.canEdit()) throw new Error('Ask a space editor to reopen the source tab.');
+        await reopenTab(tab);
+      } else await activate(id);
+      if (active !== id) throw new Error('The source tab could not be opened. Try again.');
+    },
     openSpace, flush, refresh, render, activate, editOrigin, sourceDocuments, renameReferences,
     showReferenceDiagnostics(messages: string[]) { referenceDiagnostic.textContent = messages.join(' '); referenceDiagnostic.hidden = !messages.length; },
-    async transfer(origin: TaskOrigin, mode: 'move' | 'reference' | 'reference-only', line: number, prepare?: (source: string, line: number) => string) {
-      if (!listing || !options.canEdit() || !active) return;
-      if (origin.documentId === active) throw new Error('The original task is already in this tab.');
+    async createTaskTab(name: string) {
+      if (!listing || !options.canEdit()) throw new Error('Connect to an editable space first.');
       await flush();
-      const documents = sourceDocuments(), source = documents.find(doc => doc.id === origin.documentId), destination = documents.find(doc => doc.id === active);
+      const next: Listing = await request(`/api/tab-spaces/${listing.id}/tabs/add`, { revision: listing.revision, name });
+      await apply(next);
+      return next.tabs.find(tab => tab.id === next.created)!;
+    },
+    async importTasks(origins: TaskOrigin[], mode: 'move' | 'reference' | 'reference-only', parentLine?: number, expectedTarget?: string, leaveReference = false, prepare?: (source: string, line: number) => string) {
+      if (!listing || !active || !options.canEdit()) return;
+      await flush();
+      const documents = sourceDocuments();
+      if (expectedTarget !== undefined && documents.find(doc => doc.id === active)?.text !== expectedTarget) throw new Error('The destination changed. Reopen the menu and try again.');
+      const changes = importTaskSelection(documents, origins, active, mode, parentLine, leaveReference, prepare);
+      await request(`/api/tab-spaces/${listing.id}/documents`, { changes });
+    },
+    async transfer(origin: TaskOrigin, mode: 'move' | 'reference' | 'reference-only', line: number, prepare?: (source: string, line: number) => string, destinationId = active, leaveReference = false) {
+      if (!listing || !options.canEdit() || !active) return;
+      if (origin.documentId === destinationId) throw new Error('The original task is already in this tab.');
+      await flush();
+      const documents = sourceDocuments(), source = documents.find(doc => doc.id === origin.documentId), destination = documents.find(doc => doc.id === destinationId);
       if (!source || !destination || source.text !== origin.source) throw new Error('The original task changed while dragging. Retry the drag.');
       const updatedSource = prepare ? prepare(source.text, origin.lineIndex) : source.text;
-      const result = transferTask(updatedSource, origin.lineIndex, destination.text, line, source.name, mode);
+      const result = transferTask(updatedSource, origin.lineIndex, destination.text, line, source.name, mode, leaveReference ? destination.name : undefined);
       const changes = documents.map(doc => {
-        let text = doc.id === active ? result.destination : doc.id === source.id ? result.source : doc.text;
+        let text = doc.id === destinationId ? result.destination : doc.id === source.id ? result.source : doc.text;
         if (mode === 'move') for (const name of result.names) text = rewriteTaskReferences(text, source.name, name, destination.name, name);
         return { id: doc.id, expected: doc.text, text };
       }).filter(doc => doc.expected !== doc.text);
       await request(`/api/tab-spaces/${listing.id}/documents`, { changes });
     },
-    async saveShared(change: any) {
+    async saveShared(change: any, moveLocal = false) {
       if (!listing) throw new Error("Connect to a space first.");
       await flush();
       const snapshot = await request(`/api/tab-spaces/${listing.id}/contents`);
@@ -586,6 +610,7 @@ export function createSpaceTabs(options: Options) {
         const section = change.kind === "tag" ? "tags" : change.kind === "person" ? "people" : "states";
         if (change.oldSlug !== change.newSlug && ((parsed.config as any)[section].some((entry: any) => entry.key === change.newSlug) || replaceSlugTokenOccurrences(doc.text, change.prefix + change.newSlug, change.prefix + change.newSlug).count > 0)) throw new Error(`The slug ${change.newSlug} already exists in a tab.`);
         const result = renameSlugInWholeFile(doc.text, doc.kind === "defs" ? change : { ...change, metadata: undefined });
+        if (moveLocal && doc.id === active && doc.kind === 'task') result.text = removeSlugDefinition(result.text, change.kind, change.newSlug);
         return { id: doc.id, expected: doc.text, text: result.text };
       }).filter((doc: any) => doc.expected !== doc.text);
       await request(`/api/tab-spaces/${listing.id}/definitions`, { changes });
