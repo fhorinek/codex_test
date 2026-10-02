@@ -2040,6 +2040,21 @@ function updateBoardConnectionLabel() {
     dom.boardMobileConnection.textContent = statusLabel;
     dom.boardMobileConnection.className = `connection-status board-mobile-connection ${normalizedStatus}`;
   };
+  if (tabMode === "jira") {
+    const title = spaceTabs?.systemTabName || "JIRA Daemon";
+    if (dom.boardTitle) dom.boardTitle.textContent = title;
+    document.title = title;
+    if (dom.boardConnection) {
+      dom.boardConnection.textContent = "System tab";
+      dom.boardConnection.classList.remove("hidden");
+    }
+    if (dom.boardMobileConnection) {
+      dom.boardMobileConnection.textContent = "System tab";
+      dom.boardMobileConnection.className = "connection-status board-mobile-connection";
+    }
+    updateResponsiveLayoutOffsets();
+    return;
+  }
   if (historyMode.viewerActive && !collab.spaceId) {
     if (dom.boardConnection) {
       dom.boardConnection.textContent = "";
@@ -2399,6 +2414,8 @@ createTaskContextMenu({
   createTab: name => spaceTabs!.createTaskTab(name),
   activeTab: () => spaceTabs?.active,
   documents: () => spaceTabs?.sourceDocuments() || [],
+  jiraConfigured: () => parseSpaceJira(sharedDefinitions).configured,
+  importJira: () => jiraImport.open(),
   newTask: (parent, point) => {
     openTaskCreateModal();
     creatingTaskParentId = parent?.id || null;
@@ -3064,7 +3081,7 @@ function sync(): void {
   state.jiraTokens = jiraTokens;
   trackOfflineDraftChange(sourceText);
   if (dom.boardTitle) {
-    const title = config.boardName || "Task Script";
+    const title = tabMode === "jira" ? spaceTabs?.systemTabName || "JIRA Daemon" : config.boardName || "Task Script";
     dom.boardTitle.textContent = title;
     document.title = title;
   }
@@ -3199,6 +3216,14 @@ function refreshJiraImportButton() {
   jiraImportButton.hidden = !parseSpaceJira(sharedDefinitions).configured || tabMode !== 'task';
   jiraImportButton.disabled = historyMode.viewerActive || !collab.isAuthenticated;
 }
+function buildJiraImportDocument(data: import('./jiraImport.js').JiraImportPreview, currentSource: string): string {
+  let source = currentSource;
+  for (const definition of data.definitions) source = renameSlugInWholeFile(source, {
+    kind: definition.kind, prefix: definition.kind === 'state' ? '!' : '@', oldSlug: definition.slug, newSlug: definition.slug,
+    metadata: definition.metadata, rootName: spaceTabs?.active?.name || 'Tasks',
+  }).text;
+  return source + (source && !source.endsWith('\n') ? '\n' : '') + (source.trim() ? '\n' : '') + data.script;
+}
 const jiraImport = createJiraImport({
   context: () => ({ space: spaceTabs?.space?.id || '', document: spaceTabs?.active?.id || '', source: editorController.getValue(), definitions: sharedDefinitions }),
   projects: jiraImportProjects, issues: jiraImportSuggestions,
@@ -3210,25 +3235,10 @@ const jiraImport = createJiraImport({
     const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Unable to load Jira task.'); return data;
   },
   render: (host, data) => {
-    const peopleMeta = new Map<string, any>(state.peopleMeta);
-    for (const definition of data.definitions) if (definition.kind === 'person') peopleMeta.set('@' + definition.slug, definition.metadata);
-    for (const task of data.tasks) {
-      const card = document.createElement('div'); card.className = 'task-preview-card'; card.style.marginLeft = task.depth ? '24px' : '';
-      applyTaskBackground(card, { tags: task.tags.map((tag: string) => '#' + tag) }, state.tagMeta, '#121524');
-      const header = document.createElement('div'); header.className = 'task-header';
-      const title = document.createElement('h4'); title.textContent = task.title; header.append(title);
-      const key = document.createElement('span'); key.className = 'pill jira-pill'; key.textContent = task.key; header.append(key);
-      if (task.state) {
-        const metadata: any = state.stateMeta.get('!' + task.state) || data.definitions.find(item => item.kind === 'state' && item.slug === task.state)?.metadata;
-        const pill = document.createElement('span'); pill.className = 'pill state-pill'; pill.textContent = metadata?.name || task.state;
-        if (metadata?.color) { pill.style.color = metadata.color; pill.style.borderColor = metadata.color; card.style.borderColor = metadata.color; }
-        header.append(pill);
-      }
-      if (task.story_points != null) { const pill = document.createElement('span'); pill.className = 'pill story-points-pill'; pill.textContent = '★ ' + task.story_points; header.append(pill); }
-      const description = [task.tags.map((tag: string) => '#' + tag).concat(task.people.map((person: string) => '@' + person)).join(' '), ...task.description.split('\n')];
-      const { node } = renderTaskDescriptionNode({ task: { description }, renderMarkdown, className: 'description', disableLinks: true });
-      decorateDescriptionPills(node, { tagMeta: state.tagMeta, peopleMeta, colorText: true });
-      node.querySelectorAll<HTMLInputElement>('input').forEach(input => input.disabled = true); card.append(header, node); host.append(card);
+    const parsed = parseTasks(buildJiraImportDocument(data, editorController.getValue()), sharedDefinitions);
+    const keys = new Set(data.tasks.map(task => task.key));
+    for (const task of parsed.allTasks.filter(task => keys.has(task.jiraKey)).slice(-data.tasks.length)) {
+      host.append(canvasController.createTaskPreview(task, parsed));
     }
   },
   commit: (data, context) => {
@@ -3236,12 +3246,7 @@ const jiraImport = createJiraImport({
     const existing = new Set(parseTasks(context.source).allTasks.map(task => task.jiraKey));
     const duplicate = data.tasks.find(task => existing.has(task.key));
     if (duplicate) throw new Error(`${duplicate.key} is already in this tab.`);
-    let source = context.source;
-    for (const definition of data.definitions) source = renameSlugInWholeFile(source, {
-      kind: definition.kind, prefix: definition.kind === 'state' ? '!' : '@', oldSlug: definition.slug, newSlug: definition.slug,
-      metadata: definition.metadata, rootName: spaceTabs?.active?.name || 'Tasks',
-    }).text;
-    applyEditorValue(source + (source && !source.endsWith('\n') ? '\n' : '') + (source.trim() ? '\n' : '') + data.script);
+    applyEditorValue(buildJiraImportDocument(data, context.source));
     syncEditorState();
   },
 });
@@ -9885,6 +9890,7 @@ if (dom.graphAddTask) {
 if (dom.boardTitle) {
   dom.boardTitle.addEventListener("dblclick", (event: any) => {
     event.preventDefault();
+    if (tabMode === "jira") return;
     openBoardRenameModal();
   });
 }

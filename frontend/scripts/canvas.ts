@@ -1207,7 +1207,7 @@ export function createCanvas({
     lineAnimationFrame = requestAnimationFrame(tick);
   };
 
-  const renderTaskNodeContent = (node: any, task: any): void => {
+  const renderTaskNodeContent = (node: any, task: any, preview = false): void => {
     const metadata = task.originMeta || state;
     const wasDragging = node.classList.contains("dragging");
     node.className = "task-node";
@@ -1216,10 +1216,10 @@ export function createCanvas({
     if (wasDragging) {
       node.classList.add("dragging");
     }
-    if (state.selectedTaskId === task.id) {
+    if (!preview && state.selectedTaskId === task.id) {
       node.classList.add("selected");
     }
-    if (state.collapsed.has(task.id)) {
+    if (!preview && state.collapsed.has(task.id)) {
       node.classList.add("collapsed");
     }
     node.style.removeProperty("--archived-stack-depth");
@@ -1239,10 +1239,10 @@ export function createCanvas({
         node.style.setProperty("--archived-stack-depth", String(Math.min(archivedStackIndex, 4)));
       }
     }
-    if (!matchesFiltersTask(task)) {
+    if (!preview && !matchesFiltersTask(task)) {
       node.classList.add("dimmed");
     }
-    if (matchesSearch(task)) {
+    if (!preview && matchesSearch(task)) {
       node.classList.add("search-highlight");
     }
     node.innerHTML = "";
@@ -1278,7 +1278,7 @@ export function createCanvas({
       : (subtaskStoryPoints > 0 ? `★ +${formatStoryPointsNumber(subtaskStoryPoints)}` : "");
     if (task.state) {
       const statePill = createTaskStatePill(task.state, metadata.stateMeta?.get(task.state));
-      statePill.draggable = !isResponsiveDragDisabled();
+      statePill.draggable = !preview && !isResponsiveDragDisabled();
       statePill.addEventListener("dragstart", (event: any) => {
         if (isResponsiveDragDisabled()) {
           event.preventDefault();
@@ -1348,7 +1348,7 @@ export function createCanvas({
          * Input: name: string.
          * Output: result produced by this function.
          */
-        resolveTaskByName: (name: string) => findTaskByName(name),
+        resolveTaskByName: (name: string) => (preview ? metadata.allTasks?.find((item: any) => item.name === name) : null) || findTaskByName(name),
         /**
          * Handles the getResolvedTitle function logic.
          * Input: target: any.
@@ -1371,8 +1371,8 @@ export function createCanvas({
       decorateDescriptionPills(desc, {
         tagMeta: metadata.tagMeta,
         peopleMeta: metadata.peopleMeta,
-        selectedTags: state.selectedTags,
-        selectedPeople: state.selectedPeople,
+        selectedTags: preview ? undefined : state.selectedTags,
+        selectedPeople: preview ? undefined : state.selectedPeople,
         /**
          * Handles the onPill function logic.
          * Input: { pill, type, value }: any.
@@ -2277,6 +2277,18 @@ export function createCanvas({
     matchesFiltersTask,
     matchesSearch,
     renderGraph,
+    createTaskPreview(task: any, metadata: any) {
+      const node = document.createElement('div');
+      renderTaskNodeContent(node, { ...task, originMeta: metadata }, true);
+      node.classList.add('jira-import-card');
+      node.style.marginLeft = task.depth ? `${task.depth * 24}px` : '';
+      node.querySelectorAll<HTMLElement>('[draggable]').forEach(item => item.draggable = false);
+      node.querySelectorAll<HTMLElement>('a, button, input, [tabindex]').forEach(item => {
+        item.tabIndex = -1;
+        if (item instanceof HTMLInputElement) item.disabled = true;
+      });
+      return node;
+    },
     focusOnTask,
     applyTransform,
     toggleTag,

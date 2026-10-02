@@ -3392,18 +3392,21 @@ jira_daemons = JiraDaemons(tab_store, daemon_definitions, daemon_environment)
 
 @app.get('/api/jira-daemon')
 async def read_jira_daemon(space: str, user: AuthUser = Depends(require_auth)):
+    if not can_manage_jira(user): raise HTTPException(403, "Only admins can access Jira daemon tools.")
     _, item = authorized_tab_space(space, user)
     return jira_daemons.status(item['id'])
 
 
 @app.get('/api/jira-cache')
 async def read_jira_cache(space: str, user: AuthUser = Depends(require_auth)):
+    if not can_manage_jira(user): raise HTTPException(403, "Only admins can access Jira daemon tools.")
     _, item = authorized_tab_space(space, user)
     return jira_daemons.cache(item['id'])
 
 
 @app.post('/api/jira-daemon/{action}')
 async def control_jira_daemon(action: str, space: str, user: AuthUser = Depends(require_auth)):
+    if not can_manage_jira(user): raise HTTPException(403, "Only admins can access Jira daemon tools.")
     _, item = authorized_tab_space(space, user)
     if action not in ('start', 'stop', 'restart', 'sync'): raise HTTPException(400, 'Unknown daemon command.')
     try: return await jira_daemons.command(item['id'], action)

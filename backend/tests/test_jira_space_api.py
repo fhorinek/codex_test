@@ -126,7 +126,20 @@ class JiraSpaceApiTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(server.jira_daemons, 'command', new_callable=AsyncMock, return_value={'running': True}) as command:
             with self.assertRaises(server.HTTPException): await server.control_jira_daemon('start', sid, outsider)
             command.assert_not_called()
-            self.assertTrue((await server.control_jira_daemon('sync', sid, self.user))['running'])
+            self.assertTrue((await server.control_jira_daemon('sync', sid, self.admin))['running'])
             command.assert_awaited_once_with(sid, 'sync')
-            with self.assertRaises(server.HTTPException): await server.control_jira_daemon('invalid', sid, self.user)
-        self.assertEqual(await server.read_jira_cache(sid, self.user), {})
+            with self.assertRaises(server.HTTPException): await server.control_jira_daemon('invalid', sid, self.admin)
+        self.assertEqual(await server.read_jira_cache(sid, self.admin), {})
+
+    async def test_daemon_tools_reject_non_admin_space_editors_and_managers(self):
+        sid = self.space['id']
+        for user in (self.user, server.AuthUser(self.user.username, 'Manager', 'manager', self.user.spaces)):
+            for endpoint in (server.read_jira_daemon, server.read_jira_cache):
+                with self.assertRaises(server.HTTPException) as error:
+                    await endpoint(sid, user)
+                self.assertEqual(error.exception.status_code, 403)
+            with patch.object(server.jira_daemons, 'command', new_callable=AsyncMock) as command:
+                with self.assertRaises(server.HTTPException) as error:
+                    await server.control_jira_daemon('start', sid, user)
+                self.assertEqual(error.exception.status_code, 403)
+                command.assert_not_called()

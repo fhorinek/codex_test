@@ -478,7 +478,8 @@ and accepts Jira’s actual state while retaining the new issue link. If Jira ca
 be read, it keeps our state until verification becomes possible. A recovery journal
 retains returned issue keys across interruptions to prevent duplicate creation.
 
-The **JIRA** tab appears after the document tabs when Jira is configured. It shows
+The **JIRA Daemon** tab appears after the document tabs for admins when Jira is configured.
+The daemon and cache tabs, their Open menu entries, and daemon tools are admin-only. It shows
 space-local daemon activity and **Start**, **Stop**, **Restart**, **Sync now**, and
 **Show cache** controls. Show cache opens a separate **JIRA Cache** tab. Logs are
 limited to the latest 1,000 lines of this server session. Closing either tab only
@@ -506,12 +507,13 @@ sync data, not API credentials. Restart rebuilds the in-memory lookup cache from
 the source documents and Jira; recovery records continue preventing duplicate
 issue creation. The server stops its workers when shutting down.
 
-The JIRA tab also has an **Autostart** checkbox, saving the space's `autostart`
+The JIRA Daemon tab also has an **Autostart** checkbox, saving the space's `autostart`
 setting directly in shared definitions. The cache viewer expands nested objects
 and arrays with keyboard-accessible disclosure arrows. **Expand all** and
 **Collapse all** control the whole tree; refreshes preserve expanded sections.
 
-When Jira is configured, **+ Add task from JIRA** opens an issue importer. Type a
+When Jira is configured, **From Jira** beside **Add Task**, or **Add task from JIRA**
+in the graph/timeline task dropdown, opens an issue importer. Type a
 complete key such as `DEMO-123`, or choose an issue from the project/issue
 suggestions. A valid key immediately loads a preview using the daemon's Jira
 transformations, including state/people mappings, labels, issue type, description,
@@ -522,3 +524,10 @@ Checking it loads their previews and imports them under the parent.
 and people definitions are added locally. Previewing makes no changes. Import
 uses normal undo/redo and synchronization. Issues already in the active tab are
 rejected, and changing the tab or definitions requires a fresh preview.
+
+Middle-click a tab with the mouse wheel to close it, just like its × button.
+This also works for definitions and JIRA tabs; use **Open** to reopen them.
+
+The Open menu groups Jira tools separately from document tabs. Daemon logs use
+severity colors, expandable JSON payloads, and tables for synchronization
+differences. Incomplete payloads remain visible as plain text.

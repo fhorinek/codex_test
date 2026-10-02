@@ -98,6 +98,7 @@ export function createTaskContextMenu(options: {
   createTab: (name: string) => Promise<Tab>;
   activeTab: () => Tab | undefined; documents: () => ReferenceDocument[];
   newTask: (parent: any | null, point: Point) => void;
+  jiraConfigured?: () => boolean; importJira?: () => void;
   importTasks: (origins: TaskOrigin[], mode: Mode, parent: any | null, point: Point, leave: boolean, expectedTarget: string) => Promise<void>;
   transfer: (origin: TaskOrigin, tab: Tab, mode: Mode, leave: boolean) => Promise<void>;
   notify: (message: string) => void;
@@ -157,6 +158,7 @@ export function createTaskContextMenu(options: {
       const add = action(menu, 'Add task', 'plus', () => { close(); options.newTask(task, point); });
       add.disabled = Boolean(task?.archived);
       if (add.disabled) add.title = 'Archived tasks cannot be parents.';
+      if (options.jiraConfigured?.() && options.importJira) action(menu, 'Add task from JIRA', 'download', () => { close(); options.importJira!(); });
       for (const [mode, label, glyph] of [['move', 'Move task here', 'arrow-down'], ['reference-only', 'Reference tasks here', 'link'], ['reference', 'Reference tasks with subtasks here', 'sitemap']] as const) {
         const incoming = action(menu, label, glyph, async () => {
           close(); const active = options.activeTab(); if (!active) return;

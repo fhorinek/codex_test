@@ -1,3 +1,4 @@
+import { createJiraLogViewer } from "./jiraLogs.js";
 import { createJsonViewer } from "./jsonViewer.js";
 /** Read-only space-local daemon logs and cache, with authenticated controls. */
 export function createJiraPanel(options: {
@@ -8,7 +9,7 @@ export function createJiraPanel(options: {
   panel.setAttribute('aria-label', 'JIRA daemon'); document.querySelector('.app')!.append(panel);
   const toolbar = document.createElement('div'); toolbar.className = 'jira-panel-toolbar';
   const status = document.createElement('span'); status.className = 'jira-daemon-state'; status.setAttribute('role', 'status');
-  const output = document.createElement('pre'); output.className = 'jira-panel-output'; output.tabIndex = 0;
+  const logs = createJiraLogViewer(); const output = logs.element;
   const viewer = createJsonViewer(); viewer.element.hidden = true;
   const autoLabel = document.createElement('label'); autoLabel.className = 'jira-autostart';
   const autostart = document.createElement('input'); autostart.type = 'checkbox';
@@ -34,11 +35,9 @@ export function createJiraPanel(options: {
     try {
       const data = await request(cache ? '/api/jira-cache' : '/api/jira-daemon');
       if (token !== generation) return;
-      const bottom = output.scrollHeight - output.scrollTop - output.clientHeight < 40;
       status.textContent = cache ? 'JIRA cache' : data.running ? 'Running' : 'Stopped';
       if (cache) { viewer.update(data, space); return; }
-      const content = data.logs.join('\n') || 'No daemon activity yet.';
-      if (output.textContent !== content) { output.textContent = content; if (bottom && !cache) output.scrollTop = output.scrollHeight; }
+      logs.update(data.logs, space);
     } catch (error: any) { if (token === generation) status.textContent = error.message; }
   }
   for (const [label, action, glyph] of [['Start', 'start', 'play'], ['Stop', 'stop', 'stop'], ['Restart', 'restart', 'rotate-right'], ['Sync now', 'sync', 'arrows-rotate'], ['Show cache', 'cache', 'database']]) {
@@ -66,7 +65,7 @@ export function createJiraPanel(options: {
       output.hidden = showCache; viewer.element.hidden = !showCache;
       autoLabel.hidden = showCache; updateAutostart();
       cacheControls.forEach(button => button.hidden = !showCache);
-      output.textContent = 'Loading…'; status.textContent = '';
+      logs.reset(); status.textContent = '';
       buttons.forEach((item, index) => { item.hidden = showCache; item.disabled = index !== 4 && !options.canEdit(); });
       void refresh();
     },

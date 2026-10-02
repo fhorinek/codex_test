@@ -1455,6 +1455,7 @@ html[data-viewport="tablet"] .kanban-card-description {
 .task-edit-jira-field, .task-edit-jira-options { width: 100%; min-width: 0; }
 .task-edit-jira-field input { width: 100%; min-width: 0; box-sizing: border-box; }
 .task-edit-jira-options { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow: auto; padding: 4px; box-sizing: border-box; border: 1px solid var(--timeline-border); border-radius: 8px; background: var(--timeline-ruler); box-shadow: 0 6px 18px #0002; }
+.task-edit-jira-options[hidden], .task-edit-jira-options:empty { display: none; }
 .task-edit-jira-options .pill { text-align: left; white-space: normal; border: 0; border-radius: 5px; background: transparent; }
 .task-edit-jira-options .pill:hover { background: var(--timeline-switch); }
 .task-edit-jira-options small { display: block; font-weight: normal; }
@@ -6153,3 +6154,39 @@ html[data-theme="dark"] :is(.jira-json-number, .jira-json-boolean) { color: #d4a
 .jira-import-preview { display: grid; gap: 10px; max-height: 45vh; overflow: auto; }
 .jira-import-children { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 12px 0; }
 .jira-import-children input { margin: 0; accent-color: var(--timeline-accent); }
+
+.topbar-task-actions { display: inline-flex; align-items: center; gap: 0; }
+.topbar-task-actions .toolbar-button.topbar-add-task { border-radius: 0; }
+.topbar-task-actions:is(:hover, :focus-within) .toolbar-button.topbar-add-task:not(:disabled) { border-color: #8fa4ff; background: #f6f7ff; }
+html[data-theme="dark"] .topbar-task-actions:is(:hover, :focus-within) .toolbar-button.topbar-add-task:not(:disabled) { border-color: #3b425a; background: #1b2234; }
+html:is([data-viewport="mobile"], [data-viewport="tablet"]) .topbar-task-actions { display: contents; }
+
+.jira-import-preview { padding: 6px; }
+.jira-import-preview .jira-import-card { position: relative; max-width: 100%; cursor: default; transform: none; will-change: auto; }
+.jira-import-card > * { pointer-events: none; }
+
+.space-tab-open-jira { display: grid; }
+.jira-log-entry { color: var(--timeline-text); }
+.jira-log-time { color: var(--timeline-muted); }
+.jira-log-debug { color: var(--timeline-muted); }
+.jira-log-info { color: #315eb4; }
+.jira-log-success { color: #237342; }
+.jira-log-warning { color: #996100; }
+.jira-log-error, .jira-log-critical { color: #be3039; }
+html[data-theme="dark"] .jira-log-info { color: #98b7f7; }
+html[data-theme="dark"] .jira-log-success { color: #91d6a8; }
+html[data-theme="dark"] .jira-log-warning { color: #f0c275; }
+html[data-theme="dark"] :is(.jira-log-error, .jira-log-critical) { color: #ff949a; }
+.jira-log-json > summary { cursor: pointer; padding: 3px 0; }
+.jira-log-json .jira-json-viewer { padding: 8px 12px; border-left: 1px solid var(--timeline-border); }
+.jira-log-table-wrap { max-width: 100%; overflow-x: auto; margin: 10px 0; white-space: normal; }
+.jira-log-differences { width: 100%; border-collapse: collapse; color: var(--timeline-text); font-size: 12px; line-height: 1.5; }
+.jira-log-differences caption { text-align: left; font-weight: 600; padding-bottom: 6px; }
+.jira-log-differences th, .jira-log-differences td { border: 1px solid var(--timeline-border); padding: 6px 8px; text-align: left; vertical-align: top; white-space: pre-wrap; overflow-wrap: anywhere; min-width: 64px; }
+.jira-log-differences th { background: var(--timeline-ruler); }
+.jira-log-difference { background: var(--timeline-switch); }
+
+/* Task creation belongs to task tabs; Jira tools have no document toolbar. */
+html:is([data-tab-mode="defs"], [data-tab-mode="empty"], [data-tab-mode="jira"]) .topbar-task-actions,
+html:is([data-tab-mode="defs"], [data-tab-mode="empty"], [data-tab-mode="jira"]) :is(#graph-add-task, #jira-import-task),
+html[data-tab-mode="jira"] :is(#undo-button, #redo-button, #load-button, #format-button, #history-button) { display: none !important; }

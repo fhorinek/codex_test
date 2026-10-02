@@ -67,14 +67,15 @@ export function createSpaceTabs(options: Options) {
   } });
   function jiraTabs() {
     const source = defsText?.toString() || '';
-    if (!parseSpaceJira(source).configured) return [];
+    if (options.collab.role !== 'admin' || !parseSpaceJira(source).configured) return [];
     const flags = jiraViewOptions(source);
-    return [{ id: 'jira:logs', name: 'JIRA', visible: flags.show_logs }, { id: 'jira:cache', name: 'JIRA Cache', visible: flags.show_cache }];
+    return [{ id: 'jira:logs', name: 'JIRA Daemon', visible: flags.show_logs }, { id: 'jira:cache', name: 'JIRA Cache', visible: flags.show_cache }];
   }
   async function setJiraVisible(kind: string, visible: boolean) {
     await setJiraOption(kind === 'cache' ? 'show_cache' : 'show_logs', visible);
   }
   async function setJiraOption(property: 'autostart' | 'show_cache' | 'show_logs', visible: boolean) {
+    if (options.collab.role !== 'admin') throw new Error('Only admins can manage Jira tabs.');
     if (!options.canEdit() || !defsProvider?.synced || !defsProvider?.wsconnected) throw new Error('Reconnect before changing Jira tabs.');
     const source = defsText.toString(), range = jiraMetadataRanges(source)[0];
     if (!range) return;
@@ -160,6 +161,14 @@ export function createSpaceTabs(options: Options) {
   function icon(name: string) {
     const element = document.createElement('i'); element.className = `fa-solid fa-${name}`;
     element.setAttribute('aria-hidden', 'true'); return element;
+  }
+  function middleClickClose(item: HTMLElement, close: HTMLButtonElement) {
+    item.addEventListener('mousedown', event => { if (event.button === 1) event.preventDefault(); });
+    item.addEventListener('auxclick', event => {
+      if (event.button !== 1) return;
+      event.preventDefault(); event.stopPropagation();
+      if (!close.disabled) close.click();
+    });
   }
   function iconButton(label: string, glyph: string, action: () => any) {
     const result = button('', action); result.append(icon(glyph));
@@ -252,9 +261,15 @@ export function createSpaceTabs(options: Options) {
       item.append(glyph, name); menu.append(item);
     }
     const closedJira = jiraTabs().filter(tab => !tab.visible);
+    const jiraGroup = document.createElement('div'); jiraGroup.className = 'space-tab-open-jira'; jiraGroup.setAttribute('role', 'group'); jiraGroup.setAttribute('aria-label', 'Jira tools');
+    if (closedJira.length) {
+      if (closed.length) { const separator = document.createElement('div'); separator.className = 'space-tab-menu-separator'; separator.setAttribute('role', 'separator'); menu.append(separator); }
+      const heading = document.createElement('div'); heading.className = 'space-tab-menu-empty'; heading.textContent = 'Jira tools'; jiraGroup.append(heading); menu.append(jiraGroup);
+    }
     for (const tab of closedJira) {
       const item = button(tab.name, async () => { closeContextMenu(); await setJiraVisible(tab.id.split(':')[1]!, true); await activate(tab.id); });
-      item.setAttribute('role', 'menuitem'); item.disabled = !options.canEdit(); menu.append(item);
+      item.setAttribute('role', 'menuitem'); item.disabled = !options.canEdit();
+      item.prepend(icon(tab.id === 'jira:logs' ? 'terminal' : 'database')); jiraGroup.append(item);
     }
     if (!closed.length && !closedJira.length) {
       const empty = document.createElement('div'); empty.className = 'space-tab-menu-empty'; empty.textContent = 'No closed tabs.'; menu.append(empty);
@@ -539,6 +554,7 @@ export function createSpaceTabs(options: Options) {
       const close = iconButton(`Close ${tab.name}`, 'xmark', () => mutate('close', tab));
       close.className = 'space-tab-close'; close.disabled = !options.canEdit(); close.draggable = false;
       close.addEventListener('dragstart', event => event.preventDefault());
+      middleClickClose(item, close);
       item.append(select, close);
       item.addEventListener('contextmenu', event => { event.preventDefault(); showContextMenu(tab, select, event.clientX, event.clientY); });
       select.addEventListener('keydown', event => {
@@ -568,6 +584,7 @@ export function createSpaceTabs(options: Options) {
       const item = document.createElement('div'); item.className = 'space-tab'; item.classList.toggle('active', active === tab.id);
       const select = button(tab.name, () => activate(tab.id)); select.className = 'space-tab-select'; select.setAttribute('role', 'tab'); select.setAttribute('aria-selected', String(active === tab.id));
       const close = iconButton(`Close ${tab.name}`, 'xmark', () => closeJiraTab(tab.id)); close.className = 'space-tab-close'; close.disabled = !options.canEdit();
+      middleClickClose(item, close);
       item.append(select, close); tabs.append(item);
     }
     diagnostic.hidden = !diagnostic.textContent || listing.tabs.find(t => t.id === active)?.kind !== 'defs';
@@ -681,6 +698,7 @@ export function createSpaceTabs(options: Options) {
     },
     get space() { return listing; },
     get active() { return listing?.tabs.find(t => t.id === active); },
+    get systemTabName() { return jiraTabs().find(tab => tab.id === active)?.name; },
     get definitions() { return defsText?.toString() || ''; },
     disconnect() { jiraPanel.hide(); generation++; saveView(); clearReferences(); defsProvider?.destroy(); defsDoc?.destroy(); defsText = null; listing = null; active = ''; options.definitions(''); options.mode('task'); render(); },
   };
