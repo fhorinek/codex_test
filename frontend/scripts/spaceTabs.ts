@@ -651,6 +651,9 @@ export function createSpaceTabs(options: Options) {
       if (active !== id) throw new Error('The source tab could not be opened. Try again.');
     },
     openSpace, flush, refresh, render, activate, editOrigin, sourceDocuments, renameReferences,
+    async downloadSystemTab() {
+      if (options.collab.role === 'admin' && active.startsWith('jira:')) await jiraPanel.download();
+    },
     showReferenceDiagnostics(messages: string[]) { referenceDiagnostic.textContent = messages.join(' '); referenceDiagnostic.hidden = !messages.length; },
     async createTaskTab(name: string) {
       if (!listing || !options.canEdit()) throw new Error('Connect to an editable space first.');

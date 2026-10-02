@@ -9391,6 +9391,7 @@ if (dom.saveButton) {
     if (historyMode.viewerActive) {
       return;
     }
+    if (tabMode === 'jira') { void spaceTabs?.downloadSystemTab(); return; }
     const title = state.config?.boardName || dom.boardTitle?.textContent || "tasks";
     const filename = `${toSafeFilename(title)}.txt`;
     const blob = new Blob([editorController.getValue()], { type: "text/plain" });

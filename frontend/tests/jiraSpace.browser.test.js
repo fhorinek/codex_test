@@ -103,6 +103,9 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     await differences.waitFor();
     assert.equal(await differences.getByRole('cell', { name: 'Our title', exact: true }).isVisible(), true);
     assert.equal(await differences.getByRole('cell', { name: 'Jira title', exact: true }).isVisible(), true);
+    const [logDownload] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download', exact: true }).click()]);
+    assert.equal(logDownload.suggestedFilename(), 'jira-daemon.log');
+    assert.equal(await fs.readFile(await logDownload.path(), 'utf8'), logFixture.join('\n') + '\n');
     const autostart = page.getByRole('checkbox', { name: 'Autostart', exact: true });
     assert.equal(await autostart.isChecked(), false);
     await autostart.check();
@@ -124,6 +127,9 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     assert.equal(await page.locator('#board-title').textContent(), 'JIRA Cache');
     assert.equal(await page.locator('#board-connection').textContent(), 'System tab');
     assert.equal(await page.title(), 'JIRA Cache');
+    const [cacheDownload] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download', exact: true }).click()]);
+    assert.equal(cacheDownload.suggestedFilename(), 'jira-cache.json');
+    assert.deepEqual(JSON.parse(await fs.readFile(await cacheDownload.path(), 'utf8')), { 'jira-cache.json': { caches: { issue: 'DEMO-42' } } });
     const cachedIssue = cacheViewer.getByText('\"DEMO-42\"', { exact: true });
     assert.equal(await cachedIssue.isVisible(), false);
     await page.getByRole('button', { name: 'Expand all', exact: true }).click();

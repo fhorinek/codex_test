@@ -539,3 +539,6 @@ including closed tabs. Entering an already linked key displays a notice instead 
 **Clear cache** in JIRA Cache removes the synchronization cache and restarts a running
 worker to reset its in-memory cache. A stopped worker stays stopped. The cache is
 rebuilt on the next synchronization; the issue-creation recovery journal is retained.
+
+The toolbar **Download** button exports `jira-daemon.log` from JIRA Daemon and
+`jira-cache.json` from JIRA Cache, using a fresh snapshot from the server.

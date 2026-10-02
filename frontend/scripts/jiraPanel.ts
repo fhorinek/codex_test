@@ -81,6 +81,20 @@ export function createJiraPanel(options: {
       void refresh();
     },
     updateAutostart,
+    async download() {
+      if (panel.hidden) return;
+      const token = generation, downloadingCache = cache;
+      try {
+        const data = await request(downloadingCache ? '/api/jira-cache' : '/api/jira-daemon');
+        if (token !== generation || panel.hidden) return;
+        const text = downloadingCache ? JSON.stringify(data, null, 2) + '\n' : data.logs.join('\n') + (data.logs.length ? '\n' : '');
+        const blob = new Blob([text], { type: downloadingCache ? 'application/json' : 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a'); link.href = url;
+        link.download = downloadingCache ? 'jira-cache.json' : 'jira-daemon.log';
+        document.body.append(link); link.click(); link.remove(); URL.revokeObjectURL(url);
+      } catch (error: any) { if (token === generation) options.notify(error.message, 'error'); }
+    },
     hide() { generation++; panel.hidden = true; },
   };
 }

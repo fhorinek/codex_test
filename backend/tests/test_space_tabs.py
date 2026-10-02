@@ -139,7 +139,43 @@ class SpaceTabsTest(unittest.TestCase):
         self.store.reconcile()
         self.assertEqual([d['name'] for d in self.store.docs(space)], ['defs', 'main', 'middle', 'last'])
 
-if __name__ == '__main__': unittest.main()
+
+    def test_close_ignores_orphan_records_and_preserves_them(self):
+        import copy
+        orphan = copy.deepcopy(self.store.document(self.sid))
+        orphan.update(id='orphan', space_id='missing_space')
+        self.store.data['documents']['orphan'] = orphan
+        main = self.store.document(self.sid)
+        contents = self.store.read(main)
+        self.mutate('close', id=main['id'])
+        self.assertTrue(main['closed'])
+        self.assertEqual(self.store.read(main), contents)
+        self.assertEqual(self.store.data['documents']['orphan'], orphan)
+        self.assertFalse(self.store.journal_path.exists())
+        again = TabStore(self.root)
+        self.assertEqual(again.data['documents']['orphan'], orphan)
+        self.assertEqual(again.read(again.document(main['id'])), contents)
+
+    def test_interrupted_recovery_ignores_missing_and_deleted_spaces(self):
+        import copy
+        import json
+        main = self.store.document(self.sid)
+        relative = str(self.store.path(main).relative_to(self.root))
+        data = copy.deepcopy(self.store.data)
+        for name, space_id in [('orphan', 'missing'), ('deleted_space_doc', 'deleted_space'), ('deleted_doc', self.sid)]:
+            record = copy.deepcopy(main)
+            record.update(id=name, space_id=space_id)
+            if name == 'deleted_doc': record.update(deleted=True, filename='../invalid.txt')
+            data['documents'][name] = record
+        data['spaces']['deleted_space'] = {'id': 'deleted_space', 'deleted': True}
+        data['documents']['missing_space_field'] = {'id': 'missing_space_field'}
+        self.store.journal_path.write_text(json.dumps({'data': data, 'writes': {relative: '% recovered'}, 'deletes': []}))
+        again = TabStore(self.root)
+        self.assertEqual(again.read(again.document(main['id'])), '% recovered')
+        self.assertEqual(again.data['documents']['orphan'], data['documents']['orphan'])
+        self.assertEqual(again.document(main['id'])['disk_hash'], again.document(main['id'])['pending_snapshot'])
+        self.assertFalse(again.journal_path.exists())
+
 
 class TabSafetyTests(unittest.TestCase):
     def setUp(self):
@@ -207,3 +243,6 @@ class TabSafetyTests(unittest.TestCase):
         self.assertEqual(saved['anna'], local['anna'])
         self.assertNotIn('bob', saved)
         self.assertEqual(saved['cat'], added['cat'])
+
+
+if __name__ == '__main__': unittest.main()

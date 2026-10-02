@@ -188,6 +188,11 @@ class TabStore:
                 self.safe_path(relative).unlink(missing_ok=True)
         self.data = plan['data']
         for doc in self.data['documents'].values():
+            # Historical/orphan records can outlive their space. They have no
+            # live file to refresh and must not block unrelated transactions.
+            space = self.data['spaces'].get(doc.get('space_id'))
+            if not space or space.get('deleted') or doc.get('deleted'):
+                continue
             path = self.path(doc)
             if path.exists() and str(path.relative_to(self.root)) in plan['writes']:
                 doc['inode'] = path.stat().st_ino
