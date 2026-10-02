@@ -433,7 +433,7 @@ export function renderMarkdown(text: string, options: RenderMarkdownOptions = {}
  */
 export function parseConfig(lines: string[]): { config: ParsedConfigShape; startIndex: number } {
   const config: ParsedConfigShape = {
-    boardName: "Task Script",
+    boardName: "",
     states: [
       { key: "todo", name: "TODO", color: "" },
       { key: "inprogress", name: "In progress", color: "" },

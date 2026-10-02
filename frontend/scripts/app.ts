@@ -3081,7 +3081,7 @@ function sync(): void {
   state.jiraTokens = jiraTokens;
   trackOfflineDraftChange(sourceText);
   if (dom.boardTitle) {
-    const title = tabMode === "jira" ? spaceTabs?.systemTabName || "JIRA Daemon" : config.boardName || "Task Script";
+    const title = tabMode === "jira" ? spaceTabs?.systemTabName || "JIRA Daemon" : config.boardName || spaceTabs?.active?.name || "Task Script";
     dom.boardTitle.textContent = title;
     document.title = title;
   }
