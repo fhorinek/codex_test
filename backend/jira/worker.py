@@ -5,9 +5,11 @@ import copy
 import argparse
 import difflib
 import json
+import os
 import logging
 import re
 import select
+import signal
 import time
 import threading
 from dataclasses import dataclass, field
@@ -115,34 +117,50 @@ class SpaceJiraClient(JiraClient):
         return super()._request_once(*args, **kwargs)
 
 
-def creation_journal_path():
+def creation_journal_path(document=None):
+    if document:
+        path = space_file_for_room_id(document)
+        if path and path.parent.name.endswith('.space'):
+            return path.parent / 'jira-created-issues.json'
     return SPACES_DIR.parent / 'jira-created-issues.json'
 
 
-def creation_records():
-    path = creation_journal_path()
-    return json.loads(path.read_text()) if path.exists() else {}
+def creation_records(document=None):
+    path = creation_journal_path(document)
+    records = json.loads(path.read_text()) if path.exists() else {}
+    legacy = SPACES_DIR.parent / 'jira-created-issues.json'
+    if document and path != legacy and legacy.exists():
+        old = json.loads(legacy.read_text())
+        moved = {key: value for key, value in old.items() if json.loads(key)[0] == document}
+        if moved:
+            from jira.config import _write_json_dict
+            records = {**moved, **records}
+            _write_json_dict(path, records, 'Jira creation recovery')
+            if not path.exists() or json.loads(path.read_text()) != records:
+                raise OSError('Could not persist relocated Jira recovery records.')
+            _write_json_dict(legacy, {key: value for key, value in old.items() if key not in moved}, 'Jira creation recovery')
+    return records
 
 
 def recovered_created_issue(document, title, project):
-    record = creation_records().get(json.dumps([document, title, project]))
+    record = creation_records(document).get(json.dumps([document, title, project]))
     return record.get('key') if isinstance(record, dict) else record
 
 
 def record_created_issue(document, title, project, key):
     from jira.config import _write_json_dict
-    data = creation_records()
+    data = creation_records(document)
     data[json.dumps([document, title, project])] = {'key': key}
-    _write_json_dict(creation_journal_path(), data, 'Jira creation recovery')
+    _write_json_dict(creation_journal_path(document), data, 'Jira creation recovery')
 
 
 def forget_created_issue(document, key):
     from jira.config import _write_json_dict
-    data = creation_records()
+    data = creation_records(document)
     remove = [identity for identity, record in data.items() if json.loads(identity)[0] == document and (record.get('key') if isinstance(record, dict) else record) == key]
     if remove:
         for identity in remove: data.pop(identity)
-        _write_json_dict(creation_journal_path(), data, 'Jira creation recovery')
+        _write_json_dict(creation_journal_path(document), data, 'Jira creation recovery')
 
 
 async def reconcile_created_state(client, key, desired_state, states):
@@ -178,7 +196,8 @@ async def reconcile_created_state(client, key, desired_state, states):
     return verified
 
 # Stores the SPACES_DIR module constant.
-SPACES_DIR = BACKEND_DIR / "spaces"
+SPACES_DIR = Path(os.getenv("TASK_SCRIPT_SPACES_DIR", str(BACKEND_DIR / "spaces")))
+MANAGED_SYNC = None
 
 # Stores the JIRA_SYNC_INTERVAL module constant.
 JIRA_SYNC_INTERVAL = 300
@@ -283,6 +302,12 @@ async def sleep_until_next_sync(seconds: float) -> bool:
     sleep_seconds = max(0.0, float(seconds or 0.0))
     if sleep_seconds <= 0:
         return False
+    if MANAGED_SYNC is not None:
+        try:
+            await asyncio.wait_for(MANAGED_SYNC.wait(), sleep_seconds)
+            MANAGED_SYNC.clear()
+            return True
+        except asyncio.TimeoutError: return False
     if not sys.stdin or not sys.stdin.isatty():
         await asyncio.sleep(sleep_seconds)
         return False
@@ -3636,7 +3661,7 @@ async def sync_space_with_jira(
     created_states = {}
     unresolved_created = set()
     completed_created = set()
-    pending_keys = {(record.get('key') if isinstance(record, dict) else record) for identity, record in creation_records().items() if json.loads(identity)[0] == session.space_id}
+    pending_keys = {(record.get('key') if isinstance(record, dict) else record) for identity, record in creation_records(session.space_id).items() if json.loads(identity)[0] == session.space_id}
     for task in tasks:
         if task.jira_key in pending_keys:
             created_states[task.jira_key] = task.state
@@ -5369,7 +5394,7 @@ async def sync_space_with_jira(
 # Input: one_shot: bool = False, force_direction: Optional[str] = None.
 # Output: None.
 async def jira_sync_loop(
-    one_shot: bool = False, force_direction: Optional[str] = None
+    one_shot: bool = False, force_direction: Optional[str] = None, space_id: Optional[str] = None
 ) -> None:
     SPACES_DIR.mkdir(parents=True, exist_ok=True)
     JIRA_ISSUE_HIERARCHY_BY_PROJECT.clear()
@@ -5384,88 +5409,101 @@ async def jira_sync_loop(
     cache_names = ('JIRA_STATE_MAP_BY_PROJECT', 'JIRA_ISSUE_HIERARCHY_BY_PROJECT', 'JIRA_ISSUE_TYPE_META_BY_PROJECT', 'JIRA_ACCOUNT_ID_BY_EMAIL',
                    'space_entity_cache', 'jira_entity_cache', 'space_hierarchy_cache', 'jira_hierarchy_cache')
     manual_sync_requested = False
-    while True:
-        try:
-            index_path = SPACES_DIR.parent / "space-index.json"
-            data = json.loads(index_path.read_text()) if index_path.exists() else {'spaces': {}, 'documents': {}}
-            active_spaces = set()
-            for item in data['spaces'].values():
-                if item.get('deleted'): continue
-                documents = [d for d in data['documents'].values() if d['space_id'] == item['id'] and not d.get('deleted')]
-                defs = next((d for d in documents if d['kind'] == 'defs'), None)
-                if not defs or not worker_can_access_space(defs['id'])[0]: continue
-                active_spaces.add(item['id'])
-                try:
-                    defs_session = definitions_sessions.get(item['id'])
-                    if not defs_session or defs_session.space_id != defs['id']:
-                        if defs_session: await defs_session.close()
-                        defs_session = await open_space_session(defs['id'])
-                        definitions_sessions[item['id']] = defs_session
-                        def invalidate(_event, sid=item['id'], ds=defs_session):
-                            context = contexts.get(sid)
-                            if context and parse_jira_definitions(ydoc_to_text(ds.ydoc))[0] != context['config']:
-                                context['client'].cancelled.set()
-                        # Run after the Y transaction releases its read/write borrow.
-                        loop = asyncio.get_running_loop()
-                        defs_session.ydoc.get_text('content').observe(lambda _event, callback=invalidate: loop.call_soon(callback, None))
-                    shared = await read_ydoc_text(defs_session.ydoc)
-                    config, diagnostics = parse_jira_definitions(shared)
-                    if not config.enabled:
-                        contexts.pop(item['id'], None)
+    try:
+        while True:
+            try:
+                index_path = SPACES_DIR.parent / "space-index.json"
+                data = json.loads(index_path.read_text()) if index_path.exists() else {'spaces': {}, 'documents': {}}
+                active_spaces = set()
+                for item in data['spaces'].values():
+                    if item.get('deleted') or (space_id and item['id'] != space_id): continue
+                    documents = [d for d in data['documents'].values() if d['space_id'] == item['id'] and not d.get('deleted')]
+                    defs = next((d for d in documents if d['kind'] == 'defs'), None)
+                    if not defs or not worker_can_access_space(defs['id'])[0]: continue
+                    active_spaces.add(item['id'])
+                    try:
+                        defs_session = definitions_sessions.get(item['id'])
+                        if not defs_session or defs_session.space_id != defs['id']:
+                            if defs_session: await defs_session.close()
+                            defs_session = await open_space_session(defs['id'])
+                            definitions_sessions[item['id']] = defs_session
+                            def invalidate(_event, sid=item['id'], ds=defs_session):
+                                context = contexts.get(sid)
+                                if context and parse_jira_definitions(ydoc_to_text(ds.ydoc))[0] != context['config']:
+                                    context['client'].cancelled.set()
+                            # Run after the Y transaction releases its read/write borrow.
+                            loop = asyncio.get_running_loop()
+                            defs_session.ydoc.get_text('content').observe(lambda _event, callback=invalidate: loop.call_soon(callback, None))
+                        shared = await read_ydoc_text(defs_session.ydoc)
+                        config, diagnostics = parse_jira_definitions(shared)
+                        if not config.enabled:
+                            contexts.pop(item['id'], None)
+                            for document in documents:
+                                if document['id'] in sessions: await sessions.pop(document['id']).close()
+                            if diagnostics: logger.warning("Space %s: %s", item['id'], ' '.join(diagnostics))
+                            continue
+                        context = contexts.get(item['id'])
+                        if not context or context['config'] != config:
+                            context = {'config': config, 'projects': set(), 'inaccessible_projects': set(), 'inaccessible_issues': set(),
+                                       'last_pull': 0.0, 'boot': False, 'caches': {name: {} for name in cache_names}}
+                            context['client'] = SpaceJiraClient(config, lambda ds=defs_session: parse_jira_definitions(ydoc_to_text(ds.ydoc))[0])
+                            contexts[item['id']] = context
+                        for name in cache_names: globals()[name] = context['caches'][name]
+                        client = context['client']
+                        full = one_shot or manual_sync_requested or not context['boot']
+                        pull_started = time.time()
+                        changed = None if full else await fetch_changed_jira_issue_keys(client, context['projects'] - context['inaccessible_projects'], context['last_pull'] or time.time())
+                        if changed is None: full = True
                         for document in documents:
-                            if document['id'] in sessions: await sessions.pop(document['id']).close()
-                        if diagnostics: logger.warning("Space %s: %s", item['id'], ' '.join(diagnostics))
-                        continue
-                    context = contexts.get(item['id'])
-                    if not context or context['config'] != config:
-                        context = {'config': config, 'projects': set(), 'inaccessible_projects': set(), 'inaccessible_issues': set(),
-                                   'last_pull': 0.0, 'boot': False, 'caches': {name: {} for name in cache_names}}
-                        context['client'] = SpaceJiraClient(config, lambda ds=defs_session: parse_jira_definitions(ydoc_to_text(ds.ydoc))[0])
-                        contexts[item['id']] = context
-                    for name in cache_names: globals()[name] = context['caches'][name]
-                    client = context['client']
-                    full = one_shot or not context['boot']
-                    pull_started = time.time()
-                    changed = None if full else await fetch_changed_jira_issue_keys(client, context['projects'] - context['inaccessible_projects'], context['last_pull'] or time.time())
-                    if changed is None: full = True
-                    for document in documents:
-                        if document['kind'] != 'task' or not worker_can_access_space(document['id'])[0]: continue
-                        session = sessions.get(document['id'])
-                        if not session:
-                            session = await open_space_session(document['id'])
-                            sessions[document['id']] = session
-                        session.shared_definitions = shared
-                        session.jira_config_current = lambda ds=defs_session, cfg=config, snapshot=shared: ydoc_to_text(ds.ydoc) == snapshot and parse_jira_definitions(snapshot)[0] == cfg
-                        try:
-                            projects = await sync_space_with_jira(client, session, '', force_direction=force_direction,
-                                ignore_dirty=one_shot or manual_sync_requested, changed_issue_keys=None if full else changed,
-                                inaccessible_jira_projects=context['inaccessible_projects'], inaccessible_jira_issues=context['inaccessible_issues'])
-                            context['projects'].update(projects)
-                        except ConnectionClosed:
-                            sessions.pop(document['id'], None)
-                            await session.close()
-                        except Exception:
-                            logger.exception("Jira synchronization failed for document %s", document['id'])
-                    context['boot'] = True
-                    context['last_pull'] = pull_started
-                except ConnectionClosed:
-                    lost = definitions_sessions.pop(item['id'], None)
-                    if lost: await lost.close()
-                except Exception:
-                    logger.exception("Jira synchronization failed for space %s", item['id'])
-            live_docs = {d['id'] for d in data['documents'].values() if not d.get('deleted') and d['space_id'] in active_spaces}
-            for doc_id in list(sessions):
-                if doc_id not in live_docs: await sessions.pop(doc_id).close()
-            for space_id in list(definitions_sessions):
-                if space_id not in active_spaces:
-                    await definitions_sessions.pop(space_id).close()
-                    contexts.pop(space_id, None)
-        except Exception:
-            logger.exception("Jira sync loop failed")
-        if one_shot: break
-        manual_sync_requested = await sleep_until_next_sync(JIRA_SYNC_INTERVAL)
-    for session in [*sessions.values(), *definitions_sessions.values()]:
-        await session.close()
+                            if document['kind'] != 'task' or not worker_can_access_space(document['id'])[0]: continue
+                            session = sessions.get(document['id'])
+                            if not session:
+                                session = await open_space_session(document['id'])
+                                sessions[document['id']] = session
+                            session.shared_definitions = shared
+                            session.jira_config_current = lambda ds=defs_session, cfg=config, snapshot=shared: ydoc_to_text(ds.ydoc) == snapshot and parse_jira_definitions(snapshot)[0] == cfg
+                            try:
+                                projects = await sync_space_with_jira(client, session, '', force_direction=force_direction,
+                                    ignore_dirty=one_shot or manual_sync_requested, changed_issue_keys=None if full else changed,
+                                    inaccessible_jira_projects=context['inaccessible_projects'], inaccessible_jira_issues=context['inaccessible_issues'])
+                                context['projects'].update(projects)
+                            except ConnectionClosed:
+                                sessions.pop(document['id'], None)
+                                await session.close()
+                            except Exception:
+                                logger.exception("Jira synchronization failed for document %s", document['id'])
+                        context['boot'] = True
+                        context['last_pull'] = pull_started
+                        from dataclasses import asdict, is_dataclass
+                        from jira.config import _write_json_dict
+                        directory = SPACES_DIR / item['path']
+                        def cache_value(value):
+                            if is_dataclass(value): return asdict(value)
+                            if isinstance(value, set): return sorted(value)
+                            raise TypeError(type(value).__name__)
+                        snapshot = json.loads(json.dumps(context['caches'], default=cache_value))
+                        _write_json_dict(directory / 'jira-cache.json', {'updated_at': time.time(), 'space_id': item['id'], 'caches': snapshot}, 'Jira space cache')
+                        logger.info('Synchronization complete for space %s', item['id'])
+                    except ConnectionClosed:
+                        lost = definitions_sessions.pop(item['id'], None)
+                        if lost: await lost.close()
+                    except Exception:
+                        logger.exception("Jira synchronization failed for space %s", item['id'])
+                live_docs = {d['id'] for d in data['documents'].values() if not d.get('deleted') and d['space_id'] in active_spaces}
+                for doc_id in list(sessions):
+                    if doc_id not in live_docs: await sessions.pop(doc_id).close()
+                for space_id in list(definitions_sessions):
+                    if space_id not in active_spaces:
+                        await definitions_sessions.pop(space_id).close()
+                        contexts.pop(space_id, None)
+            except Exception:
+                logger.exception("Jira sync loop failed")
+            if one_shot: break
+            manual_sync_requested = await sleep_until_next_sync(JIRA_SYNC_INTERVAL)
+    finally:
+        for session in [*sessions.values(), *definitions_sessions.values()]:
+            await session.close()
+
 
 
 # Handles the main function logic.
@@ -5473,6 +5511,8 @@ async def jira_sync_loop(
 # Output: None.
 def main() -> None:
     parser = argparse.ArgumentParser(description="Jira sync worker")
+    parser.add_argument('--space', help='Synchronize only this stable space ID.')
+    parser.add_argument('--managed', action='store_true', help='Accept sync commands on stdin.')
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -5508,7 +5548,32 @@ def main() -> None:
         force_direction = "push"
     elif args.pull:
         force_direction = "pull"
-    asyncio.run(jira_sync_loop(one_shot=args.one_shot, force_direction=force_direction))
+    async def run():
+        global MANAGED_SYNC
+        reader_task = None
+        if args.managed:
+            MANAGED_SYNC = asyncio.Event()
+            reader = asyncio.StreamReader()
+            protocol = asyncio.StreamReaderProtocol(reader)
+            await asyncio.get_running_loop().connect_read_pipe(lambda: protocol, sys.stdin)
+            async def commands():
+                while True:
+                    line = await reader.readline()
+                    if not line: break
+                    if line.strip() == b'sync': MANAGED_SYNC.set()
+            reader_task = asyncio.create_task(commands())
+        task = asyncio.current_task()
+        loop = asyncio.get_running_loop()
+        if args.managed:
+            loop.add_signal_handler(signal.SIGTERM, task.cancel)
+        try: await jira_sync_loop(one_shot=args.one_shot, force_direction=force_direction, space_id=args.space)
+        except asyncio.CancelledError:
+            logger.info('Jira worker stopped.')
+        finally:
+            if reader_task:
+                reader_task.cancel()
+                await asyncio.gather(reader_task, return_exceptions=True)
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

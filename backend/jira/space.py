@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import logging
 import re
 from dataclasses import dataclass
@@ -18,7 +19,7 @@ except ImportError:  # pragma: no cover
 logger = logging.getLogger("jira-worker")
 
 # Stores the WS_BASE_URL module constant.
-WS_BASE_URL = "ws://localhost:5000/ws"
+WS_BASE_URL = os.getenv("TASK_SCRIPT_WS_BASE", "ws://localhost:5000/ws")
 # Stores the SYSTEM_SHARED_ROOM_ID module constant.
 SYSTEM_SHARED_ROOM_ID = "__system__"
 # Stores the SYSTEM_SHARED_MAP_NAME module constant.

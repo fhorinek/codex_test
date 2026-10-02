@@ -477,3 +477,31 @@ It verifies the result. If the workflow rejects the change, it reports the failu
 and accepts Jira’s actual state while retaining the new issue link. If Jira cannot
 be read, it keeps our state until verification becomes possible. A recovery journal
 retains returned issue keys across interruptions to prevent duplicate creation.
+
+The **JIRA** tab appears after the document tabs when Jira is configured. It shows
+space-local daemon activity and **Start**, **Stop**, **Restart**, **Sync now**, and
+**Show cache** controls. Show cache opens a separate **JIRA Cache** tab. Logs are
+limited to the latest 1,000 lines of this server session. Closing either tab only
+hides that view; it does not stop the daemon.
+
+Add these optional settings under `jira:` in `defs.txt` (also works while closed):
+
+```text
+    autostart: true
+    show_logs: true
+    show_cache: false
+```
+
+`autostart` defaults to `false`; `show_logs` defaults to `true`; `show_cache`
+defaults to `false`. Autostart launches the space's worker when the server starts,
+and when the setting is enabled while running. A manually stopped worker stays
+stopped until started again or autostart is toggled off and on. **Sync now** starts
+a stopped worker and requests a full scan, including tasks otherwise marked dirty.
+The **Open** menu reopens hidden JIRA views; visibility flags are shared.
+
+Each space stores its latest synchronization cache in `jira-cache.json` and its
+new-issue recovery journal in `jira-created-issues.json` inside its `.space`
+folder. Existing recovery entries move there on the next scan. Caches contain
+sync data, not API credentials. Restart rebuilds the in-memory lookup cache from
+the source documents and Jira; recovery records continue preventing duplicate
+issue creation. The server stops its workers when shutting down.

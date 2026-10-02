@@ -18,9 +18,9 @@ JIRA_DIR = Path(__file__).resolve().parent
 # Stores the BACKEND_DIR module constant.
 BACKEND_DIR = JIRA_DIR.parent
 # Stores the JIRA_CONFIG_PATH module constant.
-JIRA_CONFIG_PATH = JIRA_DIR / "jira_config.json"
+JIRA_CONFIG_PATH = Path(os.getenv("TASK_SCRIPT_JIRA_CONFIG", str(JIRA_DIR / "jira_config.json")))
 # Stores the USERS_CONFIG_PATH module constant.
-USERS_CONFIG_PATH = BACKEND_DIR / "users_config.json"
+USERS_CONFIG_PATH = Path(os.getenv("TASK_SCRIPT_USERS_CONFIG", str(BACKEND_DIR / "users_config.json")))
 # Stores the LEGACY_USERS_CONFIG_PATH module constant.
 LEGACY_USERS_CONFIG_PATH = JIRA_DIR / "users_config.json"
 # Stores the JIRA_DAEMON_USERNAME module constant.

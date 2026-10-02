@@ -1,4 +1,5 @@
-import { parseSpaceJira } from "./jiraDefinitions.js";
+import { createJiraPanel } from "./jiraPanel.js";
+import { jiraMetadataRanges, jiraViewOptions, parseSpaceJira } from "./jiraDefinitions.js";
 import { renameSlugInWholeFile, replaceSlugTokenOccurrences, removeSlugDefinition } from "./slugRenameModal.js";
 import { parseTasks } from "./task.js";
 import { definitionsConfigSource, plainDefinitions } from './definitionsSource.js';
@@ -10,7 +11,7 @@ type Listing = { id: string; name: string; access: string; revision: number; tab
 type Options = {
   base: string; wsBase: string; headers: () => Record<string, string>; collab: any;
   modules: () => Promise<any>; connect: (id: string) => Promise<void>; disconnect: () => void;
-  definitions: (source: string) => void; mode: (kind: 'task' | 'defs' | 'empty') => void;
+  definitions: (source: string) => void; mode: (kind: 'task' | 'defs' | 'empty' | 'jira') => void;
   capture: () => any; restore: (value: any) => void; notify: (message: string, kind?: string) => void;
   release: (id: string) => void;
   acquire: (id: string) => Promise<any>; referencesChanged: () => void;
@@ -58,6 +59,37 @@ export function createSpaceTabs(options: Options) {
   document.querySelector('.editor-wrapper')!.prepend(referenceDiagnostic);
   let listing: Listing | null = null, active = '', defsProvider: any, defsDoc: any, defsText: any;
   let switching = false, refreshPending = false, generation = 0;
+  const jiraPanel = createJiraPanel({ ...options, showCache: () => {
+    void setJiraVisible('cache', true).then(() => activate('jira:cache')).catch(error => options.notify(error.message, 'error'));
+  } });
+  function jiraTabs() {
+    const source = defsText?.toString() || '';
+    if (!parseSpaceJira(source).configured) return [];
+    const flags = jiraViewOptions(source);
+    return [{ id: 'jira:logs', name: 'JIRA', visible: flags.show_logs }, { id: 'jira:cache', name: 'JIRA Cache', visible: flags.show_cache }];
+  }
+  async function setJiraVisible(kind: string, visible: boolean) {
+    if (!options.canEdit() || !defsProvider?.synced || !defsProvider?.wsconnected) throw new Error('Reconnect before changing Jira tabs.');
+    const source = defsText.toString(), range = jiraMetadataRanges(source)[0];
+    if (!range) return;
+    const property = kind === 'cache' ? 'show_cache' : 'show_logs';
+    const block = source.slice(range.start, range.end);
+    const match = new RegExp(`^( +)${property}:.*$`, 'm').exec(block);
+    const indent = /^ */.exec(block)![0] + '    ';
+    const next = match ? block.replace(match[0], `${match[1]}${property}: ${visible}`) : block + (block.endsWith('\n') ? '' : '\n') + `${indent}${property}: ${visible}\n`;
+    defsDoc.transact(() => { defsText.delete(range.start, range.end - range.start); defsText.insert(range.start, next); });
+  }
+  async function closeJiraTab(id: string) {
+    await setJiraVisible(id.split(':')[1]!, false);
+  }
+  async function fallbackFromJira() {
+    if (!active.startsWith('jira:') || jiraTabs().some(tab => tab.id === active && tab.visible)) return;
+    const previous = active;
+    active = ''; jiraPanel.hide();
+    const next = (previous === 'jira:logs' ? jiraTabs().find(tab => tab.id === 'jira:cache' && tab.visible) : undefined) || jiraTabs().find(tab => tab.visible) || listing?.tabs.filter(tab => !tab.closed).at(-1);
+    if (next) await activate(next.id); else { options.mode('empty'); render(); }
+  }
+
   const referenceDocs = new Map<string, { tab: SpaceTab; document: any; observe: () => void }>();
   function clearReferences() {
     for (const item of referenceDocs.values()) item.document.text.unobserve(item.observe);
@@ -214,7 +246,12 @@ export function createSpaceTabs(options: Options) {
       const name = document.createElement('span'); name.className = 'space-tab-open-name'; name.textContent = tab.name;
       item.append(glyph, name); menu.append(item);
     }
-    if (!closed.length) {
+    const closedJira = jiraTabs().filter(tab => !tab.visible);
+    for (const tab of closedJira) {
+      const item = button(tab.name, async () => { closeContextMenu(); await setJiraVisible(tab.id.split(':')[1]!, true); await activate(tab.id); });
+      item.setAttribute('role', 'menuitem'); item.disabled = !options.canEdit(); menu.append(item);
+    }
+    if (!closed.length && !closedJira.length) {
       const empty = document.createElement('div'); empty.className = 'space-tab-menu-empty'; empty.textContent = 'No closed tabs.'; menu.append(empty);
     }
     const bounds = owner.getBoundingClientRect(); mountMenu(menu, owner, bounds.left, bounds.bottom + 4);
@@ -224,7 +261,7 @@ export function createSpaceTabs(options: Options) {
   }
   function renderEmptyWorkspace() {
     emptyWorkspace.replaceChildren();
-    emptyWorkspace.hidden = !listing || listing.tabs.some(tab => !tab.closed);
+    emptyWorkspace.hidden = !listing || listing.tabs.some(tab => !tab.closed) || jiraTabs().some(tab => tab.visible);
     if (emptyWorkspace.hidden || !listing) return;
     const card = document.createElement('div'); card.className = 'space-tabs-empty-card';
     const heading = document.createElement('h2'); heading.textContent = 'Open a tab';
@@ -243,6 +280,10 @@ export function createSpaceTabs(options: Options) {
       const open = icon('folder-open'); open.classList.add('space-tabs-empty-open');
       item.append(glyph, label, open); tabs.append(item);
     }
+    for (const tab of jiraTabs()) {
+      const item = button(tab.name, async () => { await setJiraVisible(tab.id.split(':')[1]!, true); await activate(tab.id); });
+      item.className = 'space-tabs-empty-tab'; item.disabled = !options.canEdit(); tabs.append(item);
+    }
     card.append(heading, tabs); emptyWorkspace.append(card);
   }
   async function request(path: string, body?: any) {
@@ -254,7 +295,7 @@ export function createSpaceTabs(options: Options) {
     try { if (active) localStorage.setItem('tab-view:' + active, JSON.stringify(options.capture())); } catch { /* Storage may be unavailable or full. */ }
   }
   async function flush() {
-    if (!active || !options.collab.ydoc) return;
+    if (!active || active.startsWith('jira:') || !options.collab.ydoc) return;
     if (!options.collab.provider?.wsconnected || !options.collab.synced) throw new Error('Reconnect before switching or changing tabs; your edits are still local.');
     const { Y } = await options.modules();
     const update = Array.from(Y.encodeStateAsUpdate(options.collab.ydoc));
@@ -266,7 +307,14 @@ export function createSpaceTabs(options: Options) {
     try {
       await flush(); saveView();
       const tab = listing?.tabs.find(t => t.id === id && !t.closed);
+      const jira = jiraTabs().find(tab => tab.id === id && tab.visible);
+      if (jira) {
+        options.disconnect(); active = id; options.mode('jira');
+        localStorage.setItem('active-tab:' + listing!.id, id);
+        jiraPanel.show(listing!.id, id === 'jira:cache'); render(); return;
+      }
       if (!tab) return;
+      jiraPanel.hide();
       active = id;
       options.mode(tab.kind);
       await options.connect(id);
@@ -287,7 +335,7 @@ export function createSpaceTabs(options: Options) {
     const index = old.findIndex(t => t.id === active);
     listing = next;
     await subscribeReferences();
-    if (active && !next.tabs.some(t => t.id === active && !t.closed)) {
+    if (active && !active.startsWith('jira:') && !next.tabs.some(t => t.id === active && !t.closed)) {
       saveView(); active = ''; options.disconnect();
       const open = next.tabs.filter(t => !t.closed);
       if (open.length) await activate(open[Math.min(Math.max(index, 0), open.length - 1)]!.id);
@@ -511,6 +559,12 @@ export function createSpaceTabs(options: Options) {
       tabs.append(item);
     }
     tabs.append(gap);
+    for (const tab of jiraTabs().filter(tab => tab.visible)) {
+      const item = document.createElement('div'); item.className = 'space-tab'; item.classList.toggle('active', active === tab.id);
+      const select = button(tab.name, () => activate(tab.id)); select.className = 'space-tab-select'; select.setAttribute('role', 'tab'); select.setAttribute('aria-selected', String(active === tab.id));
+      const close = iconButton(`Close ${tab.name}`, 'xmark', () => closeJiraTab(tab.id)); close.className = 'space-tab-close'; close.disabled = !options.canEdit();
+      item.append(select, close); tabs.append(item);
+    }
     diagnostic.hidden = !diagnostic.textContent || listing.tabs.find(t => t.id === active)?.kind !== 'defs';
     options.layout();
     const nextTabs = [...tabs.querySelectorAll<HTMLElement>('.space-tab')];
@@ -534,11 +588,12 @@ export function createSpaceTabs(options: Options) {
     const { entries, diagnostics } = parseTabAppearance(text);
     diagnostic.textContent = [...diagnostics, ...parseSpaceJira(text).diagnostics].join(' ');
     listing?.tabs.forEach(tab => { tab.appearance = entries[tab.name] || {}; }); render();
+    if (!switching) void fallbackFromJira();
   }
   async function openSpace(ref: string) {
     const next: Listing = await request('/api/tab-spaces?ref=' + encodeURIComponent(ref));
     await flush(); saveView(); generation++;
-    clearReferences(); defsProvider?.destroy(); defsDoc?.destroy(); active = ''; listing = next;
+    clearReferences(); jiraPanel.hide(); defsProvider?.destroy(); defsDoc?.destroy(); active = ''; listing = next;
     const { Y, WebsocketProvider } = await options.modules();
     defsDoc = new Y.Doc(); const params: Record<string, string> = {};
     if (options.collab.username && options.collab.authToken) { params["user"] = options.collab.username; params["pass"] = options.collab.authToken; }
@@ -549,7 +604,8 @@ export function createSpaceTabs(options: Options) {
     await subscribeReferences();
     const preferred = localStorage.getItem('active-tab:' + next.id);
     const tab = next.tabs.find(t => !t.closed && (t.id === ref || t.id === preferred)) || next.tabs.find(t => !t.closed && t.kind === 'task') || next.tabs.find(t => !t.closed);
-    if (tab) await activate(tab.id); else { options.disconnect(); options.mode('empty'); render(); }
+    if (preferred && jiraTabs().some(tab => tab.id === preferred && tab.visible)) await activate(preferred);
+    else if (tab) await activate(tab.id); else { options.disconnect(); options.mode('empty'); render(); }
   }
   async function refresh() {
     if (!listing || switching || refreshPending) return;
@@ -620,6 +676,6 @@ export function createSpaceTabs(options: Options) {
     get space() { return listing; },
     get active() { return listing?.tabs.find(t => t.id === active); },
     get definitions() { return defsText?.toString() || ''; },
-    disconnect() { generation++; saveView(); clearReferences(); defsProvider?.destroy(); defsDoc?.destroy(); defsText = null; listing = null; active = ''; options.definitions(''); options.mode('task'); render(); },
+    disconnect() { jiraPanel.hide(); generation++; saveView(); clearReferences(); defsProvider?.destroy(); defsDoc?.destroy(); defsText = null; listing = null; active = ''; options.definitions(''); options.mode('task'); render(); },
   };
 }

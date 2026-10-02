@@ -39,11 +39,14 @@ def parse_jira_definitions(source):
     for line in source[start:end].splitlines()[1:]:
         if not line.strip() or line.lstrip().startswith('#'):
             continue
-        match = re.fullmatch(r'\s+(base_url|email|token):\s*(.*?)\s*', line)
+        match = re.fullmatch(r'\s+(base_url|email|token|autostart|show_logs|show_cache):\s*(.*?)\s*', line)
         if not match or match[1] in values:
             diagnostics.append('Invalid Jira configuration property.')
         else:
             values[match[1]] = match[2]
+    for key in ('autostart', 'show_logs', 'show_cache'):
+        if key in values and values[key] not in ('true', 'false'):
+            diagnostics.append('Jira ' + key + ' must be true or false.')
     config = JiraConfig(values.get('base_url', '').rstrip('/'), values.get('email', ''), values.get('token', ''))
     if not config.enabled:
         diagnostics.append('Jira requires a base URL, email, and API token.')
@@ -67,9 +70,20 @@ def update_jira_definitions(source, payload):
     values = {key: str(payload.get(key, getattr(current, key)) or '').strip() for key in ('base_url', 'email', 'token')}
     if any('\n' in value or '\r' in value for value in values.values()):
         raise ValueError('Jira properties must each be on one line.')
+    options = jira_options(source)
+    for key in ('autostart', 'show_logs', 'show_cache'):
+        if key in payload:
+            if not isinstance(payload[key], bool): raise ValueError(key + ' must be a boolean.')
+            options[key] = payload[key]
+    if spans:
+        existing = source[spans[0][0]:spans[0][1]]
+    else: existing = ''
+    for key in options:
+        if key in payload or re.search(r'\b' + key + r':', existing):
+            values[key] = 'true' if options[key] else 'false'
     indent = spans[0][2] if spans else (4 if re.search(r'^Definitions:\s*$', source, re.M) else 0)
     pad = ' ' * indent
-    block = pad + 'jira:\n' + ''.join(pad + '    ' + key + ': ' + value + '\n' for key, value in values.items()) if any(values.values()) else ''
+    block = pad + 'jira:\n' + ''.join(pad + '    ' + key + ': ' + value + '\n' for key, value in values.items()) if any(values[key] for key in ('base_url', 'email', 'token')) else ''
     if block:
         _, diagnostics = parse_jira_definitions(('Definitions:\n' if indent else '') + block)
         if diagnostics:
@@ -80,3 +94,14 @@ def update_jira_definitions(source, payload):
         comments = ''.join(line for line in source[start:end].splitlines(keepends=True)[1:] if not line.strip() or line.lstrip().startswith('#'))
         return source[:start] + block + comments + source[end:]
     return source + ('\n' if source and not source.endswith('\n') else '') + block
+
+
+def jira_options(source):
+    """View flags are metadata; absence keeps the log available, cache closed."""
+    options = {'autostart': False, 'show_logs': True, 'show_cache': False}
+    spans = jira_span(source)
+    if len(spans) == 1:
+        start, end, _ = spans[0]
+        for key, value in re.findall(r'^\s+(autostart|show_logs|show_cache):\s*(true|false)\s*$', source[start:end], re.M):
+            options[key] = value == 'true'
+    return options

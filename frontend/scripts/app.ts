@@ -2,7 +2,7 @@ import { parseSpaceJira } from "./jiraDefinitions.js";
 let spaceTabs: ReturnType<typeof createSpaceTabs> | null = null;
 let sharedDefinitions = "";
 let historyDefinitions = "";
-let tabMode: "task" | "defs" | "empty" = "task";
+let tabMode: "task" | "defs" | "empty" | "jira" = "task";
 import { createSpaceTabs } from "./spaceTabs.js";
 import { resolveTaskReferences, taskSource, taskSourceLine, type TaskOrigin } from './taskReferences.js';
 import { createCrossTabDrag } from './crossTabDrag.js';
@@ -8375,7 +8375,7 @@ function getSpaceTabs() {
       tabMode = kind;
       state.definitionsMode = kind === "defs";
       document.documentElement.dataset["tabMode"] = kind;
-      editorController?.setReadOnly?.(kind === "empty");
+      editorController?.setReadOnly?.(kind === "empty" || kind === "jira");
       dom.graphAddTask?.toggleAttribute("disabled", kind !== "task");
       if (kind === "empty") { editorController?.setValue(""); sync(); }
     },

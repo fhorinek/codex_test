@@ -117,3 +117,16 @@ class JiraSpaceApiTests(unittest.IsolatedAsyncioTestCase):
         await server.migrate_jira_config({'spaces': []}, self.admin)
         self.assertFalse(storage.load_jira_config().enabled)
         self.assertFalse((await server.read_jira_status(self.space['id'], self.user))['configured'])
+
+    async def test_daemon_controls_logs_and_cache_authorize_the_space(self):
+        sid = self.space['id']
+        outsider = server.AuthUser('bob', 'Bob', 'user', ())
+        for endpoint in (server.read_jira_daemon, server.read_jira_cache):
+            with self.assertRaises(server.HTTPException): await endpoint(sid, outsider)
+        with patch.object(server.jira_daemons, 'command', new_callable=AsyncMock, return_value={'running': True}) as command:
+            with self.assertRaises(server.HTTPException): await server.control_jira_daemon('start', sid, outsider)
+            command.assert_not_called()
+            self.assertTrue((await server.control_jira_daemon('sync', sid, self.user))['running'])
+            command.assert_awaited_once_with(sid, 'sync')
+            with self.assertRaises(server.HTTPException): await server.control_jira_daemon('invalid', sid, self.user)
+        self.assertEqual(await server.read_jira_cache(sid, self.user), {})

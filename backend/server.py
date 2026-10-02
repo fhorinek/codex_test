@@ -784,7 +784,8 @@ def ensure_personal_space(username: str) -> None:
 # Output: None.
 def ensure_personal_spaces(users: Dict[str, Dict[str, Any]]) -> None:
     for username in users.keys():
-        ensure_personal_space(username)
+        if not is_hidden_system_user(username):
+            ensure_personal_space(username)
 
 
 # Handles the load_users_store function logic.
@@ -3338,6 +3339,53 @@ def space_jira_config(ref, user):
     return parse_jira_definitions(read_tab_live(store.defs(space)))
 
 
+from jira.daemon import JiraDaemons
+
+
+def daemon_definitions(space_id):
+    store = tab_store()
+    item = store.space(space_id) if store else None
+    return read_tab_live(store.defs(item)) if item else ''
+
+
+def daemon_environment():
+    return {'TASK_SCRIPT_SPACES_DIR': str(SPACES_DIR),
+            'TASK_SCRIPT_USERS_CONFIG': str(jira_storage_config.USERS_CONFIG_PATH),
+            'TASK_SCRIPT_JIRA_CONFIG': str(jira_storage_config.JIRA_CONFIG_PATH),
+            'TASK_SCRIPT_WS_BASE': 'ws://127.0.0.1:' + os.getenv('PORT', '5000') + '/ws'}
+
+
+jira_daemons = JiraDaemons(tab_store, daemon_definitions, daemon_environment)
+
+
+@app.get('/api/jira-daemon')
+async def read_jira_daemon(space: str, user: AuthUser = Depends(require_auth)):
+    _, item = authorized_tab_space(space, user)
+    return jira_daemons.status(item['id'])
+
+
+@app.get('/api/jira-cache')
+async def read_jira_cache(space: str, user: AuthUser = Depends(require_auth)):
+    _, item = authorized_tab_space(space, user)
+    return jira_daemons.cache(item['id'])
+
+
+@app.post('/api/jira-daemon/{action}')
+async def control_jira_daemon(action: str, space: str, user: AuthUser = Depends(require_auth)):
+    _, item = authorized_tab_space(space, user)
+    if action not in ('start', 'stop', 'restart', 'sync'): raise HTTPException(400, 'Unknown daemon command.')
+    try: return await jira_daemons.command(item['id'], action)
+    except ValueError as exc: raise HTTPException(400, str(exc))
+
+
+async def jira_daemon_supervisor(server):
+    while not server.started: await asyncio.sleep(0.1)
+    while True:
+        try: await jira_daemons.reconcile()
+        except Exception: logger.exception('Could not reconcile Jira daemons.')
+        await asyncio.sleep(2)
+
+
 @app.get("/api/jira-status")
 async def read_jira_status(space: str, user: AuthUser = Depends(require_auth)):
     config, diagnostics = space_jira_config(space, user)
@@ -4075,6 +4123,7 @@ app.mount("/", StaticFiles(directory=FRONTEND_STATIC_DIR, html=True), name="stat
 async def main() -> None:
     global system_shared_presence_task, system_shared_presence_refresh_task
     load_users_store()
+    ensure_jira_daemon_credentials()
     await migrate_tab_spaces()
     port_value = os.getenv("PORT", "5000").strip()
     try:
@@ -4104,11 +4153,14 @@ async def main() -> None:
                 system_shared_presence_sync_loop()
             )
             tabs_task = asyncio.create_task(reconcile_tabs_loop())
+            jira_task = asyncio.create_task(jira_daemon_supervisor(server))
             try:
                 await server.serve()
             finally:
                 tabs_task.cancel()
-                await asyncio.gather(tabs_task, return_exceptions=True)
+                jira_task.cancel()
+                await asyncio.gather(tabs_task, jira_task, return_exceptions=True)
+                await jira_daemons.shutdown()
     except BaseException as exc:
         if BASE_EXCEPTION_GROUP_TYPE is not None and isinstance(exc, BASE_EXCEPTION_GROUP_TYPE):
             _benign, remainder = exc.split(_is_benign_shutdown_error)

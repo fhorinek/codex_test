@@ -18,3 +18,11 @@ test('slug rename and formatting preserve Jira properties', () => {
   assert.match(renamed, /new:/);
   assert.match(formatTaskScript(source), /token: #old/);
 });
+
+test('daemon visibility and autostart flags validate without exposing credentials', async () => {
+  const { jiraViewOptions } = await import('../scripts/jiraDefinitions.ts');
+  const source = 'jira:\n    base_url: https://jira.example.com\n    email: a@example.com\n    token: SECRET\n    autostart: true\n    show_logs: false\n    show_cache: true\n';
+  assert.equal(parseSpaceJira(source).configured, true);
+  assert.deepEqual(jiraViewOptions(source), { autostart: true, show_logs: false, show_cache: true });
+  assert.equal(parseSpaceJira(source.replace('show_cache: true', 'show_cache: invalid')).configured, false);
+});

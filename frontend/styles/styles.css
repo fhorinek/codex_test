@@ -6120,3 +6120,12 @@ html[data-tab-mode="empty"] .editor-panel { visibility: hidden; }
   gap: 8px;
 }
 #jira-migration-modal .jira-migration-space input { width: auto; }
+
+/* Daemon tools follow the existing workspace and toolbar theme. */
+html[data-tab-mode="jira"] .app { grid-template-columns: minmax(0, 1fr); }
+html[data-tab-mode="jira"] :is(.editor-panel, .graph-panel, .graph-canvas, #divider, .divider, .kanban-panel, .kanban-divider) { display: none !important; }
+.jira-panel { min-width: 0; min-height: 0; display: flex; flex-direction: column; grid-column: 1 / -1; height: 100%; background: var(--timeline-canvas); color: var(--timeline-text); }
+.jira-panel[hidden] { display: none; }
+.jira-panel-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--timeline-border); }
+.jira-daemon-state { margin-left: auto; font-size: 12px; color: var(--timeline-muted); }
+.jira-panel-output { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 14px; font: 12px/1.6 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }

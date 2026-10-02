@@ -51,6 +51,50 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     await page.locator('#jira-config-save').click();
     await page.locator('#jira-config-modal').waitFor({ state: 'hidden' });
     await page.locator('#spaces-modal-close').click();
+    // Virtual tools stay after the task tabs; visibility is shared in defs.txt.
+    const commands = [];
+    await context.route('**/api/jira-daemon**', route => {
+      if (route.request().method() === 'POST') commands.push(new URL(route.request().url()).pathname.split('/').pop());
+      return route.fulfill({ json: { running: commands.at(-1) !== 'stop', logs: ['Daemon started.', 'Synchronization complete.'] } });
+    });
+    await context.route('**/api/jira-cache?**', route => route.fulfill({ json: { 'jira-cache.json': { caches: { issue: 'DEMO-42' } } } }));
+    await page.getByRole('tab', { name: 'JIRA', exact: true }).click();
+    await page.locator('.jira-panel-output').filter({ hasText: 'Daemon started.' }).waitFor();
+    assert.equal(await page.locator('.editor-panel').isVisible(), false);
+    for (const name of ['Start', 'Stop', 'Restart', 'Sync now']) await page.locator('.jira-panel').getByRole('button', { name, exact: true }).click();
+    assert.deepEqual(commands, ['start', 'stop', 'restart', 'sync']);
+    await page.locator('.jira-panel').getByRole('button', { name: 'Show cache', exact: true }).click();
+    await page.locator('.jira-panel-output').filter({ hasText: 'DEMO-42' }).waitFor();
+    await page.getByRole('button', { name: 'Close JIRA Cache', exact: true }).click();
+    await page.getByRole('tab', { name: 'JIRA Cache', exact: true }).waitFor({ state: 'detached' });
+    await page.getByRole('tab', { name: 'JIRA', exact: true }).click();
+    await page.getByRole('button', { name: 'Close JIRA', exact: true }).click();
+    await page.getByRole('tab', { name: 'JIRA', exact: true }).waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Open', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'JIRA', exact: true }).click();
+    await page.getByRole('tab', { name: 'JIRA', exact: true }).waitFor();
+    await page.getByRole('tab', { name: 'main', exact: true }).click();
+    await page.locator('.task-node').first().waitFor();
+
+    // Exercise a real managed worker on a tab without Jira markers: no Jira network requests.
+    assert.equal((await context.request.put(base + `/api/jira-config?space=${listing.id}`, { data: { autostart: true } })).status(), 200);
+    let daemon;
+    for (let attempt = 0; attempt < 80; attempt++) {
+      daemon = await (await context.request.get(base + `/api/jira-daemon?space=${listing.id}`)).json();
+      if (daemon.logs.some(line => line.includes('Synchronization complete'))) break;
+      await delay(100);
+    }
+    assert.equal(daemon.running, true, daemon.logs.join('\n'));
+    assert.ok(daemon.logs.some(line => line.includes('Synchronization complete')), daemon.logs.join('\n'));
+    const cache = await (await context.request.get(base + `/api/jira-cache?space=${listing.id}`)).json();
+    assert.equal(cache['jira-cache.json'].space_id, listing.id);
+    assert.equal((await context.request.post(base + `/api/jira-daemon/stop?space=${listing.id}`)).status(), 200);
+    await delay(2200);
+    assert.equal((await (await context.request.get(base + `/api/jira-daemon?space=${listing.id}`)).json()).running, false);
+    assert.equal((await context.request.post(base + `/api/jira-daemon/sync?space=${listing.id}`)).status(), 200);
+    assert.equal((await (await context.request.get(base + `/api/jira-daemon?space=${listing.id}`)).json()).running, true);
+    assert.equal((await context.request.post(base + `/api/jira-daemon/stop?space=${listing.id}`)).status(), 200);
+
     let tabs = await (await context.request.get(base + '/api/tab-spaces?ref=demo')).json();
     const defs = tabs.tabs.find(tab => tab.kind === 'defs');
     assert.equal((await context.request.post(base + `/api/tab-spaces/${listing.id}/tabs/close`, { data: { id: defs.id, revision: tabs.revision } })).status(), 200);
