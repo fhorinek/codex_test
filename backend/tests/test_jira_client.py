@@ -130,6 +130,12 @@ class JiraClientTests(unittest.TestCase):
         self.assertIsNone(data)
         self.assertIsNone(status)
 
+    def test_create_issue_preserves_http_error_status(self):
+        from jira.client import JiraRequestError
+        for status in (400, 403, 404):
+            with patch.object(self.client, '_request', side_effect=JiraRequestError(status, 'Rejected')):
+                self.assertEqual(self.client.create_issue('BAM', 'Task', ''), (None, status, None))
+
     def test_create_issue_builds_payload_and_optional_fields(self):
         with patch.object(
             self.client,

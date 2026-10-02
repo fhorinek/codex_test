@@ -1044,6 +1044,9 @@ class JiraClient:
             )
             key = result.get("key") if isinstance(result, dict) else None
             return key, status, result if isinstance(result, dict) else None
+        except JiraRequestError as exc:
+            logger.warning("Failed to create Jira issue in %s (status: %s): %s", project_key, exc.status_code, exc)
+            return None, exc.status_code, None
         except Exception:
             logger.exception("Failed to create Jira issue in %s", project_key)
             return None, None, None

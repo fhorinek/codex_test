@@ -3749,6 +3749,12 @@ async def sync_space_with_jira(
             if allow_parent_assignment and parent_task and parent_task.jira_key
             else None
         )
+        if issue_is_subtask and parent_key and project_key_from_issue_key(parent_key) != project_key_hint:
+            logger.warning(
+                "[Space %s] cannot create subtask '%s' in %s under %s: parent belongs to another project. Correct the task's project marker or parent.",
+                session.space_id, task_title, project_key_hint, parent_key,
+            )
+            continue
         if issue_is_subtask and not parent_key:
             issue_type = str(type_meta.get("default_issue_type") or JIRA_ISSUE_TYPE)
         logger.info(

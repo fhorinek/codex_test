@@ -4,7 +4,7 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
@@ -288,6 +288,15 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
                 ignore_dirty=ignore_dirty,
             )
         return session, ydoc["text"], writes
+
+    async def test_pending_subtask_cannot_use_parent_from_another_project(self):
+        client = Mock()
+        client.get_issue.return_value = (_issue_payload('BAMV4-318', 'Parent'), 200)
+        source = '% [BAMV4-318] Parent\n    % [BAM] Child'
+        with patch.object(worker, 'ensure_project_issue_hierarchy', new_callable=AsyncMock, return_value=worker.fallback_project_issue_hierarchy()):
+            _session, output, _writes = await self._run_sync(source, client)
+        client.create_issue.assert_not_called()
+        self.assertIn('% [BAM] Child', output)
 
     async def test_sync_space_with_jira_creates_pending_task_and_writes_key_back(self):
         client = Mock()
