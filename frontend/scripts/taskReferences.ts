@@ -119,6 +119,7 @@ export function importTaskSelection(documents: ReferenceDocument[], origins: Tas
   selected.sort((a, b) => a.source.id.localeCompare(b.source.id) || b.origin.lineIndex - a.origin.lineIndex);
   const parent = parentLine === undefined ? null : findTaskBlock(destination.text.split('\n'), parentLine);
   if (parentLine !== undefined && (!parent || /^\s*%%/.test(destination.text.split('\n')[parentLine]!))) throw new Error('The parent task changed. Reopen the menu and try again.');
+  if (parentLine !== undefined && parseTasks(destination.text).allTasks.find(task => task.lineIndex === parentLine)?.archived) throw new Error('Archived tasks cannot be parents.');
   let target = destination.text;
   const renames: { tab: string; name: string }[] = [];
   for (const { origin, source } of selected) {

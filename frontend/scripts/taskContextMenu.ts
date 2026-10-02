@@ -154,9 +154,11 @@ export function createTaskContextMenu(options: {
       const message = document.createElement('div'); message.className = 'space-tab-menu-empty'; message.textContent = 'This is reference'; menu.append(message);
     }
     if (!isReference) {
-      action(menu, 'Add task', 'plus', () => { close(); options.newTask(task, point); });
+      const add = action(menu, 'Add task', 'plus', () => { close(); options.newTask(task, point); });
+      add.disabled = Boolean(task?.archived);
+      if (add.disabled) add.title = 'Archived tasks cannot be parents.';
       for (const [mode, label, glyph] of [['move', 'Move task here', 'arrow-down'], ['reference-only', 'Reference tasks here', 'link'], ['reference', 'Reference tasks with subtasks here', 'sitemap']] as const) {
-        action(menu, label, glyph, async () => {
+        const incoming = action(menu, label, glyph, async () => {
           close(); const active = options.activeTab(); if (!active) return;
           if (active.id !== contextDocument) throw new Error('The destination tab changed. Reopen the menu and try again.');
           const expectedTarget = contextSource;
@@ -165,6 +167,8 @@ export function createTaskContextMenu(options: {
           if (options.activeTab()?.id !== active.id) throw new Error('The destination tab changed. Reopen the menu and try again.');
           await options.importTasks(selected, mode, task, point, leave, expectedTarget);
         });
+        incoming.disabled = Boolean(task?.archived);
+        if (incoming.disabled) incoming.title = 'Archived tasks cannot be parents.';
       }
     }
     if (!task) { document.body.append(menu); position(menu, event.clientX, event.clientY); keyboard(menu); menu.querySelector('button')?.focus(); return; }

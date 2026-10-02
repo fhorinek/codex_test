@@ -78,6 +78,27 @@ test('references can receive a parent but cannot receive new children', () => {
     assert.equal(documents[0].text, source);
   }
 });
+test('archived tasks and descendants cannot receive new or moved children', () => {
+  for (const parentLine of [0, 1]) {
+    const original = '%. Archived\n    % Nested\n% Incoming\n';
+    let text = original;
+    const commands = createTaskCommandController({ getEditorValue: () => text, applyEditorValue: value => { text = value; }, syncEditorState: () => {} });
+    const parsed = parseTasks(text);
+    commands.moveTaskAsSubtask(parsed.tasks[1], parsed.allTasks.find(task => task.lineIndex === parentLine));
+    assert.equal(text, original);
+    const created = commands.saveTaskEdit({ creatingTask: true, parentLine, rawTitle: 'New child', bodyText: '', taskRange: { start: 3, end: 3 }, indent: '' });
+    assert.equal(created.ok, false);
+    assert.match(created.error, /Archived tasks cannot be parents/);
+    assert.equal(text, original);
+    const docs = [{ id: 'source', name: 'main', text: '% Source\n' }, { id: 'target', name: 'next', text }];
+    const origins = [{ documentId: 'source', tab: 'main', name: 'Source', lineIndex: 0, source: docs[0].text }];
+    for (const mode of ['move', 'reference', 'reference-only']) assert.throws(() => importTaskSelection(docs, origins, 'target', mode, parentLine), /Archived tasks cannot be parents/);
+    text = text.replace('%. Archived', '% Archived');
+    const available = parseTasks(text);
+    commands.moveTaskAsSubtask(available.tasks[1], available.allTasks.find(task => task.lineIndex === parentLine));
+    assert.notEqual(text, original.replace('%. Archived', '% Archived'));
+  }
+});
 test('multi-task imports preserve siblings, parent indentation, originals, and move references', () => {
   const text = '% First\n    % Child\n% Second\n';
   const docs = [{ id: 'source', name: 'main', text }, { id: 'target', name: 'next', text: '% Parent\n% After\n' }];

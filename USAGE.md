@@ -406,6 +406,8 @@ or dates changes the original. Closed source tabs remain available. Missing,
 ambiguous, or circular references show a diagnostic above the editor.
 Ctrl-click a reference (Cmd-click on macOS) to open its source tab and focus the
 original task. A closed source tab reopens for space editors.
+Archived tasks cannot receive new children, including tasks archived through
+their parent. Unarchive them before assigning them as a parent.
 Reparenting or reordering a reference moves its entry in the current tab and
 leaves the original hierarchy unchanged. A reference can have an original task
 as its parent, but new children cannot be added to a reference.

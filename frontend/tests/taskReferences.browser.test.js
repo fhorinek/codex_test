@@ -212,6 +212,7 @@ test('cross-tab task references, original edits and drag transfers', { timeout: 
     await page.locator('.timeline-bar').filter({ hasText: 'Renamed' }).first().locator('.timeline-title').click({ modifiers: ['Meta'] });
     await page.waitForFunction(() => [...document.querySelectorAll('[role=tab]')].some(tab => tab.textContent.trim() === 'library' && tab.getAttribute('aria-selected') === 'true'));
     await page.getByRole('button', { name: 'Close library', exact: true }).click();
+    await page.waitForFunction(() => ![...document.querySelectorAll('.space-tab-select')].some(tab => tab.textContent.trim() === 'library') && [...document.querySelectorAll('.space-tab-select')].some(tab => tab.textContent.trim() === 'main' && tab.getAttribute('aria-selected') === 'true'));
     await page.reload();
     await page.getByRole('tab', {name: 'main', exact: true}).waitFor();
     await page.waitForFunction(() => document.querySelectorAll('.timeline-bar').length === 8);
@@ -248,6 +249,9 @@ test('cross-tab task references, original edits and drag transfers', { timeout: 
     await page.getByRole('menuitem', { name: 'Archive', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#task-editor').value.startsWith('%. Menu task'));
     await contextTask('.task-node').click({ button: 'right' });
+    for (const name of ['Add task', 'Move task here', 'Reference tasks here', 'Reference tasks with subtasks here']) {
+      assert.equal(await page.getByRole('menuitem', { name, exact: true }).isDisabled(), true);
+    }
     await page.getByRole('menuitem', { name: 'Unarchive', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#task-editor').value.startsWith('% Menu task'));
     await contextTask('.task-node').click({ button: 'right' });

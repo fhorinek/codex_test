@@ -3704,7 +3704,7 @@ function getTaskEditDeleteTarget(): any {
  */
 function updateTaskEditDeleteButtonVisibility(): void {
   if (dom.taskEditSave) dom.taskEditSave.textContent = creatingTask ? creatingTaskDefaultAsSubtask ? 'Create as subtask' : "Create" : "Save";
-  const parent = creatingTask && state.allTasks.find((task: any) => task.id === creatingTaskParentId && !task.origin && !task.referenceTarget);
+  const parent = creatingTask && state.allTasks.find((task: any) => task.id === creatingTaskParentId && !task.origin && !task.referenceTarget && !task.archived);
   if (dom.taskEditSaveSubtask) {
     dom.taskEditSaveSubtask.classList.toggle("hidden", !parent || creatingTaskDefaultAsSubtask);
     dom.taskEditSaveSubtask.textContent = parent ? `Create as subtask of ${parent.name}` : "Create as subtask";
@@ -3773,7 +3773,7 @@ function openTaskCreateModal() {
   creatingTask = true;
   creatingTaskDefaultAsSubtask = false;
   const selectedParent = state.allTasks.find((task: any) => task.id === state.selectedTaskId);
-  creatingTaskParentId = selectedParent && !selectedParent.origin && !selectedParent.referenceTarget ? selectedParent.id : null;
+  creatingTaskParentId = selectedParent && !selectedParent.origin && !selectedParent.referenceTarget && !selectedParent.archived ? selectedParent.id : null;
   editingTaskRef = null;
   const lines = editorController.getValue().split("\n");
   const draft = buildTaskCreateDraft(lines);
@@ -4160,7 +4160,7 @@ function saveTaskEditModal(asSubtask = creatingTask && creatingTaskDefaultAsSubt
   const parent = asSubtask && creatingTask
     ? state.allTasks.find((task: any) => task.id === creatingTaskParentId)
     : null;
-  if (asSubtask && (!parent || parent.origin || parent.referenceTarget)) {
+  if (asSubtask && (!parent || parent.origin || parent.referenceTarget || parent.archived)) {
     if (dom.taskEditError) {
       dom.taskEditError.textContent = "The selected parent task is no longer available.";
       dom.taskEditError.classList.remove("hidden");
@@ -4215,6 +4215,7 @@ function saveTaskEditModal(asSubtask = creatingTask && creatingTaskDefaultAsSubt
  * Output: void.
  */
 function moveTaskAsSubtask(sourceTask: any, targetTask: any): void {
+  if (targetTask.archived) { showToast('Archived tasks cannot be parents.', 'error'); return; }
   if (targetTask.origin || targetTask.referenceTarget) { showToast('References cannot have new children.', 'error'); return; }
   if (sourceTask.origin || targetTask.origin) { runReferencedHierarchy(sourceTask, targetTask, (controller, source, target) => controller.moveTaskAsSubtask(source, target)); return; }
   if (sourceTask.unresolvedReference || targetTask.unresolvedReference) return;

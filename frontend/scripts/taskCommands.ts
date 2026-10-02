@@ -6,7 +6,7 @@
 
 import { updateTaskDates, type TaskDates } from "./taskDates.js";
 import { normalizeContent } from "./formatter.js";
-import { parseJiraTitle } from "./task.js";
+import { parseJiraTitle, parseTasks } from "./task.js";
 
 // Defines the TaskBlock type structure for this module.
 type TaskBlock = { start: number; end: number; depth: number; indent: string };
@@ -527,6 +527,7 @@ export function createTaskCommandController(options: TaskCommandControllerOption
       return;
     }
     if (/^\s*%%/.test(lines[targetBlock.start] || '')) return;
+    if (parseTasks(lines.join('\n')).allTasks.find(task => task.lineIndex === targetBlock.start)?.archived) return;
     if (targetIsDescendantOfSource) {
       if (targetBlock.start <= sourceBlock.start || targetBlock.end > sourceBlock.end) {
         return;
@@ -773,6 +774,7 @@ export function createTaskCommandController(options: TaskCommandControllerOption
       const parent = findTaskBlock(parentLines, params.parentLine);
       if (!parent) return { ok: false, error: "The selected parent task is no longer available." };
       if (/^\s*%%/.test(parentLines[parent.start] || '')) return { ok: false, error: "References cannot have new children." };
+      if (parseTasks(parentLines.join('\n')).allTasks.find(task => task.lineIndex === parent.start)?.archived) return { ok: false, error: "Archived tasks cannot be parents." };
       taskRange = { start: parent.end, end: parent.end };
       indent = `${parent.indent}    `;
     }
