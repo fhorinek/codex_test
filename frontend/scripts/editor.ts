@@ -203,6 +203,11 @@ function foldTaskBlock(state: any, line: any) {
         }
         endLine = i;
     }
+    if (/^\s*%\.\s+/.test(line.text)) {
+        while (endLine > line.number && !state.doc.line(endLine).text.trim()) {
+            endLine -= 1;
+        }
+    }
     if (endLine === line.number) {
         return null;
     }

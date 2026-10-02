@@ -289,6 +289,19 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
             )
         return session, ydoc["text"], writes
 
+    async def test_create_excludes_archived_children_from_jira_description(self):
+        client = Mock()
+        client.create_issue.return_value = ('KAN-101', 201, {'key': 'KAN-101'})
+        client.get_issue.return_value = (_issue_payload('KAN-101', 'Parent', 'own description'), 200)
+        client.update_issue.return_value = (204, {})
+        client.transition_issue.return_value = (204, {})
+        source = '% [KAN] Parent\nown description\n    %. [KAN] Archived child\n    archived body\n        % [KAN] Hidden grandchild\n        hidden body'
+        _session, output, _writes = await self._run_sync(source, client)
+        client.create_issue.assert_called_once()
+        self.assertEqual(client.create_issue.call_args.args[2], 'own description')
+        self.assertIn('    %. [KAN] Archived child\n    archived body', output)
+        self.assertIn('        % [KAN] Hidden grandchild\n        hidden body', output)
+
     async def test_pending_subtask_cannot_use_parent_from_another_project(self):
         client = Mock()
         client.get_issue.return_value = (_issue_payload('BAMV4-318', 'Parent'), 200)

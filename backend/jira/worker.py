@@ -334,6 +334,7 @@ async def sleep_until_next_sync(seconds: float) -> bool:
 
 # Stores the TASK_LINE_RE module constant.
 TASK_LINE_RE = re.compile(r"^(\s*)%\s+(.*)$")
+TASK_HEADER_RE = re.compile(r"^(\s*)%(\.?)\s+(.*)$")
 # Stores the TOKEN_LINE_RE module constant.
 TOKEN_LINE_RE = re.compile(r"(^|\s)[#!@~]")
 # Stores the STATE_TOKEN_RE module constant.
@@ -1221,15 +1222,28 @@ def is_token_line(text: str) -> bool:
     return True
 
 
+def active_task_headers(lines):
+    """Archived headers end bodies; archive status also applies to descendants."""
+    stack = []
+    for index, line in enumerate(lines):
+        header = TASK_HEADER_RE.match(line)
+        if not header:
+            continue
+        depth = len(header.group(1))
+        while stack and stack[-1][0] >= depth:
+            stack.pop()
+        archived = bool(header.group(2)) or bool(stack and stack[-1][1])
+        stack.append((depth, archived))
+        if not archived:
+            yield index, TASK_LINE_RE.match(line)
+
+
 # Handles the parse_space_tasks function logic.
 # Input: lines: List[str].
 # Output: List[SpaceTask].
 def parse_space_tasks(lines: List[str]) -> List[SpaceTask]:
     tasks: List[SpaceTask] = []
-    for index, line in enumerate(lines):
-        match = TASK_LINE_RE.match(line)
-        if not match:
-            continue
+    for index, match in active_task_headers(lines):
         indent = match.group(1)
         raw_name = match.group(2).strip()
         jira_key = extract_jira_key(raw_name)
@@ -1238,7 +1252,7 @@ def parse_space_tasks(lines: List[str]) -> List[SpaceTask]:
         body_start = index + 1
         body_end = body_start
         while body_end < len(lines):
-            if TASK_LINE_RE.match(lines[body_end]):
+            if TASK_HEADER_RE.match(lines[body_end]):
                 break
             body_end += 1
         token_line_indices: List[int] = []
@@ -2001,10 +2015,7 @@ def build_jira_entity(
 # Output: List[ParsedTask].
 def parse_tasks(lines: List[str]) -> List[ParsedTask]:
     tasks: List[ParsedTask] = []
-    for index, line in enumerate(lines):
-        match = TASK_LINE_RE.match(line)
-        if not match:
-            continue
+    for index, match in active_task_headers(lines):
         indent = match.group(1)
         raw_name = match.group(2).strip()
         jira_key = extract_jira_key(raw_name)
@@ -2018,7 +2029,7 @@ def parse_tasks(lines: List[str]) -> List[ParsedTask]:
                 desc_start += 1
         desc_end = desc_start
         while desc_end < len(lines):
-            if TASK_LINE_RE.match(lines[desc_end]):
+            if TASK_HEADER_RE.match(lines[desc_end]):
                 break
             desc_end += 1
         description_lines = []

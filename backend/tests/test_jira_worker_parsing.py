@@ -20,6 +20,33 @@ from jira.worker import (
 
 
 class JiraWorkerParsingTests(unittest.TestCase):
+    def test_archived_tasks_bound_descriptions_and_exclude_their_descendants(self):
+        lines = [
+            '% [KAN-1] Parent', 'own description',
+            '    %. [KAN-2] Archived child', '    !done #old @other', '    archived description',
+            '        % [KAN] Descendant', '        descendant description',
+            '    % [KAN-3] Active sibling', '    !todo #current @owner', '    sibling description',
+            '%. [KAN-4] Archived root', 'archived root body',
+            '    % [KAN-5] Archived by parent', 'hidden body',
+            '% [KAN-6] Next root', 'next description',
+        ]
+        tasks = parse_space_tasks(lines)
+        self.assertEqual([task.jira_key for task in tasks], ['KAN-1', 'KAN-3', 'KAN-6'])
+        self.assertEqual(tasks[0].description, 'own description')
+        self.assertEqual(tasks[0].body_end, 2)
+        self.assertEqual(tasks[0].tags, [])
+        self.assertEqual(tasks[0].people, [])
+        self.assertIsNone(tasks[0].state)
+        self.assertEqual(tasks[1].tags, ['current'])
+        self.assertEqual(tasks[2].description, 'next description')
+        assign_space_task_parents(tasks)
+        self.assertEqual(tasks[1].parent_index, tasks[0].line_index)
+        parsed = parse_tasks(lines)
+        self.assertEqual([task.jira_key for task in parsed], ['KAN-1', 'KAN-3', 'KAN-6'])
+        self.assertEqual(parsed[0].description, 'own description')
+        self.assertEqual(parsed[0].desc_end, 2)
+        self.assertEqual(parsed[1].description, 'sibling description')
+
     def test_parse_space_tasks_extracts_fields_and_project_hint(self):
         lines = [
             "% [KAN] Planned task",
