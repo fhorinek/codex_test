@@ -204,8 +204,12 @@ function foldTaskBlock(state: any, line: any) {
         endLine = i;
     }
     if (/^\s*%\.\s+/.test(line.text)) {
-        if (endLine > line.number && !state.doc.line(endLine).text.trim()) {
+        const blockEndLine = endLine;
+        while (endLine > line.number && !state.doc.line(endLine).text.trim()) {
             endLine -= 1;
+        }
+        if (endLine < blockEndLine) {
+            endLine += 1;
         }
     }
     if (endLine === line.number) {
