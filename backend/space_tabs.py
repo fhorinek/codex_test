@@ -145,8 +145,10 @@ class TabStore:
         path = self.root / relative
         if path.is_symlink() or any(p.is_symlink() for p in path.parents if p != self.root.parent):
             raise ValueError('Symlinks are not supported in space storage.')
-        if not path.resolve().is_relative_to(self.root.resolve()):
-            raise ValueError('Invalid storage path.')
+        try:
+            path.resolve().relative_to(self.root.resolve())
+        except ValueError:
+            raise ValueError('Invalid storage path.') from None
         return path
 
     def transaction(self, writes, deletes=()):

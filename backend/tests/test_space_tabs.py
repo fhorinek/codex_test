@@ -21,6 +21,16 @@ class SpaceTabsTest(unittest.TestCase):
         result = self.store.mutate(space, action, {'revision': space['revision'], **kwargs})
         return result
 
+    def test_safe_path_supports_python38_and_rejects_outside_storage(self):
+        from unittest.mock import patch
+        # Python 3.8 has relative_to, but does not have is_relative_to.
+        with patch.object(Path, 'is_relative_to', None, create=True):
+            self.assertEqual(self.store.safe_path('team/example.txt'), self.root / 'team/example.txt')
+            self.assertEqual(self.store.safe_path('.'), self.root)
+            for relative in ('../outside.txt', str(self.root.parent / 'outside.txt')):
+                with self.assertRaisesRegex(ValueError, 'Invalid storage path'):
+                    self.store.safe_path(relative)
+
     def test_migrate_extract_and_restart(self):
         (self.root / 'legacy.txt').write_text('Board:\n    people:\n        anna:\n            name: Anna\n% Main\nnotes\n')
         self.store.migrate()
