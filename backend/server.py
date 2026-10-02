@@ -3313,6 +3313,38 @@ async def read_jira_issue_hierarchy(
     }
 
 
+@app.get('/api/jira-import-preview')
+async def read_jira_import_preview(space: str, document: str, key: str, include_subtasks: bool = False, user: AuthUser = Depends(require_auth)):
+    from jira.import_preview import transform_issues, subtask_keys
+    store, item = authorized_tab_space(space, user)
+    doc = store.data['documents'].get(document)
+    if not doc or doc.get('deleted') or doc['space_id'] != item['id'] or doc['kind'] != 'task':
+        raise HTTPException(400, 'Select a task tab in this space.')
+    key = key.strip().upper()
+    if not re.fullmatch(r'[A-Z][A-Z0-9]*-[1-9]\d*', key): raise HTTPException(400, 'Enter a full Jira key, such as PROJECT-123.')
+    shared = read_tab_live(store.defs(item)); source = read_tab_live(doc)
+    config, _ = parse_jira_definitions(shared)
+    if not config.enabled: raise HTTPException(400, 'Jira is not configured in this space.')
+    client = JiraClient(config.base_url, config.email, config.token)
+    async def get_issue(issue_key):
+        try: issue, status = await run_blocking_io(client.get_issue, issue_key)
+        except Exception: raise HTTPException(502, 'Unable to read Jira issue.')
+        if not isinstance(issue, dict) or issue.get('key') != issue_key:
+            raise HTTPException(404 if status in (403, 404) else 502, 'Jira issue is unavailable or you do not have access.')
+        return issue
+    issue = await get_issue(key); children = subtask_keys(issue)
+    issues = [issue]
+    if include_subtasks:
+        slots = asyncio.Semaphore(4)
+        async def get_child(child):
+            async with slots:
+                if shared != read_tab_live(store.defs(item)): raise HTTPException(409, 'Definitions changed. Refresh the preview.')
+                return await get_issue(child)
+        issues.extend(await asyncio.gather(*(get_child(child) for child in children if child != key)))
+    if shared != read_tab_live(store.defs(item)) or source != read_tab_live(doc): raise HTTPException(409, 'The tab or definitions changed. Refresh the preview.')
+    return {**transform_issues(issues, source, shared), 'subtask_count': len(children), 'key': key}
+
+
 @app.get('/api/jira-issue-suggestions')
 async def read_jira_issue_suggestions(space: str, query: str, user: AuthUser = Depends(require_auth)):
     config, _ = space_jira_config(space, user)

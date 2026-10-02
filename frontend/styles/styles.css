@@ -6146,3 +6146,10 @@ html[data-tab-mode="jira"] :is(.editor-panel, .graph-panel, .graph-canvas, #divi
 .jira-json-null { color: var(--timeline-muted); }
 html[data-theme="dark"] .jira-json-string { color: #91d6a8; }
 html[data-theme="dark"] :is(.jira-json-number, .jira-json-boolean) { color: #d4acf3; }
+
+#jira-import-task[hidden], .jira-import-children[hidden] { display: none; }
+.jira-import-dialog { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+.jira-import-dialog .modal-body { overflow: auto; }
+.jira-import-preview { display: grid; gap: 10px; max-height: 45vh; overflow: auto; }
+.jira-import-children { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 12px 0; }
+.jira-import-children input { margin: 0; accent-color: var(--timeline-accent); }

@@ -29,6 +29,8 @@ import {
   updateGraphTopHiddenFromLayout,
 } from "./layoutState.js";
 import { createSlugRenameUi } from "./slugRenameUi.js";
+import { createJiraImport } from "./jiraImport.js";
+import { renameSlugInWholeFile } from "./slugRenameModal.js";
 import { createTaskJiraLink } from './taskJiraLink.js';
 import {
   createSlugRenameModalController,
@@ -3162,15 +3164,14 @@ let editingTaskRange: any = null;
 let editingTaskIndent = "";
 // Stores the editingTaskJiraKey module constant.
 let editingTaskJiraKey: any = null;
-const taskJiraLink = createTaskJiraLink(document.getElementById('task-edit-jira')!, {
-  projects: () => {
+function jiraImportProjects() {
     const keys = new Set<string>(state.jiraProjectKeys);
     for (const doc of spaceTabs?.sourceDocuments() || []) for (const task of parseTasks(doc.text).allTasks) {
       if (task.jiraKey) keys.add(task.jiraKey.split('-')[0]!);
     }
     return [...keys].sort().map(key => ({ key, name: state.jiraProjects?.find((project: any) => project.key === key)?.name || key }));
-  },
-  issues: async (query, signal) => {
+  }
+async function jiraImportSuggestions(query: string, signal: AbortSignal) {
     const cached = new Map<string, { key: string; name: string }>();
     for (const doc of spaceTabs?.sourceDocuments() || []) for (const task of parseTasks(doc.text).allTasks) {
       if (task.jiraKey?.startsWith(query)) cached.set(task.jiraKey, { key: task.jiraKey, name: task.name });
@@ -3183,13 +3184,69 @@ const taskJiraLink = createTaskJiraLink(document.getElementById('task-edit-jira'
       for (const issue of data.issues || []) cached.set(issue.key, issue);
       return [...cached.values()];
     } catch (error) { if (signal.aborted || !cached.size) throw error; return [...cached.values()]; }
-  },
+  }
+const taskJiraLink = createTaskJiraLink(document.getElementById('task-edit-jira')!, {
+  projects: jiraImportProjects,
+  issues: jiraImportSuggestions,
   changed: key => {
     editingTaskJiraKey = key || null;
     if (dom.taskEditTitleInput) dom.taskEditTitleInput.value = parseJiraTitle(dom.taskEditTitleInput.value).title;
     if (modalEditorController) updateTaskEditPreviewFromText(modalEditorController.getValue());
   },
 });
+const jiraImportButton = document.getElementById('jira-import-task') as HTMLButtonElement;
+function refreshJiraImportButton() {
+  jiraImportButton.hidden = !parseSpaceJira(sharedDefinitions).configured || tabMode !== 'task';
+  jiraImportButton.disabled = historyMode.viewerActive || !collab.isAuthenticated;
+}
+const jiraImport = createJiraImport({
+  context: () => ({ space: spaceTabs?.space?.id || '', document: spaceTabs?.active?.id || '', source: editorController.getValue(), definitions: sharedDefinitions }),
+  projects: jiraImportProjects, issues: jiraImportSuggestions,
+  canEdit: () => tabMode === 'task' && !historyMode.viewerActive && collab.isAuthenticated && parseSpaceJira(sharedDefinitions).configured,
+  preview: async (context, key, children, signal) => {
+    await spaceTabs?.flush();
+    const params = new URLSearchParams({ space: context.space, document: context.document, key, include_subtasks: String(children) });
+    const response = await fetch(`${REMOTE_BASE}/api/jira-import-preview?${params}`, { headers: authHeaders(), signal });
+    const data = await response.json(); if (!response.ok) throw new Error(data.detail || 'Unable to load Jira task.'); return data;
+  },
+  render: (host, data) => {
+    const peopleMeta = new Map<string, any>(state.peopleMeta);
+    for (const definition of data.definitions) if (definition.kind === 'person') peopleMeta.set('@' + definition.slug, definition.metadata);
+    for (const task of data.tasks) {
+      const card = document.createElement('div'); card.className = 'task-preview-card'; card.style.marginLeft = task.depth ? '24px' : '';
+      applyTaskBackground(card, { tags: task.tags.map((tag: string) => '#' + tag) }, state.tagMeta, '#121524');
+      const header = document.createElement('div'); header.className = 'task-header';
+      const title = document.createElement('h4'); title.textContent = task.title; header.append(title);
+      const key = document.createElement('span'); key.className = 'pill jira-pill'; key.textContent = task.key; header.append(key);
+      if (task.state) {
+        const metadata: any = state.stateMeta.get('!' + task.state) || data.definitions.find(item => item.kind === 'state' && item.slug === task.state)?.metadata;
+        const pill = document.createElement('span'); pill.className = 'pill state-pill'; pill.textContent = metadata?.name || task.state;
+        if (metadata?.color) { pill.style.color = metadata.color; pill.style.borderColor = metadata.color; card.style.borderColor = metadata.color; }
+        header.append(pill);
+      }
+      if (task.story_points != null) { const pill = document.createElement('span'); pill.className = 'pill story-points-pill'; pill.textContent = '★ ' + task.story_points; header.append(pill); }
+      const description = [task.tags.map((tag: string) => '#' + tag).concat(task.people.map((person: string) => '@' + person)).join(' '), ...task.description.split('\n')];
+      const { node } = renderTaskDescriptionNode({ task: { description }, renderMarkdown, className: 'description', disableLinks: true });
+      decorateDescriptionPills(node, { tagMeta: state.tagMeta, peopleMeta, colorText: true });
+      node.querySelectorAll<HTMLInputElement>('input').forEach(input => input.disabled = true); card.append(header, node); host.append(card);
+    }
+  },
+  commit: (data, context) => {
+    if (context.document !== spaceTabs?.active?.id || context.source !== editorController.getValue() || context.definitions !== sharedDefinitions) throw new Error('The tab or definitions changed. Enter the key again to refresh the preview.');
+    const existing = new Set(parseTasks(context.source).allTasks.map(task => task.jiraKey));
+    const duplicate = data.tasks.find(task => existing.has(task.key));
+    if (duplicate) throw new Error(`${duplicate.key} is already in this tab.`);
+    let source = context.source;
+    for (const definition of data.definitions) source = renameSlugInWholeFile(source, {
+      kind: definition.kind, prefix: definition.kind === 'state' ? '!' : '@', oldSlug: definition.slug, newSlug: definition.slug,
+      metadata: definition.metadata, rootName: spaceTabs?.active?.name || 'Tasks',
+    }).text;
+    applyEditorValue(source + (source && !source.endsWith('\n') ? '\n' : '') + (source.trim() ? '\n' : '') + data.script);
+    syncEditorState();
+  },
+});
+jiraImportButton.addEventListener('click', () => jiraImport.open());
+
 // Stores the editingTaskRef module constant.
 let editingTaskRef: any = null;
 // Stores the creatingTask module constant.
@@ -8368,11 +8425,13 @@ function getSpaceTabs() {
       const changed = sharedDefinitions !== text;
       sharedDefinitions = text;
       taskJiraLink.configure(parseSpaceJira(text).configured);
+      refreshJiraImportButton();
       if (changed) { setJiraProjectCatalog([]); void refreshSpaceJiraProjects(); }
       if (editorController) sync();
     },
     mode: kind => {
       tabMode = kind;
+      refreshJiraImportButton();
       state.definitionsMode = kind === "defs";
       document.documentElement.dataset["tabMode"] = kind;
       editorController?.setReadOnly?.(kind === "empty" || kind === "jira");
@@ -8609,6 +8668,7 @@ function setHistoryViewerMode(active: boolean): void {
     return;
   }
   historyMode.viewerActive = next;
+  refreshJiraImportButton();
   spaceTabs?.render();
   state.historyViewerActive = next;
   document.documentElement.toggleAttribute("data-history-viewer", next);

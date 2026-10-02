@@ -510,3 +510,15 @@ The JIRA tab also has an **Autostart** checkbox, saving the space's `autostart`
 setting directly in shared definitions. The cache viewer expands nested objects
 and arrays with keyboard-accessible disclosure arrows. **Expand all** and
 **Collapse all** control the whole tree; refreshes preserve expanded sections.
+
+When Jira is configured, **+ Add task from JIRA** opens an issue importer. Type a
+complete key such as `DEMO-123`, or choose an issue from the project/issue
+suggestions. A valid key immediately loads a preview using the daemon's Jira
+transformations, including state/people mappings, labels, issue type, description,
+and estimates. **Also import N subtasks** appears only when the issue has subtasks.
+Checking it loads their previews and imports them under the parent.
+
+**Import task** adds the preview to the active task tab; newly discovered state
+and people definitions are added locally. Previewing makes no changes. Import
+uses normal undo/redo and synchronization. Issues already in the active tab are
+rejected, and changing the tab or definitions requires a fresh preview.

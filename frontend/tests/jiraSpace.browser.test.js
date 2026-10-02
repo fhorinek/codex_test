@@ -35,6 +35,7 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     await connect(page);
     const listing = await (await context.request.get(base + '/api/tab-spaces?ref=demo')).json();
     assert.equal((await (await context.request.get(base + `/api/jira-status?space=${listing.id}`)).json()).configured, false);
+    assert.equal(await page.getByRole('button', { name: 'Add task from JIRA', exact: true }).isVisible(), false);
     await page.locator('.task-node').first().dblclick();
     assert.equal(await page.getByRole('button', { name: 'Link Jira', exact: true }).isVisible(), false);
     await page.locator('#task-edit-cancel').click();
@@ -116,6 +117,50 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     assert.equal((await (await context.request.get(base + `/api/jira-daemon?space=${listing.id}`)).json()).running, true);
     assert.equal((await context.request.post(base + `/api/jira-daemon/stop?space=${listing.id}`)).status(), 200);
 
+    const previewRequests = [];
+    await context.route('**/api/jira-issue-suggestions?**', route => route.fulfill({ json: { issues: [{ key: 'DEMO-12', name: 'Imported from Jira' }] } }));
+    await context.route('**/api/jira-import-preview?**', route => {
+      const params = new URL(route.request().url()).searchParams, key = params.get('key');
+      previewRequests.push(key);
+      if (key === 'DEMO-404') return route.fulfill({ status: 404, json: { detail: 'Jira issue is unavailable.' } });
+      const children = params.get('include_subtasks') === 'true';
+      const tasks = [{ key, title: 'Imported from Jira', state: 'doing', tags: ['urgent', 'task'], people: ['bob'], story_points: 2, description: 'Imported description', depth: 0 }];
+      if (children) tasks.push({ key: 'DEMO-13', title: 'Imported child', state: 'doing', tags: [], people: [], description: 'Child description', depth: 1 });
+      return route.fulfill({ json: { key, subtask_count: key === 'DEMO-99' ? 0 : 1, tasks,
+        script: `% [${key}] Imported from Jira\n!doing #urgent #task @bob ~2\nImported description\n` + (children ? '    % [DEMO-13] Imported child\n    !doing\n    Child description\n' : ''),
+        definitions: [{ kind: 'state', slug: 'doing', metadata: { name: 'In Progress', jiraState: 'In Progress' } }, { kind: 'person', slug: 'bob', metadata: { name: 'Bob', email: 'bob@example.com' } }] } });
+    });
+    const importButton = page.getByRole('button', { name: 'Add task from JIRA', exact: true });
+    await importButton.click();
+    const importer = page.getByRole('dialog', { name: 'Add task from JIRA', exact: true });
+    const importKey = importer.getByRole('combobox', { name: 'Jira issue key', exact: true });
+    await importKey.fill('DEMO');
+    assert.equal(await importer.getByRole('button', { name: 'Import task', exact: true }).isEnabled(), false);
+    assert.equal(previewRequests.length, 0);
+    await importKey.fill('DEMO-404');
+    await importer.getByRole('status').filter({ hasText: 'unavailable' }).waitFor();
+    assert.equal(await importer.getByRole('button', { name: 'Import task', exact: true }).isEnabled(), false);
+    await importKey.fill('DEMO-');
+    await importer.getByRole('option', { name: 'DEMO-12 Imported from Jira', exact: true }).click();
+    await importer.locator('.task-preview-card').filter({ hasText: 'Imported from Jira' }).waitFor();
+    await importer.getByRole('checkbox', { name: 'Also import 1 subtasks', exact: true }).check();
+    await importer.locator('.task-preview-card').filter({ hasText: 'Imported child' }).waitFor();
+    await importer.getByRole('button', { name: 'Import task', exact: true }).click();
+    await importer.waitFor({ state: 'hidden' });
+    await page.locator('.task-node').filter({ hasText: 'Imported from Jira' }).waitFor();
+    await page.getByRole('button', { name: 'Undo', exact: true }).click();
+    await page.locator('.task-node').filter({ hasText: 'Imported from Jira' }).waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: 'Redo', exact: true }).click();
+    await page.locator('.task-node').filter({ hasText: 'Imported from Jira' }).waitFor();
+    await importButton.click(); await importKey.fill('DEMO-99');
+    await importer.locator('.task-preview-card').waitFor();
+    assert.equal(await importer.getByRole('checkbox').count(), 0);
+    await importer.getByRole('button', { name: 'Cancel', exact: true }).click();
+    const imported = await (await context.request.get(base + `/api/tab-spaces/${listing.id}/contents`)).json();
+    const importedSource = imported.documents.find(doc => doc.kind === 'task').text;
+    assert.ok(importedSource.includes('    % [DEMO-13] Imported child'));
+    assert.ok(importedSource.includes('jira: In Progress'));
+    assert.ok(importedSource.includes('bob@example.com'));
     let tabs = await (await context.request.get(base + '/api/tab-spaces?ref=demo')).json();
     const defs = tabs.tabs.find(tab => tab.kind === 'defs');
     assert.equal((await context.request.post(base + `/api/tab-spaces/${listing.id}/tabs/close`, { data: { id: defs.id, revision: tabs.revision } })).status(), 200);
