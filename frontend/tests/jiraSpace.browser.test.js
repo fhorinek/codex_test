@@ -61,10 +61,31 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     await page.getByRole('tab', { name: 'JIRA', exact: true }).click();
     await page.locator('.jira-panel-output').filter({ hasText: 'Daemon started.' }).waitFor();
     assert.equal(await page.locator('.editor-panel').isVisible(), false);
+    const autostart = page.getByRole('checkbox', { name: 'Autostart', exact: true });
+    assert.equal(await autostart.isChecked(), false);
+    await autostart.check();
+    let definitionContents = await (await context.request.get(base + `/api/tab-spaces/${listing.id}/contents`)).json();
+    for (let attempt = 0; attempt < 30 && !definitionContents.documents.find(doc => doc.kind === 'defs').text.includes('autostart: true'); attempt++) {
+      await delay(100); definitionContents = await (await context.request.get(base + `/api/tab-spaces/${listing.id}/contents`)).json();
+    }
+    assert.ok(definitionContents.documents.find(doc => doc.kind === 'defs').text.includes('autostart: true'));
+    await autostart.uncheck();
     for (const name of ['Start', 'Stop', 'Restart', 'Sync now']) await page.locator('.jira-panel').getByRole('button', { name, exact: true }).click();
     assert.deepEqual(commands, ['start', 'stop', 'restart', 'sync']);
     await page.locator('.jira-panel').getByRole('button', { name: 'Show cache', exact: true }).click();
-    await page.locator('.jira-panel-output').filter({ hasText: 'DEMO-42' }).waitFor();
+    const cacheViewer = page.locator('.jira-json-viewer');
+    await cacheViewer.filter({ hasText: 'jira-cache.json' }).waitFor();
+    const cachedIssue = cacheViewer.getByText('\"DEMO-42\"', { exact: true });
+    assert.equal(await cachedIssue.isVisible(), false);
+    await page.getByRole('button', { name: 'Expand all', exact: true }).click();
+    await cachedIssue.waitFor();
+    await page.getByRole('button', { name: 'Collapse all', exact: true }).click();
+    assert.equal(await cachedIssue.isVisible(), false);
+    await delay(2200);
+    assert.equal(await cachedIssue.isVisible(), false);
+    await cacheViewer.locator('summary').filter({ hasText: 'jira-cache.json' }).click();
+    await cacheViewer.locator('summary').filter({ hasText: /^caches/ }).click();
+    await cachedIssue.waitFor();
     await page.getByRole('button', { name: 'Close JIRA Cache', exact: true }).click();
     await page.getByRole('tab', { name: 'JIRA Cache', exact: true }).waitFor({ state: 'detached' });
     await page.getByRole('tab', { name: 'JIRA', exact: true }).click();

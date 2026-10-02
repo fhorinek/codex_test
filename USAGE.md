@@ -505,3 +505,8 @@ folder. Existing recovery entries move there on the next scan. Caches contain
 sync data, not API credentials. Restart rebuilds the in-memory lookup cache from
 the source documents and Jira; recovery records continue preventing duplicate
 issue creation. The server stops its workers when shutting down.
+
+The JIRA tab also has an **Autostart** checkbox, saving the space's `autostart`
+setting directly in shared definitions. The cache viewer expands nested objects
+and arrays with keyboard-accessible disclosure arrows. **Expand all** and
+**Collapse all** control the whole tree; refreshes preserve expanded sections.

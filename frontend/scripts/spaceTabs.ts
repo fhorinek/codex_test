@@ -59,7 +59,10 @@ export function createSpaceTabs(options: Options) {
   document.querySelector('.editor-wrapper')!.prepend(referenceDiagnostic);
   let listing: Listing | null = null, active = '', defsProvider: any, defsDoc: any, defsText: any;
   let switching = false, refreshPending = false, generation = 0;
-  const jiraPanel = createJiraPanel({ ...options, showCache: () => {
+  const jiraPanel = createJiraPanel({ ...options,
+    autostart: () => jiraViewOptions(defsText?.toString() || '').autostart,
+    setAutostart: enabled => setJiraOption('autostart', enabled),
+    showCache: () => {
     void setJiraVisible('cache', true).then(() => activate('jira:cache')).catch(error => options.notify(error.message, 'error'));
   } });
   function jiraTabs() {
@@ -69,10 +72,12 @@ export function createSpaceTabs(options: Options) {
     return [{ id: 'jira:logs', name: 'JIRA', visible: flags.show_logs }, { id: 'jira:cache', name: 'JIRA Cache', visible: flags.show_cache }];
   }
   async function setJiraVisible(kind: string, visible: boolean) {
+    await setJiraOption(kind === 'cache' ? 'show_cache' : 'show_logs', visible);
+  }
+  async function setJiraOption(property: 'autostart' | 'show_cache' | 'show_logs', visible: boolean) {
     if (!options.canEdit() || !defsProvider?.synced || !defsProvider?.wsconnected) throw new Error('Reconnect before changing Jira tabs.');
     const source = defsText.toString(), range = jiraMetadataRanges(source)[0];
     if (!range) return;
-    const property = kind === 'cache' ? 'show_cache' : 'show_logs';
     const block = source.slice(range.start, range.end);
     const match = new RegExp(`^( +)${property}:.*$`, 'm').exec(block);
     const indent = /^ */.exec(block)![0] + '    ';
@@ -583,6 +588,7 @@ export function createSpaceTabs(options: Options) {
     }
   }
   function definitionsChanged() {
+    jiraPanel.updateAutostart();
     const text = defsText?.toString() || '';
     options.definitions(text);
     const { entries, diagnostics } = parseTabAppearance(text);

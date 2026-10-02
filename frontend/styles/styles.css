@@ -6129,3 +6129,20 @@ html[data-tab-mode="jira"] :is(.editor-panel, .graph-panel, .graph-canvas, #divi
 .jira-panel-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--timeline-border); }
 .jira-daemon-state { margin-left: auto; font-size: 12px; color: var(--timeline-muted); }
 .jira-panel-output { flex: 1; min-height: 0; overflow: auto; margin: 0; padding: 14px; font: 12px/1.6 var(--font-mono, monospace); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.jira-autostart { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.jira-autostart input { margin: 0; accent-color: var(--timeline-accent); }
+.jira-autostart[hidden], .jira-panel-output[hidden], .jira-json-viewer[hidden] { display: none; }
+.jira-json-viewer { flex: 1; min-height: 0; overflow: auto; padding: 14px; font: 12px/1.6 var(--font-mono, monospace); }
+.jira-json-branch > summary { cursor: pointer; width: fit-content; max-width: 100%; border-radius: 4px; padding: 2px 5px; overflow-wrap: anywhere; }
+.jira-json-branch > summary:hover { background: var(--timeline-switch); }
+.jira-json-branch > summary:focus-visible { outline: 2px solid var(--timeline-focus); outline-offset: 1px; }
+.jira-json-children { margin-left: 13px; padding-left: 12px; border-left: 1px solid var(--timeline-border); }
+.jira-json-key { font-weight: 600; }
+.jira-json-size { color: var(--timeline-muted); font-weight: normal; }
+.jira-json-value-row { padding: 2px 5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.jira-json-string { color: #257342; }
+.jira-json-number, .jira-json-boolean { color: #7b43a7; }
+.jira-json-null { color: var(--timeline-muted); }
+html[data-theme="dark"] .jira-json-string { color: #91d6a8; }
+html[data-theme="dark"] :is(.jira-json-number, .jira-json-boolean) { color: #d4acf3; }
