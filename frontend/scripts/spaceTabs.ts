@@ -20,6 +20,7 @@ const EMOJI_GROUPS = [
   { name: 'Highlights', icons: [['⭐', 'Star'], ['🌟', 'Sparkling star'], ['✨', 'Sparkles'], ['✅', 'Checkmark'], ['☑️', 'Check'], ['🚧', 'Construction'], ['⏳', 'Hourglass'], ['⏰', 'Alarm'], ['🔔', 'Bell'], ['🔥', 'Fire'], ['⚡', 'Lightning'], ['🏆', 'Trophy'], ['🎉', 'Celebration'], ['🎨', 'Art'], ['🎵', 'Music'], ['❤️', 'Heart']] },
   { name: 'Animals & nature', icons: [['🦄', 'Unicorn'], ['🐶', 'Dog'], ['🐱', 'Cat'], ['🦊', 'Fox'], ['🐼', 'Panda'], ['🐻', 'Bear'], ['🐸', 'Frog'], ['🐝', 'Bee'], ['🦋', 'Butterfly'], ['🌱', 'Growth'], ['🌳', 'Tree'], ['🌻', 'Sunflower'], ['🍀', 'Clover'], ['☀️', 'Sun'], ['🌙', 'Moon'], ['🌈', 'Rainbow']] },
   { name: 'Places & activities', icons: [['🏠', 'Home'], ['🏢', 'Office'], ['🏫', 'School'], ['🏕️', 'Camping'], ['🏖️', 'Beach'], ['🌍', 'World'], ['✈️', 'Airplane'], ['🚗', 'Car'], ['🚲', 'Bicycle'], ['⛵', 'Boat'], ['🎮', 'Games'], ['⚽', 'Football'], ['🎁', 'Gift'], ['☕', 'Coffee'], ['🍕', 'Pizza'], ['🔒', 'Lock']] },
+  { name: 'More', icons: [['🤖', 'Robot'], ['🗑️', 'Wastebasket'], ['🛢️', 'Oil drum'], ['♻️', 'Recycling'], ['🔐', 'Locked with key'], ['💳', 'Credit card'], ['💩', 'Pile of poo'], ['🥤', 'Cup with straw']] },
 ];
 export function parseTabAppearance(source: string) {
   const entries: Record<string, { icon?: string; color?: string }> = {};
