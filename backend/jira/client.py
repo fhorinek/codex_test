@@ -858,6 +858,37 @@ class JiraClient:
     # Handles the search_updated_issue_keys function logic.
     # Input: self, project_keys: Iterable[str], updated_since: str, max_results: int = 100.
     # Output: Tuple[Optional[List[str]], Optional[int]].
+    def suggest_issues(self, query):
+        """Suggest recent project issues, with exact lookup for a typed issue key."""
+        query = str(query).strip().upper()
+        match = re.fullmatch(r'([A-Z][A-Z0-9]+)-(\d*)', query)
+        if not match:
+            raise ValueError('Invalid Jira key prefix.')
+        project, number = match.groups()
+        data, status = self._request('POST', '/rest/api/3/search/jql', {
+            'jql': 'project = "' + project + '" ORDER BY updated DESC',
+            'fields': ['summary'], 'maxResults': 50,
+        })
+        if not isinstance(data, dict) or not isinstance(data.get('issues'), list):
+            return None, status
+        issues = list(data['issues'])
+        if number and not any(issue.get('key') == query for issue in issues if isinstance(issue, dict)):
+            exact, _ = self.get_issue(query)
+            if isinstance(exact, dict) and exact.get('key') == query:
+                issues.insert(0, exact)
+        result = []
+        seen = set()
+        for issue in issues:
+            if not isinstance(issue, dict):
+                continue
+            key = issue.get('key', '')
+            if not isinstance(key, str) or not key.startswith(query) or key in seen:
+                continue
+            seen.add(key)
+            fields = issue.get('fields') or {}
+            result.append({'key': key, 'name': str(fields.get('summary') or '')})
+        return result[:20], status
+
     def search_updated_issue_keys(
         self,
         project_keys: Iterable[str],

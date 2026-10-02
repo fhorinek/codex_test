@@ -28,6 +28,7 @@ import {
   updateGraphTopHiddenFromLayout,
 } from "./layoutState.js";
 import { createSlugRenameUi } from "./slugRenameUi.js";
+import { createTaskJiraLink } from './taskJiraLink.js';
 import {
   createSlugRenameModalController,
 } from "./slugRenameModal.js";
@@ -3160,6 +3161,34 @@ let editingTaskRange: any = null;
 let editingTaskIndent = "";
 // Stores the editingTaskJiraKey module constant.
 let editingTaskJiraKey: any = null;
+const taskJiraLink = createTaskJiraLink(document.getElementById('task-edit-jira')!, {
+  projects: () => {
+    const keys = new Set<string>(state.jiraProjectKeys);
+    for (const doc of spaceTabs?.sourceDocuments() || []) for (const task of parseTasks(doc.text).allTasks) {
+      if (task.jiraKey) keys.add(task.jiraKey.split('-')[0]!);
+    }
+    return [...keys].sort().map(key => ({ key, name: state.jiraProjects?.find((project: any) => project.key === key)?.name || key }));
+  },
+  issues: async (query, signal) => {
+    const cached = new Map<string, { key: string; name: string }>();
+    for (const doc of spaceTabs?.sourceDocuments() || []) for (const task of parseTasks(doc.text).allTasks) {
+      if (task.jiraKey?.startsWith(query)) cached.set(task.jiraKey, { key: task.jiraKey, name: task.name });
+    }
+    const params = new URLSearchParams({ space: spaceTabs?.space?.id || '', query });
+    try {
+      const response = await fetch(`${REMOTE_BASE}/api/jira-issue-suggestions?${params}`, { headers: authHeaders(), signal });
+      if (!response.ok) throw new Error('Unable to look up Jira issues.');
+      const data = await response.json();
+      for (const issue of data.issues || []) cached.set(issue.key, issue);
+      return [...cached.values()];
+    } catch (error) { if (signal.aborted || !cached.size) throw error; return [...cached.values()]; }
+  },
+  changed: key => {
+    editingTaskJiraKey = key || null;
+    if (dom.taskEditTitleInput) dom.taskEditTitleInput.value = parseJiraTitle(dom.taskEditTitleInput.value).title;
+    if (modalEditorController) updateTaskEditPreviewFromText(modalEditorController.getValue());
+  },
+});
 // Stores the editingTaskRef module constant.
 let editingTaskRef: any = null;
 // Stores the creatingTask module constant.
@@ -3743,6 +3772,7 @@ function openTaskEditModal(task: any): void {
   }
   if (dom.taskEditTitleInput) {
     editingTaskJiraKey = draft.jiraKey;
+    taskJiraLink.set(draft.jiraKey || '');
     dom.taskEditTitleInput.value = draft.title;
   }
   const modalEditor = ensureTaskEditEditor();
@@ -3780,6 +3810,7 @@ function openTaskCreateModal() {
   editingTaskRange = draft.range;
   editingTaskIndent = draft.indent;
   editingTaskJiraKey = draft.jiraKey;
+  taskJiraLink.set(draft.jiraKey || '');
   if (dom.taskEditError) {
     dom.taskEditError.classList.add("hidden");
     dom.taskEditError.textContent = "";
@@ -3814,6 +3845,7 @@ function closeTaskEditModal() {
   editingTaskRange = null;
   editingTaskIndent = "";
   editingTaskJiraKey = null;
+  taskJiraLink.set('');
   editingTaskRef = null;
   creatingTask = false;
   updateTaskEditDeleteButtonVisibility();
@@ -4144,6 +4176,7 @@ function saveTaskEditModal(asSubtask = creatingTask && creatingTaskDefaultAsSubt
   if (!dom.taskEditModal) {
     return;
   }
+  if (!taskJiraLink.commit()) return;
   const modalEditor = ensureTaskEditEditor();
   if (!modalEditor || !editingTaskRange) {
     closeTaskEditModal();
@@ -9802,6 +9835,7 @@ if (dom.taskEditTitleInput) {
     const parsedTitle = parseJiraTitle(taskEditTitleInput.value || "");
     if (parsedTitle.token) {
       editingTaskJiraKey = parsedTitle.token;
+      taskJiraLink.set(parsedTitle.token);
     }
     updateTaskEditPreviewFromText(modalEditorController.getValue());
   });

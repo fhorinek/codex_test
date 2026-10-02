@@ -23,6 +23,27 @@ class JiraClientTests(unittest.TestCase):
     def setUp(self):
         self.client = JiraClient("https://jira.example.com/", "user@example.com", "token")
 
+    def test_issue_suggestions_validate_prefix_filter_recent_and_fetch_exact(self):
+        with patch.object(self.client, '_request', return_value=({'issues': [
+            {'key': 'DEMO-12', 'fields': {'summary': 'Recent'}},
+            {'key': 'OTHER-12', 'fields': {'summary': 'Wrong project'}},
+            {'key': 'DEMO-13', 'fields': {'summary': 'Another'}},
+        ]}, 200)) as request, patch.object(self.client, 'get_issue', return_value=({'key': 'DEMO-1', 'fields': {'summary': 'Exact'}}, 200)):
+            issues, status = self.client.suggest_issues('DEMO-1')
+            self.assertEqual([issue['key'] for issue in issues], ['DEMO-1', 'DEMO-12', 'DEMO-13'])
+            self.assertEqual(issues[0]['name'], 'Exact')
+            self.assertEqual(status, 200)
+            self.assertEqual(request.call_args.args[2]['maxResults'], 50)
+            for bad in ['DEMO-1 OR project = OTHER', '../DEMO-', 'DEMO-abc']:
+                with self.assertRaises(ValueError):
+                    self.client.suggest_issues(bad)
+
+    def test_issue_suggestions_empty_and_failed_response(self):
+        with patch.object(self.client, '_request', return_value=({'issues': []}, 200)):
+            self.assertEqual(self.client.suggest_issues('DEMO-'), ([], 200))
+        with patch.object(self.client, '_request', return_value=(None, 403)):
+            self.assertEqual(self.client.suggest_issues('DEMO-'), (None, 403))
+
     def test_request_success_json_and_empty_body(self):
         response = Mock()
         response.getcode.return_value = 200

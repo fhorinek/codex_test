@@ -3291,6 +3291,24 @@ def read_jira_issue_hierarchy(
     }
 
 
+@app.get('/api/jira-issue-suggestions')
+def read_jira_issue_suggestions(space: str, query: str, user: AuthUser = Depends(require_auth)):
+    authorized_tab_space(space, user)
+    if not re.fullmatch(r'[A-Z][A-Z0-9]+-\d*', query):
+        raise HTTPException(400, 'Invalid Jira key prefix.')
+    config = load_jira_config()
+    if not config.enabled:
+        return {'issues': [], 'configured': False}
+    client = JiraClient(config.base_url, config.email, config.token)
+    try:
+        issues, status = client.suggest_issues(query)
+    except Exception:
+        raise HTTPException(502, 'Unable to look up Jira issues.')
+    if issues is None:
+        raise HTTPException(502, 'Unable to look up Jira issues.')
+    return {'issues': issues, 'configured': True}
+
+
 # Handles the write_jira_config function logic.
 # Input: payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].

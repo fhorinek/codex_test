@@ -323,6 +323,35 @@ test('cross-tab task references, original edits and drag transfers', { timeout: 
     await page.getByRole('button', { name: 'Just move task', exact: true }).click();
     await page.waitForFunction(() => document.querySelector('#task-editor').value.includes('% External child'));
     assert.doesNotMatch((await contents()).find(d => d.id === refs.id).text, /% External child/);
+    const currentTabs = await (await context.request.get(base + '/api/tab-spaces?ref=demo')).json();
+    const movedId = currentTabs.tabs.find(tab => tab.name === 'moved').id;
+    const activeDocument = (await contents()).find(d => d.id === movedId);
+    await write(activeDocument.id, activeDocument.text + '\n% [DEMO-42] Jira seed\n1.10.2026\n');
+    await page.waitForFunction(() => document.querySelector('#task-editor').value.includes('[DEMO-42]'));
+    assert.equal((await context.request.get(base + `/api/jira-issue-suggestions?space=${listing.id}&query=DEMO-`)).status(), 200);
+    assert.equal((await context.request.get(base + `/api/jira-issue-suggestions?space=${listing.id}&query=bad`)).status(), 400);
+    assert.equal((await fetch(base + `/api/jira-issue-suggestions?space=${listing.id}&query=DEMO-`)).status, 401);
+    await page.route('**/api/jira-issue-suggestions?**', route => route.fulfill({ json: { issues: [{ key: 'DEMO-42', name: 'Jira issue summary' }], configured: true } }));
+    await backgroundMenu('.timeline-rows');
+    await page.getByRole('menuitem', { name: 'Add task', exact: true }).click();
+    await page.locator('#task-edit-title-input').fill('Jira linked creation');
+    await page.getByRole('button', { name: 'Link Jira', exact: true }).click();
+    const jiraInput = page.getByRole('combobox', { name: 'Jira key', exact: true });
+    await jiraInput.fill('de');
+    await page.getByRole('option', { name: 'DEMO', exact: true }).click();
+    assert.equal(await jiraInput.inputValue(), 'DEMO');
+    await jiraInput.fill('DEMO-');
+    await page.getByRole('option', { name: 'DEMO-42 Jira issue summary', exact: true }).click();
+    await page.getByRole('button', { name: 'Unlink Jira', exact: true }).waitFor();
+    assert.match(await page.locator('#task-edit-preview').textContent(), /DEMO-42/);
+    await page.locator('#task-edit-save').click();
+    await page.waitForFunction(() => document.querySelector('#task-editor').value.includes('% [DEMO-42] Jira linked creation'));
+    await page.locator('.timeline-bar').filter({ hasText: 'Jira linked creation' }).first().locator('.timeline-title').dblclick();
+    await page.getByRole('button', { name: 'Unlink Jira', exact: true }).click();
+    await page.getByRole('button', { name: 'Link Jira', exact: true }).waitFor();
+    await page.locator('#task-edit-save').click();
+    await page.waitForFunction(() => document.querySelector('#task-editor').value.includes('% Jira linked creation'));
+    assert.doesNotMatch(await page.locator('#task-editor').inputValue(), /\[DEMO-42\] Jira linked creation/);
     assert.deepEqual(errors, []);
   } catch (error) { await fs.writeFile('/tmp/task-references-browser-server.log', log); if (browser) { const page = browser.contexts()[0]?.pages()[0]; if (page) await fs.writeFile('/tmp/task-references-browser-dom.html', await page.content()); } throw error; }
   finally { await browser?.close(); server.kill('SIGTERM'); await new Promise(r => { if (server.exitCode !== null) r(); else server.on('exit', r); }); await fs.rm(tmp, { recursive: true, force: true }); }

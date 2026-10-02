@@ -198,6 +198,13 @@ My board:
 
 When renaming a task title in task edit modal, `{old title}` references are updated across file.
 
+The task editor's right sidebar includes **Jira** below tags. Click **Link Jira**
+and type a project key for project suggestions. Continue with `-` to look up
+recent issues in that project; typing a complete issue key also tries an exact
+lookup. Choose an issue or press Enter to link a project/issue key. Use the small
+**×** to unlink. These changes apply when you save the task. Suggestions require
+a configured Jira connection; known task links and manual entry remain available.
+
 ## Task Edit Modal
 
 - Edit title and body code.
