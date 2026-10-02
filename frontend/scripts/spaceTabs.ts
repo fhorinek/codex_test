@@ -1,3 +1,4 @@
+import { parseSpaceJira } from "./jiraDefinitions.js";
 import { renameSlugInWholeFile, replaceSlugTokenOccurrences, removeSlugDefinition } from "./slugRenameModal.js";
 import { parseTasks } from "./task.js";
 import { definitionsConfigSource, plainDefinitions } from './definitionsSource.js';
@@ -531,7 +532,7 @@ export function createSpaceTabs(options: Options) {
     const text = defsText?.toString() || '';
     options.definitions(text);
     const { entries, diagnostics } = parseTabAppearance(text);
-    diagnostic.textContent = diagnostics.join(' ');
+    diagnostic.textContent = [...diagnostics, ...parseSpaceJira(text).diagnostics].join(' ');
     listing?.tabs.forEach(tab => { tab.appearance = entries[tab.name] || {}; }); render();
   }
   async function openSpace(ref: string) {

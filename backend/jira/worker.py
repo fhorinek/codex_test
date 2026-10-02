@@ -9,6 +9,7 @@ import logging
 import re
 import select
 import time
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -18,6 +19,7 @@ import unicodedata
 from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger("jira-worker")
+
 
 # Stores the BACKEND_DIR module constant.
 BACKEND_DIR = Path(__file__).resolve().parents[1]
@@ -45,6 +47,7 @@ if __package__ in (None, ""):
         normalize_reference_to_key,
         open_space_session,
         read_ydoc_text,
+        ydoc_to_text,
         remove_people_from_line,
         remove_reference_from_description,
         remove_state_from_line,
@@ -77,6 +80,7 @@ else:
         normalize_reference_to_key,
         open_space_session,
         read_ydoc_text,
+        ydoc_to_text,
         remove_people_from_line,
         remove_reference_from_description,
         remove_state_from_line,
@@ -86,6 +90,93 @@ else:
         scrub_body_tokens,
         SYSTEM_SHARED_ROOM_ID,
     )
+try:
+    from .definitions import parse_jira_definitions
+except ImportError:
+    from jira.definitions import parse_jira_definitions
+
+
+class SpaceJiraClient(JiraClient):
+    """Reject queued requests after the shared credentials are changed."""
+    def __init__(self, config, current):
+        super().__init__(config.base_url, config.email, config.token)
+        self.config = config
+        self.current = current
+        self.cancelled = threading.Event()
+
+    def _request(self, *args, **kwargs):
+        if self.cancelled.is_set():
+            raise RuntimeError("Space Jira configuration changed.")
+        return super()._request(*args, **kwargs)
+
+    def _request_once(self, *args, **kwargs):
+        if self.cancelled.is_set():
+            raise RuntimeError("Space Jira configuration changed.")
+        return super()._request_once(*args, **kwargs)
+
+
+def creation_journal_path():
+    return SPACES_DIR.parent / 'jira-created-issues.json'
+
+
+def creation_records():
+    path = creation_journal_path()
+    return json.loads(path.read_text()) if path.exists() else {}
+
+
+def recovered_created_issue(document, title, project):
+    record = creation_records().get(json.dumps([document, title, project]))
+    return record.get('key') if isinstance(record, dict) else record
+
+
+def record_created_issue(document, title, project, key):
+    from jira.config import _write_json_dict
+    data = creation_records()
+    data[json.dumps([document, title, project])] = {'key': key}
+    _write_json_dict(creation_journal_path(), data, 'Jira creation recovery')
+
+
+def forget_created_issue(document, key):
+    from jira.config import _write_json_dict
+    data = creation_records()
+    remove = [identity for identity, record in data.items() if json.loads(identity)[0] == document and (record.get('key') if isinstance(record, dict) else record) == key]
+    if remove:
+        for identity in remove: data.pop(identity)
+        _write_json_dict(creation_journal_path(), data, 'Jira creation recovery')
+
+
+async def reconcile_created_state(client, key, desired_state, states):
+    """Return the verified issue; failures adopt Jira's actual status."""
+    issue, status = await run_blocking_io(client.get_issue, key)
+    actual = extract_jira_issue_status_name(issue)
+    target = map_space_state_to_jira(desired_state, states)
+    if not actual:
+        return None
+    if jira_status_matches_space_state(actual, desired_state, states):
+        return issue
+    if not target:
+        logger.warning("Created %s: local state has no Jira mapping; accepting Jira status", key)
+        return issue
+    transition_status, _ = await run_blocking_io(client.transition_issue, key, target)
+    if transition_status is None or not 200 <= transition_status < 300:
+        transition_status, _ = await run_blocking_io(client.transition_issue_via_path, key, target)
+        if transition_status is None or not 200 <= transition_status < 300:
+            bulk_status, payload = await run_blocking_io(client.bulk_edit_issue_status, key, target)
+            if bulk_status == 201 and isinstance(payload, dict) and payload.get('taskId'):
+                await wait_for_bulk_task_completion(client, str(payload['taskId']))
+    verified = None
+    for attempt in range(3):
+        candidate, _ = await run_blocking_io(client.get_issue, key)
+        actual = extract_jira_issue_status_name(candidate)
+        if actual:
+            verified = candidate
+            if jira_status_matches_space_state(actual, desired_state, states):
+                return verified
+        if attempt < 2:
+            await asyncio.sleep(0.5)
+    logger.warning("Created %s: could not reach requested status; accepting verified Jira status", key)
+    return verified
+
 # Stores the SPACES_DIR module constant.
 SPACES_DIR = BACKEND_DIR / "spaces"
 
@@ -151,7 +242,7 @@ def iter_space_room_ids() -> List[str]:
     if index.exists():
         data = json.loads(index.read_text(encoding="utf-8"))
         return sorted(d["id"] for d in data["documents"].values() if d["kind"] == "task" and not d.get("deleted")
-                      and not data["spaces"][d["space_id"]].get("deleted") and not data["spaces"][d["space_id"]]["access"].startswith("personal/"))
+                      and not data["spaces"][d["space_id"]].get("deleted"))
     room_ids: Set[str] = set()
     for path in SPACES_DIR.rglob("*.txt"):
         if not path.is_file():
@@ -172,6 +263,10 @@ def iter_space_room_ids() -> List[str]:
 # Input: func, *args: Any, **kwargs: Any.
 # Output: Any.
 async def run_blocking_io(func, *args: Any, **kwargs: Any) -> Any:
+    owner = getattr(func, '__self__', None)
+    if isinstance(owner, SpaceJiraClient) and owner.current() != owner.config:
+        owner.cancelled.set()
+        raise RuntimeError("Space Jira configuration changed.")
     to_thread = getattr(asyncio, "to_thread", None)
     if callable(to_thread):
         return await to_thread(func, *args, **kwargs)
@@ -532,6 +627,11 @@ def worker_can_access_space(room_id: str) -> Tuple[bool, str]:
     if is_personal:
         if role == "admin" or username == space_id:
             return True, ""
+        if username == 'jira-daemon' and role == 'manager' and path.parent.name.endswith('.space'):
+            defs_path = path.parent / 'defs.txt'
+            if not defs_path.exists(): defs_path = path.parent / '.defs.txt'
+            if defs_path.exists() and parse_jira_definitions(defs_path.read_text(encoding='utf-8'))[0].enabled:
+                return True, ""
         return False, "worker user cannot access personal space"
     if role in {"admin", "manager"}:
         return True, ""
@@ -3494,11 +3594,13 @@ async def sync_space_with_jira(
     states_config, states_order, states_block = parse_states_config(lines)
     local_people, local_states = copy.deepcopy(people_config), copy.deepcopy(states_config)
     tab_path = space_file_for_room_id(session.space_id)
+    shared = getattr(session, "shared_definitions", None)
     if tab_path and tab_path.parent.name.endswith(".space"):
         from space_tabs import resolved_definition_source
         defs_path = tab_path.parent / "defs.txt"
         if not defs_path.exists(): defs_path = tab_path.parent / ".defs.txt"
-        shared = defs_path.read_text(encoding="utf-8") if defs_path.exists() else ""
+        if shared is None:
+            shared = defs_path.read_text(encoding="utf-8") if defs_path.exists() else ""
         resolved = resolved_definition_source(content, shared).split("\n")
         people_config, people_order, _ = parse_people_config(resolved)
         states_config, states_order, _ = parse_states_config(resolved)
@@ -3530,6 +3632,21 @@ async def sync_space_with_jira(
     )
     hierarchy_levels_by_project: Dict[str, List[Dict[str, Any]]] = {}
     created = False
+    created_issues = {}
+    created_states = {}
+    unresolved_created = set()
+    completed_created = set()
+    pending_keys = {(record.get('key') if isinstance(record, dict) else record) for identity, record in creation_records().items() if json.loads(identity)[0] == session.space_id}
+    for task in tasks:
+        if task.jira_key in pending_keys:
+            created_states[task.jira_key] = task.state
+            if task.state:
+                reconciled = await reconcile_created_state(client, task.jira_key, task.state, states_config)
+                if reconciled is None: unresolved_created.add(task.jira_key)
+                else:
+                    created_issues[task.jira_key] = reconciled
+                    completed_created.add(task.jira_key)
+            else: completed_created.add(task.jira_key)
     for task in tasks:
         if task.jira_key or not task.jira_project:
             continue
@@ -3636,7 +3753,8 @@ async def sync_space_with_jira(
             client, owner_slug, people_config
         )
         logger.info("* Adding task %s to jira", task_title)
-        issue_key, status, payload = await run_blocking_io(
+        recovered_key = recovered_created_issue(session.space_id, task_title, project_key_hint)
+        issue_key, status, payload = (recovered_key, 201, {}) if recovered_key else await run_blocking_io(
             client.create_issue,
             project_key_hint,
             task_title,
@@ -3658,6 +3776,30 @@ async def sync_space_with_jira(
                 task_title,
             )
             continue
+        record_created_issue(session.space_id, task_title, project_key_hint, issue_key)
+        # Re-read before attaching the key; a concurrent edit must never be overwritten.
+        live = await read_ydoc_text(session.ydoc)
+        if live != "\n".join(original_lines):
+            latest = parse_space_tasks(live.split("\n"))
+            matches = [entry for entry in latest if entry.title == task_title and entry.jira_project == task.jira_project and not entry.jira_key]
+            if len(matches) != 1:
+                logger.error("Created %s but task changed; retaining creation in recovery journal", issue_key)
+                return used_projects
+            latest_task = matches[0]
+            updated = live.split("\n")
+            updated[latest_task.line_index] = build_task_line(latest_task.indent, latest_task.title, issue_key)
+            replace_ydoc_text(session.ydoc, "\n".join(updated))
+            return used_projects
+        created_states[issue_key] = task.state
+        if task.state:
+            reconciled = await reconcile_created_state(client, issue_key, task.state, states_config)
+            if reconciled is not None:
+                created_issues[issue_key] = reconciled
+                completed_created.add(issue_key)
+            else:
+                unresolved_created.add(issue_key)
+        else:
+            completed_created.add(issue_key)
         task.jira_key = issue_key
         lines[task.line_index] = build_task_line(task.indent, task_title, issue_key)
         created = True
@@ -3737,12 +3879,13 @@ async def sync_space_with_jira(
         if (
             changed_issue_keys_normalized is not None
             and key not in changed_issue_keys_normalized
+            and key not in created_states
             and cached_jira_entity is not None
         ):
             jira_entities[key] = copy_entity(cached_jira_entity)
             continue
         logger.debug("Fetching Jira issue %s for space %s", key, session.space_id)
-        issue, status = await run_blocking_io(client.get_issue, key)
+        issue, status = (created_issues[key], 200) if key in created_issues else await run_blocking_io(client.get_issue, key)
         logger.debug(
             "[Space %s] <- [JIRA %s] fetch response for %s: %s",
             session.space_id,
@@ -3868,6 +4011,12 @@ async def sync_space_with_jira(
                     key,
                     field,
                 )
+        if key in created_states and 'state' in diff_fields:
+            # Creation owns the initial state decision, regardless of normal timestamps.
+            if key in unresolved_created or jira_status_matches_space_state(extract_jira_issue_status_name(created_issues.get(key)), created_states[key], states_config):
+                field_dirs.pop('state', None)
+            else:
+                field_dirs['state'] = '<-'
         if diff_fields:
             diff_fields_by_key[key] = diff_fields
         field_directions_by_key[key] = field_dirs
@@ -4910,9 +5059,9 @@ async def sync_space_with_jira(
             )
         )
         if (
-            force_direction != "push"
+            (force_direction != "push" or key in created_states)
             and jira_entity
-            and (force_direction == "pull" or not task_has_dirty)
+            and (force_direction == "pull" or not task_has_dirty or key in created_states)
         ):
             task = tasks_by_key.get(key)
             if not task:
@@ -5184,6 +5333,20 @@ async def sync_space_with_jira(
             )
             if change_log:
                 logger.info("%s", change_log)
+        current_source = await read_ydoc_text(session.ydoc)
+        config_current = getattr(session, 'jira_config_current', None)
+        if current_source != "\n".join(original_lines) or (config_current and not config_current()):
+            # Attach only unambiguous creation keys; discard other stale updates.
+            current_lines = current_source.split("\n")
+            for entry in parse_space_tasks(current_lines):
+                if not entry.jira_key and entry.jira_project:
+                    recovered = recovered_created_issue(session.space_id, entry.title, entry.jira_project)
+                    matches = [t for t in parse_space_tasks(current_lines) if t.title == entry.title and t.jira_project == entry.jira_project and not t.jira_key]
+                    if recovered and len(matches) == 1:
+                        current_lines[entry.line_index] = build_task_line(entry.indent, entry.title, recovered)
+            if current_lines != current_source.split("\n"):
+                replace_ydoc_text(session.ydoc, "\n".join(current_lines))
+            return used_projects
         content = "\n".join(lines)
         logger.debug("Writing Jira updates to space %s", session.space_id)
         session.ignore_until = time.time() + 0.2
@@ -5197,6 +5360,8 @@ async def sync_space_with_jira(
                 len(content),
                 len(written_content),
             )
+    for key in completed_created:
+        forget_created_issue(session.space_id, key)
     return used_projects - inaccessible_jira_projects
 
 
@@ -5213,194 +5378,94 @@ async def jira_sync_loop(
     space_hierarchy_cache.clear()
     jira_hierarchy_cache.clear()
     logger.info("Jira worker started. Polling every %ss", JIRA_SYNC_INTERVAL)
-    sessions: Dict[str, SpaceSession] = {}
-    client: Optional[JiraClient] = None
-    active_config = JiraConfig()
-    config_missing_logged = False
-    shared_session: Optional[SpaceSession] = None
-    used_jira_projects: Set[str] = set()
-    inaccessible_space_ids: Set[str] = set()
-    inaccessible_jira_projects: Set[str] = set()
-    inaccessible_jira_issues: Set[str] = set()
-    boot_full_scan_complete = False
-    last_jira_pull_at = 0.0
+    sessions = {}
+    definitions_sessions = {}
+    contexts = {}
+    cache_names = ('JIRA_STATE_MAP_BY_PROJECT', 'JIRA_ISSUE_HIERARCHY_BY_PROJECT', 'JIRA_ISSUE_TYPE_META_BY_PROJECT', 'JIRA_ACCOUNT_ID_BY_EMAIL',
+                   'space_entity_cache', 'jira_entity_cache', 'space_hierarchy_cache', 'jira_hierarchy_cache')
     manual_sync_requested = False
     while True:
         try:
-            logger.info("-" * 40 + " tick")
-            config = load_jira_config()
-            enabled = jira_enabled(config)
-            if not enabled:
-                if not config_missing_logged:
-                    logger.info(
-                        "Jira sync disabled. Configure Jira in the UI to enable."
-                    )
-                    config_missing_logged = True
-            else:
-                config_missing_logged = False
-                if config != active_config or client is None:
-                    active_config = config
-                    client = JiraClient(
-                        config.base_url, config.email, config.token
-                    )
-                    used_jira_projects.clear()
-                    inaccessible_space_ids.clear()
-                    inaccessible_jira_projects.clear()
-                    inaccessible_jira_issues.clear()
-                    boot_full_scan_complete = False
-                    last_jira_pull_at = 0.0
-            if enabled and client:
-                if shared_session is None:
-                    try:
-                        shared_session = await open_space_session(SYSTEM_SHARED_ROOM_ID)
-                    except Exception:
-                        logger.warning("Unable to connect to shared system room")
-                        shared_session = None
-                if shared_session is not None:
-                    try:
-                        await publish_shared_jira_project_keys(client, shared_session)
-                    except ConnectionClosed:
-                        logger.warning("Shared system room disconnected; will reconnect")
-                        try:
-                            await shared_session.close()
-                        except Exception:
-                            logger.debug("Failed to close shared system session cleanly")
-                        shared_session = None
-                    except Exception:
-                        logger.exception("Failed publishing Jira project keys to shared map")
-
-                changed_issue_keys: Optional[Set[str]] = None
-                force_full_scan = one_shot or not boot_full_scan_complete
-                if force_full_scan:
-                    logger.info("Running Jira full space scan")
-                else:
-                    changed_issue_keys = await fetch_changed_jira_issue_keys(
-                        client,
-                        used_jira_projects - inaccessible_jira_projects,
-                        last_jira_pull_at or time.time(),
-                    )
-                    if changed_issue_keys is None:
-                        force_full_scan = True
-                    else:
-                        last_jira_pull_at = time.time()
-
-                discovered_projects: Set[str] = set()
-                ignore_dirty_for_tick = one_shot or manual_sync_requested
-                if manual_sync_requested:
-                    logger.info("Manual sync requested; ignoring dirty status for this tick")
-                manual_sync_requested = False
-                for space_id in iter_space_room_ids():
-                    if space_id == SYSTEM_SHARED_ROOM_ID:
-                        continue
-                    if space_id in inaccessible_space_ids:
-                        logger.debug(
-                            "Skipping inaccessible space %s for this worker run",
-                            format_space_label(space_id),
-                        )
-                        continue
-                    has_space_access, access_reason = worker_can_access_space(space_id)
-                    if not has_space_access:
-                        inaccessible_space_ids.add(space_id)
-                        logger.warning(
-                            "Skipping inaccessible space %s for this worker run: %s",
-                            format_space_label(space_id),
-                            access_reason,
-                        )
-                        continue
-                    logger.debug("Syncing space %s", format_space_label(space_id))
-                    session = sessions.get(space_id)
-                    if not session:
-                        try:
-                            session = await open_space_session(space_id)
-                        except TimeoutError:
-                            logger.warning(
-                                "Skipping space %s due to connection timeout",
-                                format_space_label(space_id),
-                            )
-                            continue
-                        except Exception as exc:
-                            if is_inaccessible_space_error(exc):
-                                inaccessible_space_ids.add(space_id)
-                                logger.warning(
-                                    "Skipping inaccessible space %s for this worker run",
-                                    format_space_label(space_id),
-                                )
-                                continue
-                            raise
-                        sessions[space_id] = session
-                    try:
-                        space_projects = await sync_space_with_jira(
-                            client,
-                            session,
-                            "",
-                            force_direction=force_direction,
-                            ignore_dirty=ignore_dirty_for_tick,
-                            changed_issue_keys=None if force_full_scan else changed_issue_keys,
-                            inaccessible_jira_projects=inaccessible_jira_projects,
-                            inaccessible_jira_issues=inaccessible_jira_issues,
-                        )
-                    except Exception as exc:
-                        if is_inaccessible_space_error(exc):
-                            inaccessible_space_ids.add(space_id)
-                            sessions.pop(space_id, None)
-                            try:
-                                await session.close()
-                            except Exception:
-                                logger.debug("Failed closing inaccessible space session")
-                            logger.warning(
-                                "Skipping inaccessible space %s for this worker run",
-                                format_space_label(space_id),
-                            )
-                            continue
-                        raise
-                    discovered_projects.update(space_projects)
-                if discovered_projects:
-                    used_jira_projects.update(discovered_projects - inaccessible_jira_projects)
-                    logger.info(
-                        "Jira projects used by spaces: %s",
-                        ", ".join(sorted(used_jira_projects)),
-                    )
-                if inaccessible_jira_projects:
-                    used_jira_projects.difference_update(inaccessible_jira_projects)
-                    logger.info(
-                        "Skipping inaccessible Jira projects this worker run: %s",
-                        ", ".join(sorted(inaccessible_jira_projects)),
-                    )
-                if inaccessible_jira_issues:
-                    logger.info(
-                        "Skipping inaccessible Jira issues this worker run: %s",
-                        ", ".join(sorted(inaccessible_jira_issues)),
-                    )
-                if force_full_scan:
-                    boot_full_scan_complete = True
-                    last_jira_pull_at = time.time()
-        except ConnectionClosed:
-            logger.warning("Websocket disconnected; will reconnect")
-            for session in sessions.values():
-                await session.close()
-            sessions.clear()
-            if shared_session is not None:
+            index_path = SPACES_DIR.parent / "space-index.json"
+            data = json.loads(index_path.read_text()) if index_path.exists() else {'spaces': {}, 'documents': {}}
+            active_spaces = set()
+            for item in data['spaces'].values():
+                if item.get('deleted'): continue
+                documents = [d for d in data['documents'].values() if d['space_id'] == item['id'] and not d.get('deleted')]
+                defs = next((d for d in documents if d['kind'] == 'defs'), None)
+                if not defs or not worker_can_access_space(defs['id'])[0]: continue
+                active_spaces.add(item['id'])
                 try:
-                    await shared_session.close()
+                    defs_session = definitions_sessions.get(item['id'])
+                    if not defs_session or defs_session.space_id != defs['id']:
+                        if defs_session: await defs_session.close()
+                        defs_session = await open_space_session(defs['id'])
+                        definitions_sessions[item['id']] = defs_session
+                        def invalidate(_event, sid=item['id'], ds=defs_session):
+                            context = contexts.get(sid)
+                            if context and parse_jira_definitions(ydoc_to_text(ds.ydoc))[0] != context['config']:
+                                context['client'].cancelled.set()
+                        # Run after the Y transaction releases its read/write borrow.
+                        loop = asyncio.get_running_loop()
+                        defs_session.ydoc.get_text('content').observe(lambda _event, callback=invalidate: loop.call_soon(callback, None))
+                    shared = await read_ydoc_text(defs_session.ydoc)
+                    config, diagnostics = parse_jira_definitions(shared)
+                    if not config.enabled:
+                        contexts.pop(item['id'], None)
+                        for document in documents:
+                            if document['id'] in sessions: await sessions.pop(document['id']).close()
+                        if diagnostics: logger.warning("Space %s: %s", item['id'], ' '.join(diagnostics))
+                        continue
+                    context = contexts.get(item['id'])
+                    if not context or context['config'] != config:
+                        context = {'config': config, 'projects': set(), 'inaccessible_projects': set(), 'inaccessible_issues': set(),
+                                   'last_pull': 0.0, 'boot': False, 'caches': {name: {} for name in cache_names}}
+                        context['client'] = SpaceJiraClient(config, lambda ds=defs_session: parse_jira_definitions(ydoc_to_text(ds.ydoc))[0])
+                        contexts[item['id']] = context
+                    for name in cache_names: globals()[name] = context['caches'][name]
+                    client = context['client']
+                    full = one_shot or not context['boot']
+                    pull_started = time.time()
+                    changed = None if full else await fetch_changed_jira_issue_keys(client, context['projects'] - context['inaccessible_projects'], context['last_pull'] or time.time())
+                    if changed is None: full = True
+                    for document in documents:
+                        if document['kind'] != 'task' or not worker_can_access_space(document['id'])[0]: continue
+                        session = sessions.get(document['id'])
+                        if not session:
+                            session = await open_space_session(document['id'])
+                            sessions[document['id']] = session
+                        session.shared_definitions = shared
+                        session.jira_config_current = lambda ds=defs_session, cfg=config, snapshot=shared: ydoc_to_text(ds.ydoc) == snapshot and parse_jira_definitions(snapshot)[0] == cfg
+                        try:
+                            projects = await sync_space_with_jira(client, session, '', force_direction=force_direction,
+                                ignore_dirty=one_shot or manual_sync_requested, changed_issue_keys=None if full else changed,
+                                inaccessible_jira_projects=context['inaccessible_projects'], inaccessible_jira_issues=context['inaccessible_issues'])
+                            context['projects'].update(projects)
+                        except ConnectionClosed:
+                            sessions.pop(document['id'], None)
+                            await session.close()
+                        except Exception:
+                            logger.exception("Jira synchronization failed for document %s", document['id'])
+                    context['boot'] = True
+                    context['last_pull'] = pull_started
+                except ConnectionClosed:
+                    lost = definitions_sessions.pop(item['id'], None)
+                    if lost: await lost.close()
                 except Exception:
-                    logger.debug("Failed closing shared system session")
-                shared_session = None
+                    logger.exception("Jira synchronization failed for space %s", item['id'])
+            live_docs = {d['id'] for d in data['documents'].values() if not d.get('deleted') and d['space_id'] in active_spaces}
+            for doc_id in list(sessions):
+                if doc_id not in live_docs: await sessions.pop(doc_id).close()
+            for space_id in list(definitions_sessions):
+                if space_id not in active_spaces:
+                    await definitions_sessions.pop(space_id).close()
+                    contexts.pop(space_id, None)
         except Exception:
             logger.exception("Jira sync loop failed")
-        if one_shot:
-            break
+        if one_shot: break
         manual_sync_requested = await sleep_until_next_sync(JIRA_SYNC_INTERVAL)
-
-    for session in sessions.values():
-        try:
-            await session.close()
-        except Exception:
-            logger.debug("Failed closing session during shutdown: %s", session.space_id)
-    if shared_session is not None:
-        try:
-            await shared_session.close()
-        except Exception:
-            logger.debug("Failed closing shared system session during shutdown")
+    for session in [*sessions.values(), *definitions_sessions.values()]:
+        await session.close()
 
 
 # Handles the main function logic.

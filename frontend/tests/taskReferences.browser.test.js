@@ -113,6 +113,8 @@ test('cross-tab task references, original edits and drag transfers', { timeout: 
     assert.match((await contents()).find(d => d.id === main.id).text, /% Renamed/);
     await page.getByRole('button', { name: 'Timeline', exact: true }).click();
     await page.waitForFunction(() => document.querySelectorAll('.timeline-bar').length === 2);
+    // Focus animation redraws timeline bars; wait for it to settle before dragging.
+    await page.waitForTimeout(400);
     const bar = page.locator('.timeline-bar').filter({ hasText: 'Renamed' });
     await bar.scrollIntoViewIfNeeded();
     const bounds = await bar.boundingBox();
@@ -334,12 +336,27 @@ test('cross-tab task references, original edits and drag transfers', { timeout: 
     await page.route('**/api/jira-issue-suggestions?**', route => route.fulfill({ json: { issues: [{ key: 'DEMO-42', name: 'Jira issue summary' }], configured: true } }));
     await backgroundMenu('.timeline-rows');
     await page.getByRole('menuitem', { name: 'Add task', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Link Jira', exact: true }).isVisible(), false);
+    await page.route('**/api/jira-projects?**', route => route.fulfill({ json: { projects: [{ key: 'DEMO', name: 'DEMO' }] } }));
+    const defs = currentTabs.tabs.find(tab => tab.kind === 'defs');
+    const defsText = (await contents()).find(doc => doc.id === defs.id).text;
+    await write(defs.id, defsText + '\njira:\n    base_url: https://jira.example.com\n    email: test@example.com\n    token: TEST\n');
+    await page.getByRole('button', { name: 'Link Jira', exact: true }).waitFor();
     await page.locator('#task-edit-title-input').fill('Jira linked creation');
     await page.getByRole('button', { name: 'Link Jira', exact: true }).click();
     const jiraInput = page.getByRole('combobox', { name: 'Jira key', exact: true });
     await jiraInput.fill('de');
+    assert.equal(await page.getByRole('listbox', { name: 'Jira suggestions', exact: true }).evaluate(el => getComputedStyle(el).position), 'absolute');
     await page.getByRole('option', { name: 'DEMO', exact: true }).click();
     assert.equal(await jiraInput.inputValue(), 'DEMO');
+    await page.getByText('A new Jira task will be created in DEMO.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('listbox', { name: 'Jira suggestions', exact: true }).isVisible(), false);
+    await jiraInput.press('Enter');
+    await page.getByText('A new Jira task will be created in DEMO.', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Unlink Jira', exact: true }).evaluate(el => getComputedStyle(el).borderTopWidth), '0px');
+    await page.getByRole('button', { name: 'Unlink Jira', exact: true }).click();
+    assert.equal(await page.getByText('A new Jira task will be created in DEMO.', { exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'Link Jira', exact: true }).click();
     await jiraInput.fill('DEMO-');
     await page.getByRole('option', { name: 'DEMO-42 Jira issue summary', exact: true }).click();
     await page.getByRole('button', { name: 'Unlink Jira', exact: true }).waitFor();

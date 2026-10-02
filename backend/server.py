@@ -2,6 +2,7 @@
 
 import asyncio
 from functools import wraps
+from contextlib import AsyncExitStack
 import base64
 import json
 import hashlib
@@ -35,6 +36,7 @@ from uvicorn.protocols.utils import ClientDisconnected
 from websockets.exceptions import ConnectionClosedOK
 from jira import config as jira_storage_config
 from jira.client import JiraClient, build_issue_type_hierarchy_levels
+from jira.definitions import parse_jira_definitions, update_jira_definitions, jira_span
 from jira.config import (
     JIRA_DAEMON_USERNAME,
     load_jira_config_data,
@@ -42,7 +44,6 @@ from jira.config import (
     load_users_config_data,
     save_jira_config_data,
     save_users_config_data,
-    save_jira_config,
 )
 
 # Stores the ROOT_DIR module constant.
@@ -1263,6 +1264,8 @@ def can_access_space(
     if is_personal_space(space_id, users, space_path_hint=space_path_hint):
         if auth.role == "admin":
             return True
+        if auth.username == JIRA_DAEMON_USERNAME and auth.role == 'manager' and item:
+            return parse_jira_definitions(read_tab_live(store.defs(item)))[0].enabled
         return auth.username == space_id
     if auth.role in {"admin", "manager"}:
         return True
@@ -1835,7 +1838,7 @@ def create_history_checkpoint(
         if document:
             store = tab_store()
             space = store.space(space_key)
-            definitions = store.read(store.defs(space))
+            definitions = read_tab_live(store.defs(space))
             _atomic_write_text(checkpoint_path.with_suffix(".defs"), definitions)
         checkpoints = load_history_index(space_key)
         checkpoints.append(metadata)
@@ -2171,7 +2174,7 @@ def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
 def schedule_space_snapshot(space_id: str, room, *, space_path_hint: Optional[str] = None) -> None:
     task_key = room_name(space_id, space_path_hint=space_path_hint)
     mapped_room = websocket_server.rooms.get(task_key)
-    if mapped_room is not room:
+    if mapped_room is not room or getattr(room, "_refreshing_live_snapshot", False):
         return
     try:
         asyncio.get_running_loop()
@@ -2182,6 +2185,10 @@ def schedule_space_snapshot(space_id: str, room, *, space_path_hint: Optional[st
         except Exception:
             logger.exception("Failed to snapshot space %s (sync)", space_id)
         return
+
+    document = tab_document(space_id, space_path_hint)
+    if document:
+        asyncio.get_running_loop().call_soon(lambda: read_tab_live(document))
 
     if task_key in space_save_tasks:
         space_save_tasks[task_key].cancel()
@@ -2283,6 +2290,7 @@ def attach_snapshot_hook(space_id: str, room, *, space_path_hint: Optional[str] 
     def _after_txn(*_args, **_kwargs):
         schedule_space_snapshot(space_id, room, space_path_hint=space_path_hint)
 
+    room._ydoc_thread = threading.get_ident()
     room.ydoc.observe_after_transaction(_after_txn)
     room._snapshot_hook = True
 
@@ -2695,10 +2703,26 @@ def delete_user(username: str, user: AuthUser = Depends(require_auth)) -> Dict[s
 # Handles the list_spaces function logic.
 # Input: user: AuthUser = Depends(require_auth).
 # Output: Dict[str, Any].
+_live_tab_snapshots = {}
+
+
 def read_tab_live(doc):
     room = websocket_server.rooms.get(f"/ws/{doc['id']}")
     if room:
-        return ydoc_to_text(room.ydoc)
+        owner_thread = getattr(room, '_ydoc_thread', threading.main_thread().ident)
+        if threading.get_ident() != owner_thread:
+            # Y documents belong to the event-loop thread. Snapshot workers read
+            # the immutable copy refreshed after every collaborative transaction.
+            if doc['id'] in _live_tab_snapshots:
+                return _live_tab_snapshots[doc['id']]
+        else:
+            room._refreshing_live_snapshot = True
+            try:
+                text = ydoc_to_text(room.ydoc)
+                _live_tab_snapshots[doc['id']] = text
+                return text
+            finally:
+                room._refreshing_live_snapshot = False
     store = tab_store()
     return store.read(doc) if store.path(doc).exists() else ""
 
@@ -3223,10 +3247,8 @@ def tag_space_history_checkpoint(
 # Input: user: AuthUser = Depends(require_auth).
 # Output: Dict[str, Any].
 @app.get("/api/jira-config")
-def read_jira_config(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
-    if not can_manage_jira(user):
-        raise HTTPException(status_code=403, detail="Not allowed.")
-    config = load_jira_config()
+async def read_jira_config(space: str, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+    config, diagnostics = space_jira_config(space, user)
     return {
         "base_url": config.base_url,
         "email": config.email,
@@ -3238,14 +3260,13 @@ def read_jira_config(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
 # Input: user: AuthUser = Depends(require_auth).
 # Output: Dict[str, Any].
 @app.get("/api/jira-projects")
-def read_jira_projects(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
-    if not can_manage_jira(user):
-        raise HTTPException(status_code=403, detail="Not allowed.")
-    config = load_jira_config()
+async def read_jira_projects(space: str, user: AuthUser = Depends(require_auth)) -> Dict[str, Any]:
+    config, _ = space_jira_config(space, user)
     if not config.enabled:
         raise HTTPException(status_code=400, detail="Jira is not configured.")
     client = JiraClient(config.base_url, config.email, config.token)
-    projects, status = client.get_projects()
+    projects, status = await run_blocking_io(client.get_projects)
+    if space_jira_config(space, user)[0] != config: raise HTTPException(409, "Jira configuration changed.")
     if projects is None:
         raise HTTPException(
             status_code=502,
@@ -3261,20 +3282,20 @@ def read_jira_projects(user: AuthUser = Depends(require_auth)) -> Dict[str, Any]
 # Input: project: Optional[str] = Query(default=None), user: AuthUser = Depends(require_auth).
 # Output: Dict[str, Any].
 @app.get("/api/jira-issue-hierarchy")
-def read_jira_issue_hierarchy(
+async def read_jira_issue_hierarchy(
+    space: str,
     project: Optional[str] = Query(default=None),
     user: AuthUser = Depends(require_auth),
 ) -> Dict[str, Any]:
-    if not can_manage_jira(user):
-        raise HTTPException(status_code=403, detail="Not allowed.")
-    config = load_jira_config()
+    config, _ = space_jira_config(space, user)
     if not config.enabled:
         raise HTTPException(status_code=400, detail="Jira is not configured.")
     project_key = (project or "").strip().upper()
     if not project_key:
         raise HTTPException(status_code=400, detail="Project key is required.")
     client = JiraClient(config.base_url, config.email, config.token)
-    issue_types, status = client.get_project_issue_type_hierarchy(project_key)
+    issue_types, status = await run_blocking_io(client.get_project_issue_type_hierarchy, project_key)
+    if space_jira_config(space, user)[0] != config: raise HTTPException(409, "Jira configuration changed.")
     if not issue_types:
         raise HTTPException(
             status_code=502,
@@ -3292,18 +3313,18 @@ def read_jira_issue_hierarchy(
 
 
 @app.get('/api/jira-issue-suggestions')
-def read_jira_issue_suggestions(space: str, query: str, user: AuthUser = Depends(require_auth)):
-    authorized_tab_space(space, user)
+async def read_jira_issue_suggestions(space: str, query: str, user: AuthUser = Depends(require_auth)):
+    config, _ = space_jira_config(space, user)
     if not re.fullmatch(r'[A-Z][A-Z0-9]+-\d*', query):
         raise HTTPException(400, 'Invalid Jira key prefix.')
-    config = load_jira_config()
     if not config.enabled:
         return {'issues': [], 'configured': False}
     client = JiraClient(config.base_url, config.email, config.token)
     try:
-        issues, status = client.suggest_issues(query)
+        issues, status = await run_blocking_io(client.suggest_issues, query)
     except Exception:
         raise HTTPException(502, 'Unable to look up Jira issues.')
+    if space_jira_config(space, user)[0] != config: raise HTTPException(409, "Jira configuration changed.")
     if issues is None:
         raise HTTPException(502, 'Unable to look up Jira issues.')
     return {'issues': issues, 'configured': True}
@@ -3312,23 +3333,91 @@ def read_jira_issue_suggestions(space: str, query: str, user: AuthUser = Depends
 # Handles the write_jira_config function logic.
 # Input: payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth),.
 # Output: Dict[str, Any].
+def space_jira_config(ref, user):
+    store, space = authorized_tab_space(ref, user)
+    return parse_jira_definitions(read_tab_live(store.defs(space)))
+
+
+@app.get("/api/jira-status")
+async def read_jira_status(space: str, user: AuthUser = Depends(require_auth)):
+    config, diagnostics = space_jira_config(space, user)
+    return {"configured": config.enabled, "diagnostics": diagnostics}
+
+
 @app.put("/api/jira-config")
-def write_jira_config(
-    payload: Dict[str, Any] = Body(default={}),
-    user: AuthUser = Depends(require_auth),
-) -> Dict[str, Any]:
-    if not can_manage_jira(user):
-        raise HTTPException(status_code=403, detail="Not allowed.")
-    if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail="Invalid Jira config payload.")
-    config = save_jira_config(payload)
-    ensure_jira_daemon_credentials()
-    return {
-        "ok": True,
-        "base_url": config.base_url,
-        "email": config.email,
-        "token": config.token,
-    }
+async def write_jira_config(space: str, payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth)):
+    store, item = authorized_tab_space(space, user)
+    doc = store.defs(item)
+    expected = read_tab_live(doc)
+    try:
+        text = update_jira_definitions(expected, payload)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    await change_shared_definitions(item["id"], {"changes": [{"id": doc["id"], "expected": expected, "text": text}]}, user)
+    config, _ = parse_jira_definitions(text)
+    return {"ok": True, "base_url": config.base_url, "email": config.email, "token": config.token}
+
+
+@app.get("/api/jira-migration")
+async def read_jira_migration(user: AuthUser = Depends(require_auth)):
+    if not can_manage_jira(user): raise HTTPException(403, "Not allowed.")
+    store = tab_store()
+    return {"selection": json.loads(jira_storage_config.JIRA_CONFIG_PATH.with_name("jira-migration.json").read_text())["spaces"] if jira_storage_config.JIRA_CONFIG_PATH.with_name("jira-migration.json").exists() else [], "pending": load_jira_config().enabled, "spaces": [{"id": item["id"], "name": item["access"]} for item in store.data["spaces"].values() if not item.get("deleted") and can_access_space(user, item["id"])]}
+
+
+_jira_migration_lock = asyncio.Lock()
+
+
+@app.post("/api/jira-migration")
+async def migrate_jira_config(payload: Dict[str, Any] = Body(default={}), user: AuthUser = Depends(require_auth)):
+    if not can_manage_jira(user): raise HTTPException(403, "Not allowed.")
+    async with _jira_migration_lock:
+        config = load_jira_config()
+        if not config.enabled: return {"ok": True}
+        refs = payload.get("spaces")
+        if not isinstance(refs, list) or any(not isinstance(ref, str) for ref in refs): raise HTTPException(400, "Select spaces to migrate.")
+        store = tab_store()
+        journal = jira_storage_config.JIRA_CONFIG_PATH.with_name("jira-migration.json")
+        previous = json.loads(journal.read_text()) if journal.exists() else None
+        refs = sorted({authorized_tab_space(ref, user)[1]["id"] for ref in refs})
+        if previous and previous["spaces"] != refs: raise HTTPException(409, "Resume the previous migration selection first.")
+        async with AsyncExitStack() as locks:
+            for ref in refs:
+                await locks.enter_async_context(_tab_operation_locks.setdefault(ref, asyncio.Lock()))
+            changes = []
+            for ref in dict.fromkeys(refs):
+                _, item = authorized_tab_space(ref, user)
+                doc = store.defs(item)
+                expected = read_tab_live(doc)
+                existing, _ = parse_jira_definitions(expected)
+                if jira_span(expected):
+                    if previous and existing == config: continue
+                    raise HTTPException(409, "A selected space already has Jira configuration.")
+                text = update_jira_definitions(expected, {"base_url": config.base_url, "email": config.email, "token": config.token})
+                changes.append((item, doc, expected, text))
+            # Keep the original file as the recovery backup, without logging secrets.
+            backup = jira_storage_config.JIRA_CONFIG_PATH.with_name("jira_config.migration-backup.json")
+            if not backup.exists(): _atomic_write_text(backup, jira_storage_config.JIRA_CONFIG_PATH.read_text())
+            _atomic_write_text(journal, json.dumps({"spaces": refs}))
+            with store.lock:
+                for _, doc, expected, _ in changes:
+                    if read_tab_live(doc) != expected or digest(store.read(doc)) != doc.get("disk_hash"): raise HTTPException(409, "Definitions changed. Retry migration.")
+                for _, doc, expected, _ in changes:
+                    create_history_checkpoint(doc["id"], expected, kind="manual", label="Before Jira migration")
+                store.transaction({str(store.path(doc).relative_to(store.root)): text for _, doc, _, text in changes})
+                for _, doc, _, text in changes:
+                    room = websocket_server.rooms.get(f"/ws/{doc['id']}")
+                    if room:
+                        replace_ydoc_text(room.ydoc, text)
+                        await room.ystore.encode_state_as_update(room.ydoc)
+                    create_history_checkpoint(doc["id"], text, kind="manual", label="Jira migration")
+            # Keep daemon login credentials; retire only the global Jira connection.
+            legacy = load_jira_config_data()
+            for key in ("base_url", "email", "token"): legacy.pop(key, None)
+            _atomic_write_text(jira_storage_config.JIRA_CONFIG_PATH, json.dumps(legacy))
+            journal.unlink()
+            await publish_tab_changes()
+            return {"ok": True}
 
 
 # Handles the read_space function logic.

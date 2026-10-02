@@ -1,3 +1,4 @@
+import { parseSpaceJira } from "./jiraDefinitions.js";
 let spaceTabs: ReturnType<typeof createSpaceTabs> | null = null;
 let sharedDefinitions = "";
 let historyDefinitions = "";
@@ -1744,7 +1745,7 @@ function applySessionFromServer(data: any): void {
  */
 function updateRoleVisibility() {
   if (dom.jiraConfigButton) {
-    dom.jiraConfigButton.classList.toggle("hidden", !collab.permissions.can_manage_jira);
+    dom.jiraConfigButton.classList.toggle("hidden", !collab.isAuthenticated);
   }
   if (dom.profileButton) {
     dom.profileButton.classList.toggle("hidden", !collab.isAuthenticated);
@@ -4753,15 +4754,6 @@ function applySystemSharedSnapshot(rawSnapshot: any): void {
   if (rawSnapshot?.tabs_revision) window.dispatchEvent(new Event("space-tabs-changed"));
   if (Array.isArray(rawSnapshot?.tabs_notices) && rawSnapshot.tabs_notices.length) showToast(rawSnapshot.tabs_notices.join(" "), "error");
   const snapshot = rawSnapshot && typeof rawSnapshot === "object" ? rawSnapshot : {};
-  const jiraProjectsRaw = decodeSystemSharedValue(snapshot[SYSTEM_SHARED_KEY_JIRA_PROJECT_KEYS]);
-  const jiraProjectKeys = Array.isArray(jiraProjectsRaw)
-    ? jiraProjectsRaw
-      .map((value: any) => (typeof value === "string" ? value.trim().toUpperCase() : ""))
-      .filter((value: string) => Boolean(value))
-    : [];
-  if (Array.isArray(jiraProjectsRaw)) {
-    setJiraProjectCatalog(jiraProjectKeys.map((key: string) => ({ key, name: key })));
-  }
   const backendBuildIdRaw = decodeSystemSharedValue(snapshot[SYSTEM_SHARED_KEY_BACKEND_BUILD_ID]);
   collab.backendBuildId =
     typeof backendBuildIdRaw === "string" ? backendBuildIdRaw.trim() : "";
@@ -5090,7 +5082,7 @@ async function moveSpaceToFolderRequest(spaceId: any, folder: any, spacePath: an
 async function fetchJiraConfig() {
   let response;
   try {
-    response = await fetch(`${REMOTE_BASE}/api/jira-config`, {
+    response = await fetch(`${REMOTE_BASE}/api/jira-config?space=${encodeURIComponent(spaceTabs?.space?.id || "")}`, {
       headers: authHeaders(),
     });
   } catch {
@@ -5118,7 +5110,7 @@ async function fetchJiraConfig() {
 async function fetchJiraProjects() {
   let response;
   try {
-    response = await fetch(`${REMOTE_BASE}/api/jira-projects`, {
+    response = await fetch(`${REMOTE_BASE}/api/jira-projects?space=${encodeURIComponent(spaceTabs?.space?.id || "")}`, {
       headers: authHeaders(),
     });
   } catch {
@@ -5146,7 +5138,7 @@ async function fetchJiraProjects() {
  * Output: result produced by this function.
  */
 async function fetchJiraIssueHierarchy(projectKey: any = "") {
-  const params = new URLSearchParams();
+  const params = new URLSearchParams({ space: spaceTabs?.space?.id || "" });
   const project = typeof projectKey === "string" ? projectKey.trim() : "";
   if (project) {
     params.set("project", project);
@@ -5184,9 +5176,10 @@ async function fetchJiraIssueHierarchy(projectKey: any = "") {
  * Output: result produced by this function.
  */
 async function saveJiraConfig(payload: any) {
+  await spaceTabs?.flush();
   let response;
   try {
-    response = await fetch(`${REMOTE_BASE}/api/jira-config`, {
+    response = await fetch(`${REMOTE_BASE}/api/jira-config?space=${encodeURIComponent(spaceTabs?.space?.id || "")}`, {
       method: "PUT",
       headers: {
         ...authHeaders(),
@@ -5201,7 +5194,8 @@ async function saveJiraConfig(payload: any) {
     throw new Error("Unauthorized");
   }
   if (!response.ok) {
-    throw new Error("Unable to save Jira configuration.");
+    const body = await response.json().catch(() => ({}));
+    throw new Error(typeof body.detail === "string" ? body.detail : "Unable to save Jira configuration.");
   }
   const data = await response.json();
   return {
@@ -6273,7 +6267,7 @@ function setJiraProjectCatalog(projects: any[] = []): void {
   const dedupedProjects = Array.from(byKey.values()).sort((a: any, b: any) => a.key.localeCompare(b.key));
   state.jiraProjects = dedupedProjects;
   state.jiraProjectKeys = new Set(dedupedProjects.map((project: any) => project.key));
-  const jiraTokens = new Set<string>(state.jiraTokens || []);
+  const jiraTokens = new Set<string>();
   state.jiraProjectKeys.forEach((projectKey: any) => {
     const normalizedProjectKey = typeof projectKey === "string" ? projectKey.trim().toUpperCase() : "";
     if (normalizedProjectKey) {
@@ -6381,6 +6375,62 @@ async function loadJiraHierarchySummary() {
  * Input: none.
  * Output: result produced by this function.
  */
+let jiraCatalogRequest = 0;
+async function refreshSpaceJiraProjects() {
+  const request = ++jiraCatalogRequest;
+  const id = spaceTabs?.space?.id;
+  if (!id || !parseSpaceJira(sharedDefinitions).configured) return;
+  try {
+    const projects = await fetchJiraProjects();
+    if (request === jiraCatalogRequest && id === spaceTabs?.space?.id) setJiraProjectCatalog(projects);
+  } catch { /* Linking by key remains available when Jira is temporarily unreachable. */ }
+}
+
+async function offerJiraMigration() {
+  if (!collab.permissions.can_manage_jira || document.getElementById('jira-migration-modal')) return;
+  try {
+    const response = await fetch(`${REMOTE_BASE}/api/jira-migration`, { headers: authHeaders() });
+    if (!response.ok) return;
+    const data = await response.json();
+    if (!data.pending) return;
+    const modal = document.createElement('div'); modal.id = 'jira-migration-modal'; modal.className = 'modal'; modal.setAttribute('role', 'dialog'); modal.setAttribute('aria-modal', 'true'); modal.setAttribute('aria-label', 'Migrate Jira configuration');
+    const panel = document.createElement('div'); panel.className = 'modal-card';
+    const heading = document.createElement('h2'); heading.textContent = 'Move existing Jira settings';
+    const help = document.createElement('p'); help.className = 'modal-help'; help.textContent = 'Choose spaces that should receive the existing Jira credentials. Other spaces stay unconfigured. Space members can read these credentials in defs.txt.';
+    const fields = document.createElement('div'); fields.className = 'modal-fields';
+    let migrating = false;
+    const selected = new Set<string>(data.selection || []);
+    for (const space of data.spaces || []) {
+      const label = document.createElement('label'); label.className = 'modal-field jira-migration-space';
+      const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.checked = selected.has(space.id); checkbox.onchange = () => { if (checkbox.checked) selected.add(space.id); else selected.delete(space.id); migrate.disabled = !selected.size; };
+      label.append(checkbox, document.createTextNode(space.name)); fields.append(label);
+    }
+    const error = document.createElement('p'); error.className = 'modal-error'; error.hidden = true;
+    const actions = document.createElement('div'); actions.className = 'modal-actions';
+    const later = document.createElement('button'); later.className = 'toolbar-button'; later.textContent = 'Later'; later.onclick = () => { if (!migrating) modal.remove(); };
+    const migrate = document.createElement('button'); migrate.className = 'toolbar-button success'; migrate.textContent = 'Save selection'; migrate.disabled = !selected.size;
+    const submitMigration = async () => {
+      if (migrating) return;
+      migrating = true; migrate.disabled = true; none.disabled = true; later.disabled = true;
+      fields.querySelectorAll('input').forEach(input => input.disabled = true);
+      try {
+        const result = await fetch(`${REMOTE_BASE}/api/jira-migration`, { method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ spaces: [...selected] }) });
+        if (!result.ok) { const body = await result.json(); throw new Error(body.detail || 'Migration failed.'); }
+        fillJiraConfigForm(await fetchJiraConfig()); modal.remove();
+      } catch (cause: any) { error.textContent = cause.message; error.hidden = false; none.disabled = false; later.disabled = false; migrating = false; migrate.disabled = !selected.size; fields.querySelectorAll('input').forEach(input => input.disabled = false); }
+    };
+    migrate.onclick = () => { void submitMigration(); };
+    const none = document.createElement('button'); none.className = 'toolbar-button'; none.textContent = 'Migrate none'; none.onclick = () => { selected.clear(); void submitMigration(); };
+    actions.append(later, none, migrate);
+    const header = document.createElement('div'); header.className = 'modal-header'; header.append(heading);
+    const body = document.createElement('div'); body.className = 'modal-body'; body.append(help, fields, error, actions);
+    panel.append(header, body); modal.append(panel); document.body.append(modal); later.focus();
+    modal.onkeydown = event => { if (event.key === 'Escape' && !migrating) { event.stopPropagation(); modal.remove(); }
+      if (event.key === 'Tab') { const focusable = [...modal.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled)')]; const first = focusable[0], last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); } }
+    };
+  } catch { /* Retry when the settings dialog is reopened. */ }
+}
+
 async function openJiraConfigModal() {
   if (!dom.jiraConfigModal) {
     return;
@@ -6389,8 +6439,8 @@ async function openJiraConfigModal() {
     openLoginModal();
     return;
   }
-  if (!collab.permissions.can_manage_jira) {
-    setSpaceError("Only admins can change Jira settings.");
+  if (!spaceTabs?.space || state.historyViewerActive) {
+    setSpaceError("Open a space to change its Jira settings.");
     return;
   }
   closeSpacesModal();
@@ -6401,6 +6451,7 @@ async function openJiraConfigModal() {
   dom.jiraConfigModal.classList.remove("hidden");
   applyAuthFromInputs({ markDirty: false });
   void loadJiraHierarchySummary();
+  void offerJiraMigration();
   try {
     const config = await fetchJiraConfig();
     fillJiraConfigForm(config);
@@ -8313,7 +8364,13 @@ function getSpaceTabs() {
       sync();
     },
     disconnect: () => syncEngine.disconnectSpace(true),
-    definitions: text => { sharedDefinitions = text; if (editorController) sync(); },
+    definitions: text => {
+      const changed = sharedDefinitions !== text;
+      sharedDefinitions = text;
+      taskJiraLink.configure(parseSpaceJira(text).configured);
+      if (changed) { setJiraProjectCatalog([]); void refreshSpaceJiraProjects(); }
+      if (editorController) sync();
+    },
     mode: kind => {
       tabMode = kind;
       state.definitionsMode = kind === "defs";

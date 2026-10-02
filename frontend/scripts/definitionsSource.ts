@@ -6,6 +6,6 @@ export function plainDefinitions(source: string): string {
 }
 export function definitionsConfigSource(source: string): string {
   const config = source.split(/^\s*%/m)[0] || '';
-  if (!/^(?:tags|people|states|tabs):\s*$/m.test(config)) return source;
+  if (!/^(?:tags|people|states|tabs|jira):\s*$/m.test(config)) return source;
   return 'Definitions:\n' + source.split('\n').map(line => line ? '    ' + line : line).join('\n');
 }

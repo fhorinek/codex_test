@@ -1,3 +1,4 @@
+import { jiraMetadataRanges } from "./jiraDefinitions.js";
 import { definitionsConfigSource, plainDefinitions } from './definitionsSource.js';
 import { parseConfig } from "./task.js";
 // @ts-check
@@ -189,7 +190,9 @@ export function buildSlugRenameMetadataFromConfig(
 export function replaceSlugTokenOccurrences(text: string, oldToken: string, newToken: string): { text: string; count: number } {
   const pattern = new RegExp(`(^|\\s)${escapeRegExp(oldToken)}(?=\\s|$)`, "gm");
   let count = 0;
-  const nextText = text.replace(pattern, (_match: string, leading: string) => {
+  const protectedRanges = jiraMetadataRanges(text);
+  const nextText = text.replace(pattern, (_match: string, leading: string, offset: number) => {
+    if (protectedRanges.some(range => offset >= range.start && offset < range.end)) return _match;
     count += 1;
     return `${leading}${newToken}`;
   });
@@ -480,9 +483,9 @@ export function renameSlugInWholeFile(
     const taskStart = lines.findIndex(line => /^\s*%/.test(line));
     const configEnd = taskStart < 0 ? lines.length : taskStart;
     const first = lines.slice(0, configEnd).find(line => line.trim());
-    const hasRoot = first && /^\S.*:\s*$/.test(first) && !/^(?:tags|people|states|tabs):\s*$/.test(first);
+    const hasRoot = first && /^\S.*:\s*$/.test(first) && !/^(?:tags|people|states|tabs|jira):\s*$/.test(first);
     if (!hasRoot) {
-      const flat = lines.slice(0, configEnd).some(line => /^(?:tags|people|states|tabs):\s*$/.test(line));
+      const flat = lines.slice(0, configEnd).some(line => /^(?:tags|people|states|tabs|jira):\s*$/.test(line));
       if (flat) for (let i = 0; i < configEnd; i++) if (lines[i]!.trim()) lines[i] = '    ' + lines[i];
       const result = renameSlugInWholeFile(`${rootName}:\n${lines.join('\n')}`, { kind, prefix, oldSlug, newSlug, metadata });
       return { ...result, changed: result.text !== text };

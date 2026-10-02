@@ -40,3 +40,7 @@ frontend/.build-cache/**
 backend/space-index.json
 backend/space-tabs-journal.json
 backend/space-migration-backup/
+
+backend/jira/jira_config.migration-backup.json
+backend/jira/jira-migration.json
+backend/jira-created-issues.json

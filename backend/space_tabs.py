@@ -58,7 +58,7 @@ def plain_definitions(source):
 
 def definitions_config_source(source):
     config = re.split(r'^\s*%', source, maxsplit=1, flags=re.MULTILINE)[0]
-    if not re.search(r'^(tags|people|states|tabs):\s*$', config, re.MULTILINE):
+    if not re.search(r'^(tags|people|states|tabs|jira):\s*$', config, re.MULTILINE):
         return source
     return 'Definitions:\n' + '\n'.join('    ' + line if line else line for line in source.split('\n'))
 

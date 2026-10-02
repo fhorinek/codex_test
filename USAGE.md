@@ -204,6 +204,8 @@ recent issues in that project; typing a complete issue key also tries an exact
 lookup. Choose an issue or press Enter to link a project/issue key. Use the small
 **×** to unlink. These changes apply when you save the task. Suggestions require
 a configured Jira connection; known task links and manual entry remain available.
+Suggestions appear in a dropdown. A project-only key shows a note that a new
+Jira task will be created in that project.
 
 ## Task Edit Modal
 
@@ -444,3 +446,34 @@ under it. A reference's context menu displays “This is reference” and hides
 these four child-creation actions. Archive, delete, move, and outgoing reference
 actions remain available; deleting removes only the local reference. Timeline
 placement schedules imported or newly created tasks on the clicked day.
+
+
+### Jira per space
+
+Configure Jira from the space’s Jira settings, or edit its shared `defs.txt`:
+
+```text
+jira:
+    base_url: https://example.atlassian.net
+    email: account@example.com
+    token: api-token
+```
+
+Credentials are readable by space members. The daemon uses them only for that
+space, including its closed task tabs and configured personal spaces. Closing
+`defs.txt` to `.defs.txt` keeps the integration active. Task tabs cannot override
+these settings. Missing or invalid credentials disable the integration and hide
+**Link Jira**; existing links can still be unlinked.
+
+Existing global credentials are no longer used for synchronization. Admins opening
+Jira settings receive a migration dialog: select the spaces to configure, or
+choose **Migrate none**. Existing space configurations are never overwritten.
+Migration keeps a recovery backup and can resume an interrupted selection.
+Daemon login credentials remain separate from the Jira account.
+
+When creating an issue from a project key, the daemon compares Jira’s initial
+status with the task’s state and transitions Jira to the mapped state when needed.
+It verifies the result. If the workflow rejects the change, it reports the failure
+and accepts Jira’s actual state while retaining the new issue link. If Jira cannot
+be read, it keeps our state until verification becomes possible. A recovery journal
+retains returned issue keys across interruptions to prevent duplicate creation.

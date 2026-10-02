@@ -64,6 +64,11 @@ def _issue_payload(
 
 class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
+        recovery = tempfile.TemporaryDirectory()
+        self.addCleanup(recovery.cleanup)
+        recovery_patch = patch("jira.worker.creation_journal_path", return_value=Path(recovery.name) / "created.json")
+        recovery_patch.start()
+        self.addCleanup(recovery_patch.stop)
         worker.space_entity_cache.clear()
         worker.jira_entity_cache.clear()
         worker.space_hierarchy_cache.clear()
@@ -326,6 +331,94 @@ class JiraWorkerSyncTests(unittest.IsolatedAsyncioTestCase):
         )
         client.get_issue.assert_called_once_with("KAN-101")
         client.update_issue.assert_not_called()
+        client.transition_issue.assert_not_called()
+
+    async def test_created_issue_transitions_to_our_state_before_normal_sync(self):
+        client = Mock()
+        client.create_issue.return_value = ('KAN-301', 201, {})
+        client.get_issue.side_effect = [(_issue_payload('KAN-301', 'New', status_name='To Do'), 200), (_issue_payload('KAN-301', 'New', status_name='Done'), 200)]
+        client.transition_issue.return_value = (204, {})
+        source = 'Board:\n    states:\n        done:\n            name: Done\n            jira: Done\n% [KAN] New\n!done'
+        _, output, _ = await self._run_sync(source, client)
+        client.transition_issue.assert_called_once_with('KAN-301', 'Done')
+        self.assertIn('[KAN-301] New', output)
+        self.assertIn('!done', output)
+        self.assertIsNone(worker.recovered_created_issue('sync-test', 'New', 'KAN'))
+
+    async def test_created_issue_already_matches_does_not_transition(self):
+        client = Mock()
+        client.create_issue.return_value = ('KAN-302', 201, {})
+        client.get_issue.return_value = (_issue_payload('KAN-302', 'New', status_name='Done'), 200)
+        source = 'Board:\n    states:\n        done:\n            name: Done\n% [KAN] New\n!done'
+        _, output, _ = await self._run_sync(source, client)
+        self.assertIn('!done', output)
+        client.transition_issue.assert_not_called()
+        client.get_issue.assert_called_once_with('KAN-302')
+
+    async def test_created_issue_failed_transition_adopts_jira_and_keeps_key(self):
+        client = Mock()
+        client.create_issue.return_value = ('KAN-303', 201, {})
+        client.get_issue.return_value = (_issue_payload('KAN-303', 'New', status_name='To Do'), 200)
+        client.transition_issue.return_value = (None, None)
+        source = 'Board:\n    states:\n        done:\n            name: Done\n        todo:\n            name: To Do\n% [KAN] New\n!done'
+        _, output, _ = await self._run_sync(source, client)
+        self.assertIn('[KAN-303] New', output)
+        self.assertIn('!todo', output)
+        self.assertNotIn('\n!done', output)
+        client.transition_issue_via_path.assert_called_once_with('KAN-303', 'Done')
+        client.create_issue.assert_called_once()
+        await self._run_sync(output, client)
+        client.create_issue.assert_called_once()
+
+    async def test_created_issue_uses_transition_path(self):
+        client = Mock()
+        client.create_issue.return_value = ('KAN-304', 201, {})
+        client.get_issue.side_effect = [(_issue_payload('KAN-304', 'New', status_name='To Do'), 200), (_issue_payload('KAN-304', 'New', status_name='Done'), 200)]
+        client.transition_issue.return_value = (None, None)
+        client.transition_issue_via_path.return_value = (204, {'path': []})
+        source = 'Board:\n    states:\n        done:\n            name: Done\n% [KAN] New\n!done'
+        _, output, _ = await self._run_sync(source, client)
+        self.assertIn('!done', output)
+        client.transition_issue_via_path.assert_called_once_with('KAN-304', 'Done')
+        client.bulk_edit_issue_status.assert_not_called()
+
+    async def test_recovered_creation_key_prevents_duplicate_issue(self):
+        worker.record_created_issue('sync-test', 'New', 'KAN', 'KAN-305')
+        client = Mock()
+        client.get_issue.return_value = (_issue_payload('KAN-305', 'New'), 200)
+        _, output, _ = await self._run_sync('% [KAN] New', client)
+        self.assertIn('[KAN-305] New', output)
+        client.create_issue.assert_not_called()
+
+    async def test_concurrent_creation_edit_preserves_latest_body_and_reconciles_latest_state(self):
+        source = 'Board:\n    states:\n        done:\n            name: Done\n        inprogress:\n            name: In Progress\n% [KAN] New\n!done\noriginal body'
+        live = {'text': source}
+        client = Mock()
+        def create(*args):
+            live['text'] = source.replace('!done', '!inprogress').replace('original body', 'edited body\n3.10.2026')
+            return ('KAN-307', 201, {})
+        client.create_issue.side_effect = create
+        session, _, _ = await self._run_sync(source, client, session_overrides={'ydoc': live})
+        self.assertIn('[KAN-307] New', session.ydoc['text'])
+        self.assertIn('!inprogress', session.ydoc['text'])
+        self.assertIn('edited body\n3.10.2026', session.ydoc['text'])
+        client.transition_issue.assert_not_called()
+        client.create_issue.assert_called_once()
+        client.get_issue.side_effect = [(_issue_payload('KAN-307', 'New', 'edited body\n3.10.2026', status_name='To Do'), 200), (_issue_payload('KAN-307', 'New', 'edited body\n3.10.2026', status_name='In Progress'), 200)]
+        client.transition_issue.return_value = (204, {})
+        await self._run_sync(session.ydoc['text'], client)
+        client.transition_issue.assert_called_once_with('KAN-307', 'In Progress')
+        client.create_issue.assert_called_once()
+
+    async def test_created_status_unavailable_retains_our_state_and_recovery(self):
+        client = Mock()
+        client.create_issue.return_value = ('KAN-306', 201, {})
+        client.get_issue.return_value = (None, 503)
+        source = 'Board:\n    states:\n        done:\n            name: Done\n% [KAN] New\n!done'
+        _, output, _ = await self._run_sync(source, client)
+        self.assertIn('[KAN-306] New', output)
+        self.assertIn('!done', output)
+        self.assertEqual(worker.recovered_created_issue('sync-test', 'New', 'KAN'), 'KAN-306')
         client.transition_issue.assert_not_called()
 
     async def test_sync_space_with_jira_skips_pending_project_marker_without_title(self):
