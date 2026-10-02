@@ -139,7 +139,8 @@ class JiraSpaceApiTests(unittest.IsolatedAsyncioTestCase):
                     await endpoint(sid, user)
                 self.assertEqual(error.exception.status_code, 403)
             with patch.object(server.jira_daemons, 'command', new_callable=AsyncMock) as command:
-                with self.assertRaises(server.HTTPException) as error:
-                    await server.control_jira_daemon('start', sid, user)
-                self.assertEqual(error.exception.status_code, 403)
+                for action in ('start', 'clear-log', 'clear-cache'):
+                    with self.assertRaises(server.HTTPException) as error:
+                        await server.control_jira_daemon(action, sid, user)
+                    self.assertEqual(error.exception.status_code, 403)
                 command.assert_not_called()

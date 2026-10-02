@@ -2,6 +2,14 @@ import { createJsonViewer } from './jsonViewer.js';
 export type JiraLogEntry = { id: string; level: string; time: string; message: string } & (
   { kind: 'line' } | { kind: 'json'; value: unknown } | { kind: 'table'; headers: string[]; rows: string[][] }
 );
+/** Display server timestamps in the viewer's local timezone with fixed precision. */
+export function formatJiraLogTime(value: string): string {
+  if (!value) return '';
+  const date = new Date(value.replace(' ', 'T').replace(',', '.'));
+  if (Number.isNaN(date.getTime())) return '';
+  const pad = (number: number, width = 2) => String(number).padStart(width, '0');
+  return `${pad(date.getFullYear(), 4)}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())},${pad(date.getMilliseconds(), 3)}`;
+}
 /** Parse existing worker output, preserving malformed or incomplete payloads as text. */
 export function parseJiraLogs(logs: string[]): JiraLogEntry[] {
   let level = 'info';
@@ -12,7 +20,7 @@ export function parseJiraLogs(logs: string[]): JiraLogEntry[] {
     if (header) level = header[2]!.toLowerCase();
     const message = header?.[3] ?? body;
     const color = /Synchronization complete|Daemon started|worker started/.test(message) ? 'success' : level;
-    return { id: raw, time: header?.[1] ?? outer?.[1] ?? '', message, level: color, header: Boolean(header) };
+    return { id: raw, time: formatJiraLogTime(outer?.[1] ?? header?.[1] ?? ''), message, level: color, header: Boolean(header) };
   });
   const result: JiraLogEntry[] = [];
   for (let i = 0; i < lines.length; i++) {

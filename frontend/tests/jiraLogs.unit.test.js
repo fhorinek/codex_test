@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseJiraLogs } from '../scripts/jiraLogs.ts';
+import { parseJiraLogs, formatJiraLogTime } from '../scripts/jiraLogs.ts';
 
 test('Jira logs preserve severity and parse timestamped multiline JSON', () => {
   const entries = parseJiraLogs([
@@ -12,7 +12,7 @@ test('Jira logs preserve severity and parse timestamped multiline JSON', () => {
     'continuation', 'Daemon started.',
   ]);
   assert.equal(entries[0].level, 'warning');
-  assert.equal(entries[0].time, '2026-10-02 12:00:00,000');
+  assert.equal(entries[0].time, formatJiraLogTime('2026-10-02T12:00:00+00:00'));
   assert.equal(entries[1].kind, 'json');
   assert.deepEqual(entries[1].value, { nested: { count: 2 } });
   assert.equal(entries[2].level, 'error');
@@ -41,4 +41,23 @@ test('Jira logs preserve malformed payloads and bracketed labels as text', () =>
   assert.equal(entries[2].kind, 'line');
   assert.equal(entries[3].kind, 'json');
   assert.deepEqual(entries[3].value, [1, true, null]);
+});
+
+test('all Jira timestamps use local time and the same width, including continuation lines', () => {
+  const previous = process.env.TZ;
+  process.env.TZ = 'Europe/Prague';
+  try {
+    const entries = parseJiraLogs([
+      '2026-10-02T11:50:43.020+00:00 2026-10-02 13:50:43,019 INFO jira-worker: [JIRA KAN] issue type hierarchy:',
+      '2026-10-02T11:50:43+00:00 Epic (level 0)',
+      '2026-10-02T11:50:44.123+00:00 Daemon started.',
+    ]);
+    assert.deepEqual(entries.map(entry => entry.time), ['2026-10-02 13:50:43,020', '2026-10-02 13:50:43,000', '2026-10-02 13:50:44,123']);
+    assert.ok(entries.every(entry => entry.time.length === 23));
+    assert.equal(formatJiraLogTime('2026-01-02T23:30:00Z'), '2026-01-03 00:30:00,000');
+    assert.equal(formatJiraLogTime('2026-07-02T23:30:00Z'), '2026-07-03 01:30:00,000');
+    assert.equal(formatJiraLogTime('invalid'), '');
+  } finally {
+    if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous;
+  }
 });

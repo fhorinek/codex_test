@@ -68,6 +68,12 @@ class JiraDaemonTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn(sid, spawned[0][0]); self.assertNotIn('SECRET', str(spawned))
             await self.manager.command(sid, 'sync'); self.assertEqual(writes, [b'sync\n'])
             await self.manager.command(sid, 'restart'); self.assertEqual(len(spawned), 2)
+            cache = self.store.safe_path(self.space['path']) / 'jira-cache.json'
+            cache.write_text('{}')
+            await self.manager.command(sid, 'clear-cache')
+            self.assertFalse(cache.exists())
+            self.assertTrue(self.manager.status(sid)['running'])
+            self.assertEqual(len(spawned), 3)
             await self.manager.shutdown()
             self.assertFalse(self.manager.status(sid)['running'])
             self.assertNotIn('SECRET', '\n'.join(self.manager.status(sid)['logs']))
@@ -97,3 +103,31 @@ class JiraDaemonTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await asyncio.wait_for(pending, 1))
             self.assertFalse(event.is_set())
             self.assertFalse(await worker.sleep_until_next_sync(.001))
+
+    async def test_clear_log_and_stopped_cache_are_space_scoped(self):
+        sid = self.space['id']
+        other = self.store.create_space('team/other', '% Other')
+        directory = self.store.safe_path(self.space['path'])
+        other_cache = self.store.safe_path(other['path']) / 'jira-cache.json'
+        cache = directory / 'jira-cache.json'
+        journal = directory / 'jira-created-issues.json'
+        cache.write_text('{"caches": {}}'); other_cache.write_text('{}')
+        journal.write_text('{"created": "DEMO-1"}')
+        self.manager.log(sid, 'old'); self.manager.log(other['id'], 'keep')
+        status = await self.manager.command(sid, 'clear-log')
+        self.assertEqual(status['logs'], [])
+        self.assertFalse(status['running'])
+        self.assertEqual(len(self.manager.status(other['id'])['logs']), 1)
+        with patch('jira.daemon.asyncio.create_subprocess_exec', new_callable=AsyncMock) as spawn:
+            await self.manager.command(sid, 'clear-cache')
+            await self.manager.command(sid, 'clear-cache')
+            spawn.assert_not_called()
+        self.assertFalse(cache.exists()); self.assertTrue(other_cache.exists())
+        self.assertEqual(json.loads(journal.read_text()), {'created': 'DEMO-1'})
+
+    async def test_clear_cache_rejects_symlinks(self):
+        target = self.root.parent / 'outside.json'; target.write_text('{}')
+        cache = self.store.safe_path(self.space['path']) / 'jira-cache.json'
+        cache.symlink_to(target)
+        with self.assertRaises(ValueError): await self.manager.command(self.space['id'], 'clear-cache')
+        self.assertTrue(target.exists())

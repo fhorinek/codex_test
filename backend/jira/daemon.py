@@ -25,7 +25,7 @@ class JiraDaemons:
         config, _ = parse_jira_definitions(self.definitions(space_id))
         for secret in set((config.token, config.email)) | self.secrets.get(space_id, set()):
             if secret: message = message.replace(secret, '[redacted]')
-        self.logs.setdefault(space_id, deque(maxlen=1000)).append(datetime.now(timezone.utc).isoformat(timespec='seconds') + ' ' + message.rstrip())
+        self.logs.setdefault(space_id, deque(maxlen=1000)).append(datetime.now(timezone.utc).isoformat(timespec='milliseconds') + ' ' + message.rstrip())
 
     async def read_output(self, space_id, process):
         while True:
@@ -40,7 +40,16 @@ class JiraDaemons:
         async with self.locks.setdefault(space_id, asyncio.Lock()):
             process = self.processes.get(space_id)
             running = process is not None and process.returncode is None
-            if action in ('stop', 'restart') and running:
+            cache_path = None
+            if action == 'clear-cache':
+                store = self.store()
+                cache_path = store.safe_path(store.space(space_id)['path']) / 'jira-cache.json'
+                if cache_path.is_symlink(): raise ValueError('Cannot clear a cache symlink.')
+            restart_after_clear = action == 'clear-cache' and running
+            if action == 'clear-log':
+                self.logs.setdefault(space_id, deque(maxlen=1000)).clear()
+                return self.status(space_id)
+            if action in ('stop', 'restart', 'clear-cache') and running:
                 self.log(space_id, 'Stopping daemon.')
                 process.terminate()
                 try: await asyncio.wait_for(process.wait(), 8)
@@ -50,7 +59,11 @@ class JiraDaemons:
                 reader = self.readers.get(space_id)
                 if reader: await reader
                 running = False
-            if action in ('start', 'restart', 'sync'):
+            if action == 'clear-cache':
+                try: cache_path.unlink()
+                except FileNotFoundError: pass
+                self.log(space_id, 'Synchronization cache cleared.')
+            if action in ('start', 'restart', 'sync') or restart_after_clear:
                 config, diagnostics = parse_jira_definitions(self.definitions(space_id))
                 if not config.enabled: raise ValueError('Configure Jira in defs.txt before starting the daemon.')
                 if not running:
@@ -67,7 +80,7 @@ class JiraDaemons:
                     process.stdin.write(b'sync\n')
                     await process.stdin.drain()
                     self.log(space_id, 'Synchronization requested.')
-            elif action != 'stop': raise ValueError('Unknown daemon command.')
+            elif action not in ('stop', 'clear-cache'): raise ValueError('Unknown daemon command.')
         return self.status(space_id)
 
     def status(self, space_id):

@@ -49,8 +49,8 @@ test('space Jira migration, configuration dialog, closed definitions and live li
 
     const listing = await (await context.request.get(base + '/api/tab-spaces?ref=demo')).json();
     assert.equal((await (await context.request.get(base + `/api/jira-status?space=${listing.id}`)).json()).configured, false);
-    assert.equal(await page.getByRole('button', { name: 'From Jira', exact: true }).isVisible(), false);
-    await page.locator('.task-node').first().dblclick();
+    assert.equal(await page.getByRole('button', { name: 'from JIRA', exact: true }).isVisible(), false);
+    await page.locator('#graph-nodes .task-node').first().dblclick();
     assert.equal(await page.getByRole('button', { name: 'Link Jira', exact: true }).isVisible(), false);
     await page.locator('#task-edit-cancel').click();
     await page.getByRole('button', { name: 'Switch space' }).click();
@@ -82,9 +82,9 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     ];
     await context.route('**/api/jira-daemon**', route => {
       if (route.request().method() === 'POST') commands.push(new URL(route.request().url()).pathname.split('/').pop());
-      return route.fulfill({ json: { running: commands.at(-1) !== 'stop', logs: logFixture } });
+      return route.fulfill({ json: { running: commands.at(-1) !== 'stop', logs: commands.includes('clear-log') ? [] : logFixture } });
     });
-    await context.route('**/api/jira-cache?**', route => route.fulfill({ json: { 'jira-cache.json': { caches: { issue: 'DEMO-42' } } } }));
+    await context.route('**/api/jira-cache?**', route => route.fulfill({ json: commands.includes('clear-cache') ? {} : { 'jira-cache.json': { caches: { issue: 'DEMO-42' } } } }));
     await page.getByRole('tab', { name: 'JIRA Daemon', exact: true }).click();
     await page.locator('.jira-panel-output').filter({ hasText: 'Daemon started.' }).waitFor();
     assert.equal(await page.locator('.editor-panel').isVisible(), false);
@@ -112,8 +112,12 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     }
     assert.ok(definitionContents.documents.find(doc => doc.kind === 'defs').text.includes('autostart: true'));
     await autostart.uncheck();
-    for (const name of ['Start', 'Stop', 'Restart', 'Sync now']) await page.locator('.jira-panel').getByRole('button', { name, exact: true }).click();
+    for (const name of ['Start', 'Stop', 'Restart', 'Sync now']) {
+      await Promise.all([page.waitForResponse(response => response.request().method() === 'POST' && response.url().includes('/api/jira-daemon/')), page.locator('.jira-panel').getByRole('button', { name, exact: true }).click()]);
+    }
     assert.deepEqual(commands, ['start', 'stop', 'restart', 'sync']);
+    await page.locator('.jira-panel').getByRole('button', { name: 'Clear log', exact: true }).click();
+    await page.locator('.jira-panel-output').filter({ hasText: 'No daemon activity yet.' }).waitFor();
     await page.locator('.jira-panel').getByRole('button', { name: 'Show cache', exact: true }).click();
     const cacheViewer = page.locator('.jira-json-viewer');
     await cacheViewer.filter({ hasText: 'jira-cache.json' }).waitFor();
@@ -131,6 +135,9 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     await cacheViewer.locator('summary').filter({ hasText: 'jira-cache.json' }).click();
     await cacheViewer.locator('summary').filter({ hasText: /^caches/ }).click();
     await cachedIssue.waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Clear log', exact: true }).isVisible(), false);
+    await page.getByRole('button', { name: 'Clear cache', exact: true }).click();
+    await cacheViewer.filter({ hasText: 'No cached data yet.' }).waitFor();
     await page.getByRole('tab', { name: 'JIRA Cache', exact: true }).click({ button: 'middle' });
     await page.getByRole('tab', { name: 'JIRA Cache', exact: true }).waitFor({ state: 'detached' });
     await page.getByRole('tab', { name: 'JIRA Daemon', exact: true }).click();
@@ -141,7 +148,7 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     await page.getByRole('menuitem', { name: 'JIRA Daemon', exact: true }).click();
     await page.getByRole('tab', { name: 'JIRA Daemon', exact: true }).waitFor();
     await page.getByRole('tab', { name: 'main', exact: true }).click();
-    await page.locator('.task-node').first().waitFor();
+    await page.locator('#graph-nodes .task-node').first().waitFor();
 
     // Both regular space editors and managers must have no Jira tool tabs or Open entries.
     for (const role of ['user', 'manager']) {
@@ -198,10 +205,14 @@ test('space Jira migration, configuration dialog, closed definitions and live li
         script: `% [${key}] Imported from Jira\n!doing #urgent #task @bob ~2\nImported description\n` + (children ? '    % [DEMO-13] Imported child\n    !doing\n    Child description\n' : ''),
         definitions: [{ kind: 'state', slug: 'doing', metadata: { name: 'In Progress', jiraState: 'In Progress' } }, { kind: 'person', slug: 'bob', metadata: { name: 'Bob', email: 'bob@example.com' } }] } });
     });
-    const importButton = page.getByRole('button', { name: 'From Jira', exact: true });
-    await importButton.hover();
+    const importButton = page.getByRole('button', { name: 'from JIRA', exact: true });
     const primary = page.getByRole('button', { name: 'Add task', exact: true });
+    await primary.hover();
+    assert.notEqual(await primary.evaluate(node => getComputedStyle(node).backgroundColor), await importButton.evaluate(node => getComputedStyle(node).backgroundColor));
+    assert.equal(await primary.evaluate(node => getComputedStyle(node).borderTopLeftRadius), '10px');
+    await importButton.hover();
     assert.equal(await primary.evaluate(node => getComputedStyle(node).backgroundColor), await importButton.evaluate(node => getComputedStyle(node).backgroundColor));
+    assert.equal(await importButton.locator('i').count(), 0);
     assert.deepEqual(await importButton.evaluate(node => { const css = getComputedStyle(node); return [css.borderTopLeftRadius, css.borderTopRightRadius, css.borderBottomLeftRadius, css.borderBottomRightRadius]; }), ['0px', '0px', '0px', '0px']);
     await page.locator('.graph-canvas').click({ button: 'right', position: { x: 10, y: 10 } });
     await page.getByRole('menuitem', { name: 'Add task from JIRA', exact: true }).click();
@@ -229,17 +240,24 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     }, cardAppearance.toString());
     await importer.getByRole('button', { name: 'Import task', exact: true }).click();
     await importer.waitFor({ state: 'hidden' });
-    await page.locator('.task-node').filter({ hasText: 'Imported from Jira' }).waitFor();
+    await page.locator('#graph-nodes .task-node').filter({ hasText: 'Imported from Jira' }).waitFor();
     const graphAppearance = await page.locator('#graph-nodes .task-node').filter({ hasText: /Imported from Jira|Imported child/ }).evaluateAll((nodes, code) => {
       const snapshot = eval('(' + code + ')'); return nodes.map(snapshot);
     }, cardAppearance.toString());
     assert.deepEqual(graphAppearance, previewAppearance);
 
     await page.getByRole('button', { name: 'Undo', exact: true }).click();
-    await page.locator('.task-node').filter({ hasText: 'Imported from Jira' }).waitFor({ state: 'detached' });
+    await page.locator('#graph-nodes .task-node').filter({ hasText: 'Imported from Jira' }).waitFor({ state: 'detached' });
     await page.getByRole('button', { name: 'Redo', exact: true }).click();
-    await page.locator('.task-node').filter({ hasText: 'Imported from Jira' }).waitFor();
-    await importButton.click(); await importKey.fill('DEMO-99');
+    await page.locator('#graph-nodes .task-node').filter({ hasText: 'Imported from Jira' }).waitFor();
+    await importButton.click(); await importKey.fill('DEMO-');
+    await delay(400);
+    assert.equal(await importer.getByRole('option').filter({ hasText: 'DEMO-12' }).count(), 0);
+    await importKey.fill('DEMO-12');
+    await importer.getByRole('status').filter({ hasText: 'already linked' }).waitFor();
+    assert.equal(await importer.locator('.task-node').count(), 0);
+    assert.equal(await importer.getByRole('button', { name: 'Import task', exact: true }).isEnabled(), false);
+    await importKey.fill('DEMO-99');
     await importer.locator('.task-node').waitFor();
     assert.equal(await importer.getByRole('checkbox').count(), 0);
     await importer.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -252,7 +270,7 @@ test('space Jira migration, configuration dialog, closed definitions and live li
     const defs = tabs.tabs.find(tab => tab.kind === 'defs');
     assert.equal((await context.request.post(base + `/api/tab-spaces/${listing.id}/tabs/close`, { data: { id: defs.id, revision: tabs.revision } })).status(), 200);
     assert.equal((await (await context.request.get(base + `/api/jira-config?space=${listing.id}`)).json()).token, 'CURRENT');
-    await page.locator('.task-node').first().dblclick();
+    await page.locator('#graph-nodes .task-node').first().dblclick();
     await page.getByRole('button', { name: 'Link Jira', exact: true }).waitFor();
     await page.getByRole('button', { name: 'Link Jira', exact: true }).click();
     await page.getByRole('combobox', { name: 'Jira key', exact: true }).fill('DEMO-42');

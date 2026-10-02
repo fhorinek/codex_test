@@ -3408,7 +3408,7 @@ async def read_jira_cache(space: str, user: AuthUser = Depends(require_auth)):
 async def control_jira_daemon(action: str, space: str, user: AuthUser = Depends(require_auth)):
     if not can_manage_jira(user): raise HTTPException(403, "Only admins can access Jira daemon tools.")
     _, item = authorized_tab_space(space, user)
-    if action not in ('start', 'stop', 'restart', 'sync'): raise HTTPException(400, 'Unknown daemon command.')
+    if action not in ('start', 'stop', 'restart', 'sync', 'clear-log', 'clear-cache'): raise HTTPException(400, 'Unknown daemon command.')
     try: return await jira_daemons.command(item['id'], action)
     except ValueError as exc: raise HTTPException(400, str(exc))
 

@@ -3225,6 +3225,8 @@ function buildJiraImportDocument(data: import('./jiraImport.js').JiraImportPrevi
   return source + (source && !source.endsWith('\n') ? '\n' : '') + (source.trim() ? '\n' : '') + data.script;
 }
 const jiraImport = createJiraImport({
+  isLinked: key => [editorController.getValue(), ...(spaceTabs?.sourceDocuments() || []).map(doc => doc.text)]
+    .some(source => parseTasks(source).allTasks.some(task => task.jiraKey?.toUpperCase() === key.toUpperCase())),
   context: () => ({ space: spaceTabs?.space?.id || '', document: spaceTabs?.active?.id || '', source: editorController.getValue(), definitions: sharedDefinitions }),
   projects: jiraImportProjects, issues: jiraImportSuggestions,
   canEdit: () => tabMode === 'task' && !historyMode.viewerActive && collab.isAuthenticated && parseSpaceJira(sharedDefinitions).configured,

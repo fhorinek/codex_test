@@ -512,7 +512,7 @@ setting directly in shared definitions. The cache viewer expands nested objects
 and arrays with keyboard-accessible disclosure arrows. **Expand all** and
 **Collapse all** control the whole tree; refreshes preserve expanded sections.
 
-When Jira is configured, **From Jira** beside **Add Task**, or **Add task from JIRA**
+When Jira is configured, **from JIRA** beside **Add Task**, or **Add task from JIRA**
 in the graph/timeline task dropdown, opens an issue importer. Type a
 complete key such as `DEMO-123`, or choose an issue from the project/issue
 suggestions. A valid key immediately loads a preview using the daemon's Jira
@@ -531,3 +531,11 @@ This also works for definitions and JIRA tabs; use **Open** to reopen them.
 The Open menu groups Jira tools separately from document tabs. Daemon logs use
 severity colors, expandable JSON payloads, and tables for synchronization
 differences. Incomplete payloads remain visible as plain text.
+
+Jira import suggestions exclude issues already linked in any task tab of the space,
+including closed tabs. Entering an already linked key displays a notice instead of a preview.
+
+**Clear log** in JIRA Daemon removes the space's current server-session log entries.
+**Clear cache** in JIRA Cache removes the synchronization cache and restarts a running
+worker to reset its in-memory cache. A stopped worker stays stopped. The cache is
+rebuilt on the next synchronization; the issue-creation recovery journal is retained.

@@ -2,6 +2,7 @@ import type { JiraSuggestion } from './taskJiraLink.js';
 export type JiraImportContext = { space: string; document: string; source: string; definitions: string };
 export type JiraImportPreview = { key: string; subtask_count: number; script: string; tasks: any[]; definitions: any[] };
 export function createJiraImport(options: {
+  isLinked: (key: string) => boolean;
   context: () => JiraImportContext; projects: () => JiraSuggestion[];
   issues: (query: string, signal: AbortSignal) => Promise<JiraSuggestion[]>;
   preview: (context: JiraImportContext, key: string, children: boolean, signal: AbortSignal) => Promise<JiraImportPreview>;
@@ -45,6 +46,7 @@ export function createJiraImport(options: {
   }
   async function load(key: string, token: number) {
     data = null; snapshot = options.context(); add.disabled = true; preview.replaceChildren();
+    if (options.isLinked(key)) { childrenLabel.hidden = true; status.textContent = `${key} is already linked in this space.`; return; }
     status.textContent = 'Loading Jira task…'; lookup = new AbortController();
     try {
       const result = await options.preview(snapshot, key, children.checked, lookup.signal);
@@ -63,7 +65,7 @@ export function createJiraImport(options: {
     else if (/^[A-Z][A-Z0-9]*-\d*$/.test(query)) {
       timer = setTimeout(async () => {
         suggestionsRequest = new AbortController();
-        try { const result = await options.issues(query, suggestionsRequest.signal); if (token === version && dialog.open) { suggestions = result; if (document.activeElement === input) showSuggestions(); } }
+        try { const result = await options.issues(query, suggestionsRequest.signal); if (token === version && dialog.open) { suggestions = result.filter(item => !options.isLinked(item.key)); if (document.activeElement === input) showSuggestions(); } }
         catch { /* A valid exact key can still be looked up without suggestions. */ }
       }, 250);
     }
@@ -83,7 +85,11 @@ export function createJiraImport(options: {
   dialog.addEventListener('close', () => { stop(); data = null; preview.replaceChildren(); });
   add.onclick = () => {
     if (!data || !snapshot || !options.canEdit()) return;
-    try { options.commit(data, snapshot); dialog.close(); }
+    try {
+      const linked = data.tasks.find(task => options.isLinked(task.key));
+      if (linked) throw new Error(`${linked.key} is already linked in this space.`);
+      options.commit(data, snapshot); dialog.close();
+    }
     catch (error: any) { status.textContent = error.message; add.disabled = true; }
   };
   return { open() { if (!options.canEdit()) return; input.value = ''; children.checked = false; dialog.showModal(); update(); input.focus(); } };

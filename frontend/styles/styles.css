@@ -6157,8 +6157,8 @@ html[data-theme="dark"] :is(.jira-json-number, .jira-json-boolean) { color: #d4a
 
 .topbar-task-actions { display: inline-flex; align-items: center; gap: 0; }
 .topbar-task-actions .toolbar-button.topbar-add-task { border-radius: 0; }
-.topbar-task-actions:is(:hover, :focus-within) .toolbar-button.topbar-add-task:not(:disabled) { border-color: #8fa4ff; background: #f6f7ff; }
-html[data-theme="dark"] .topbar-task-actions:is(:hover, :focus-within) .toolbar-button.topbar-add-task:not(:disabled) { border-color: #3b425a; background: #1b2234; }
+.topbar-task-actions:has(#jira-import-task:is(:hover, :focus-visible)) #graph-add-task:not(:disabled) { border-color: #8fa4ff; background: #f6f7ff; }
+html[data-theme="dark"] .topbar-task-actions:has(#jira-import-task:is(:hover, :focus-visible)) #graph-add-task:not(:disabled) { border-color: #3b425a; background: #1b2234; }
 html:is([data-viewport="mobile"], [data-viewport="tablet"]) .topbar-task-actions { display: contents; }
 
 .jira-import-preview { padding: 6px; }
@@ -6190,3 +6190,6 @@ html[data-theme="dark"] :is(.jira-log-error, .jira-log-critical) { color: #ff949
 html:is([data-tab-mode="defs"], [data-tab-mode="empty"], [data-tab-mode="jira"]) .topbar-task-actions,
 html:is([data-tab-mode="defs"], [data-tab-mode="empty"], [data-tab-mode="jira"]) :is(#graph-add-task, #jira-import-task),
 html[data-tab-mode="jira"] :is(#undo-button, #redo-button, #load-button, #format-button, #history-button) { display: none !important; }
+
+.topbar-task-actions #graph-add-task { border-radius: 10px 0 0 10px; }
+html:is([data-tab-mode="defs"], [data-tab-mode="empty"], [data-tab-mode="jira"]) .topbar-connect-button { border-radius: 10px 0 0 10px; }

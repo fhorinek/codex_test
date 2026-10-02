@@ -40,7 +40,7 @@ export function createJiraPanel(options: {
       logs.update(data.logs, space);
     } catch (error: any) { if (token === generation) status.textContent = error.message; }
   }
-  for (const [label, action, glyph] of [['Start', 'start', 'play'], ['Stop', 'stop', 'stop'], ['Restart', 'restart', 'rotate-right'], ['Sync now', 'sync', 'arrows-rotate'], ['Show cache', 'cache', 'database']]) {
+  for (const [label, action, glyph] of [['Start', 'start', 'play'], ['Stop', 'stop', 'stop'], ['Restart', 'restart', 'rotate-right'], ['Sync now', 'sync', 'arrows-rotate'], ['Show cache', 'cache', 'database'], ['Clear log', 'clear-log', 'eraser']]) {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'toolbar-button';
     const icon = document.createElement('i'); icon.className = `fa-solid fa-${glyph}`; icon.setAttribute('aria-hidden', 'true');
     button.append(icon, document.createTextNode(` ${label}`)); buttons.push(button);
@@ -57,6 +57,16 @@ export function createJiraPanel(options: {
     const button = document.createElement('button'); button.type = 'button'; button.className = 'toolbar-button'; button.textContent = label;
     button.addEventListener('click', () => viewer.expandAll(open)); cacheControls.push(button); toolbar.append(button);
   }
+  const clearCache = document.createElement('button'); clearCache.type = 'button'; clearCache.className = 'toolbar-button';
+  const clearIcon = document.createElement('i'); clearIcon.className = 'fa-solid fa-eraser'; clearIcon.setAttribute('aria-hidden', 'true');
+  clearCache.append(clearIcon, document.createTextNode(' Clear cache'));
+  clearCache.addEventListener('click', async () => {
+    busy = true; clearCache.disabled = true;
+    try { await request('/api/jira-daemon/clear-cache', 'POST'); }
+    catch (error: any) { options.notify(error.message, 'error'); }
+    finally { busy = false; clearCache.disabled = !options.canEdit(); void refresh(); }
+  });
+  cacheControls.push(clearCache); toolbar.append(clearCache);
   toolbar.append(autoLabel, status); panel.append(toolbar, output, viewer.element);
   window.setInterval(() => void refresh(), 2000);
   return {
@@ -65,6 +75,7 @@ export function createJiraPanel(options: {
       output.hidden = showCache; viewer.element.hidden = !showCache;
       autoLabel.hidden = showCache; updateAutostart();
       cacheControls.forEach(button => button.hidden = !showCache);
+      clearCache.disabled = busy || !options.canEdit();
       logs.reset(); status.textContent = '';
       buttons.forEach((item, index) => { item.hidden = showCache; item.disabled = index !== 4 && !options.canEdit(); });
       void refresh();

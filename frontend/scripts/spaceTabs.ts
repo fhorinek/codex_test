@@ -264,7 +264,7 @@ export function createSpaceTabs(options: Options) {
     const jiraGroup = document.createElement('div'); jiraGroup.className = 'space-tab-open-jira'; jiraGroup.setAttribute('role', 'group'); jiraGroup.setAttribute('aria-label', 'Jira tools');
     if (closedJira.length) {
       if (closed.length) { const separator = document.createElement('div'); separator.className = 'space-tab-menu-separator'; separator.setAttribute('role', 'separator'); menu.append(separator); }
-      const heading = document.createElement('div'); heading.className = 'space-tab-menu-empty'; heading.textContent = 'Jira tools'; jiraGroup.append(heading); menu.append(jiraGroup);
+      menu.append(jiraGroup);
     }
     for (const tab of closedJira) {
       const item = button(tab.name, async () => { closeContextMenu(); await setJiraVisible(tab.id.split(':')[1]!, true); await activate(tab.id); });
