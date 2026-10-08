@@ -13,6 +13,7 @@ type Options = {
   modules: () => Promise<any>; connect: (id: string) => Promise<void>; disconnect: () => void;
   definitions: (source: string) => void; mode: (kind: 'task' | 'defs' | 'empty' | 'jira') => void;
   capture: () => any; restore: (value: any) => void; notify: (message: string, kind?: string) => void;
+  captureFilters: () => any; restoreFilters: (value: any) => void;
   release: (id: string) => void;
   acquire: (id: string) => Promise<any>; referencesChanged: () => void;
   layout: () => void; canEdit: () => boolean;
@@ -313,6 +314,7 @@ export function createSpaceTabs(options: Options) {
   }
   function saveView() {
     try { if (active) localStorage.setItem('tab-view:' + active, JSON.stringify(options.capture())); } catch { /* Storage may be unavailable or full. */ }
+    try { if (listing) localStorage.setItem('space-filters:' + listing.id, JSON.stringify(options.captureFilters())); } catch { /* Storage may be unavailable or full. */ }
   }
   async function flush() {
     if (!active || active.startsWith('jira:') || !options.collab.ydoc) return;
@@ -617,6 +619,10 @@ export function createSpaceTabs(options: Options) {
     const next: Listing = await request('/api/tab-spaces?ref=' + encodeURIComponent(ref));
     await flush(); saveView(); generation++;
     clearReferences(); jiraPanel.hide(); defsProvider?.destroy(); defsDoc?.destroy(); active = ''; listing = next;
+    // Filters belong to the space, never to a document's saved view.
+    let filters = {};
+    try { filters = JSON.parse(localStorage.getItem('space-filters:' + next.id) || '{}'); } catch { /* Ignore obsolete preferences. */ }
+    options.restoreFilters(filters);
     const { Y, WebsocketProvider } = await options.modules();
     defsDoc = new Y.Doc(); const params: Record<string, string> = {};
     if (options.collab.username && options.collab.authToken) { params["user"] = options.collab.username; params["pass"] = options.collab.authToken; }

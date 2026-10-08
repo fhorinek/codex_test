@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Dict
 
 import y_py as Y
+from text_updates import update_ydoc_text
 import websockets
 from ypy_websocket.websocket_provider import WebsocketProvider
 try:
@@ -529,23 +530,7 @@ def unwrap_json_encoded_text(value: str) -> str:
 # Input: ydoc: Y.YDoc, content: str.
 # Output: None.
 def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
-    text = ydoc.get_text("content")
-    current = ydoc_to_text(ydoc)
-    content = unwrap_json_encoded_text(content)
-    if current == content and len(text) == len(content):
-        return
-
-    # Handles the apply function logic.
-    # Input: txn.
-    # Output: value produced by this function.
-    def apply(txn):
-        if len(text):
-            text.delete_range(txn, 0, len(text))
-        if content:
-            text.insert(txn, 0, content)
-
-    with ydoc.begin_transaction() as txn:
-        apply(txn)
+    update_ydoc_text(ydoc, unwrap_json_encoded_text(content))
 
 
 # Handles the read_ydoc_text function logic.

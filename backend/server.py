@@ -23,6 +23,7 @@ from http.cookies import SimpleCookie
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import y_py as Y
+from text_updates import update_ydoc_text
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response as ApiResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
@@ -2176,23 +2177,7 @@ def unwrap_json_encoded_text(value: str) -> str:
 # Input: ydoc: Y.YDoc, content: str.
 # Output: None.
 def replace_ydoc_text(ydoc: Y.YDoc, content: str) -> None:
-    text = ydoc.get_text("content")
-    content = unwrap_json_encoded_text(content)
-    current = ydoc_to_text(ydoc)
-    if current == content and len(text) == len(content):
-        return
-
-    # Handles the apply function logic.
-    # Input: txn.
-    # Output: value produced by this function.
-    def apply(txn):
-        if len(text):
-            text.delete_range(txn, 0, len(text))
-        if content:
-            text.insert(txn, 0, content)
-
-    with ydoc.begin_transaction() as txn:
-        apply(txn)
+    update_ydoc_text(ydoc, unwrap_json_encoded_text(content))
 
 
 # Handles the schedule_space_snapshot function logic.

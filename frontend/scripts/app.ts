@@ -8447,15 +8447,20 @@ function getSpaceTabs() {
     },
     capture: () => ({ editorScroll: editorController.getScroll?.(), selection: editorController.getSelectionRange?.(),
       selectedTaskId: state.selectedTaskId, transform: state.transform, timeline: timelineController.getView(),
-      graphView, searchQuery: state.searchQuery, kanbanHeight: document.documentElement.style.getPropertyValue("--kanban-height"), selectedTags: [...state.selectedTags], selectedPeople: [...state.selectedPeople],
+      graphView, searchQuery: state.searchQuery, kanbanHeight: document.documentElement.style.getPropertyValue("--kanban-height"),
       leftWidth: document.querySelector<HTMLElement>(".app")?.style.getPropertyValue("--left-width") }),
+    captureFilters: () => ({ selectedTags: [...state.selectedTags], selectedPeople: [...state.selectedPeople] }),
+    restoreFilters: value => {
+      for (const key of ["selectedTags", "selectedPeople"] as const) {
+        state[key] = new Set(Array.isArray(value?.[key]) ? value[key].filter((item: any) => typeof item === "string") : []);
+      }
+    },
     restore: value => {
       state.searchQuery = typeof value.searchQuery === "string" ? value.searchQuery : "";
       if (dom.searchInput) dom.searchInput.value = state.searchQuery;
       if (value.kanbanHeight) document.documentElement.style.setProperty("--kanban-height", value.kanbanHeight);
       if (value.transform) Object.assign(state.transform, value.transform);
       state.selectedTaskId = value.selectedTaskId || null;
-      for (const key of ["selectedTags", "selectedPeople"] as const) if (Array.isArray(value[key])) state[key] = new Set(value[key]);
       if (value.selection) editorController.setSelectionRange?.(value.selection.start, value.selection.end);
       if (value.editorScroll) editorController.setScroll?.(value.editorScroll);
       if (value.timeline) timelineController.setView(value.timeline);
