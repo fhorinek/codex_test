@@ -2214,6 +2214,8 @@ def schedule_space_snapshot(space_id: str, room, *, space_path_hint: Optional[st
         try:
             await asyncio.sleep(SPACE_SAVE_DELAY)
             content = ydoc_to_text(room.ydoc)
+            if room.ystore:
+                await room.ystore.encode_state_as_update(room.ydoc)
             await run_blocking_io(
                 write_space_text_and_maybe_checkpoint,
                 space_id,
@@ -2238,15 +2240,16 @@ def schedule_space_snapshot(space_id: str, room, *, space_path_hint: Optional[st
 async def hydrate_room_from_storage(space_id: str, room, *, space_path_hint: Optional[str] = None) -> None:
     store_path = ystore_path(space_id, space_path_hint=space_path_hint)
     loaded_from_ystore = False
+    last_store_update = 0.0
     if store_path.exists():
         try:
-            await room.ystore.apply_updates(room.ydoc)
+            # Inspect persisted timestamps before writing a repair snapshot: that
+            # write would make even a stale store appear newer than the text file.
+            async for update, _metadata, timestamp in room.ystore.read():
+                Y.apply_update(room.ydoc, update)
+                last_store_update = max(last_store_update, timestamp)
             loaded_from_ystore = True
             replace_ydoc_text(room.ydoc, ydoc_to_text(room.ydoc))
-            try:
-                await room.ystore.encode_state_as_update(room.ydoc)
-            except Exception:
-                logger.exception("Failed to repair ystore text for %s", space_id)
         except Exception:
             logger.exception(
                 "Failed to apply ystore for %s; falling back to snapshot",
@@ -2278,15 +2281,47 @@ async def hydrate_room_from_storage(space_id: str, room, *, space_path_hint: Opt
         store = tab_store()
         disk = store.read(document)
         live = ydoc_to_text(room.ydoc)
-        if document.get("pending_snapshot") == digest(disk) or (digest(disk) != document.get("disk_hash") and digest(live) == document.get("disk_hash")):
+        committed_disk_is_newer = (digest(disk) == document.get("disk_hash")
+                                   and store.path(document).stat().st_mtime >= last_store_update)
+        use_disk = (document.get("pending_snapshot") == digest(disk)
+                    or committed_disk_is_newer
+                    or (digest(disk) != document.get("disk_hash") and digest(live) == document.get("disk_hash")))
+        if disk != live:
+            create_history_checkpoint(document['id'], live if use_disk else disk,
+                                      kind='manual', label='Startup recovery: alternate saved version')
+            logger.warning("Saved conflicting startup version in history for %s; using %s",
+                           document['id'], 'text snapshot' if use_disk else 'collaboration store')
+        if use_disk:
             replace_ydoc_text(room.ydoc, disk)
-            await room.ystore.encode_state_as_update(room.ydoc)
             store.write(document, disk)
+    if loaded_from_ystore:
+        # Persist normalization/recovery only after choosing the saved version.
+        await room.ystore.encode_state_as_update(room.ydoc)
     if document:
         document.pop("pending_snapshot", None)
         tab_store().save()
     room.ready = True
     schedule_space_snapshot(space_id, room, space_path_hint=space_path_hint)
+
+
+async def flush_persistent_rooms() -> None:
+    """Finish queued snapshots and save both representations before room shutdown."""
+    pending = list(space_save_tasks.values())
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    space_save_tasks.clear()
+    for name, room in list(websocket_server.rooms.items()):
+        if not room.ystore or not room.ready:
+            continue
+        ref = space_ref_from_ws_path(name)
+        if not ref:
+            continue
+        # Capture on the owning event-loop thread; persist the CRDT before disk.
+        content = ydoc_to_text(room.ydoc)
+        await room.ystore.encode_state_as_update(room.ydoc)
+        write_space_text_and_maybe_checkpoint(ref[0], content, space_path_hint=ref[1])
 
 
 # Handles the attach_snapshot_hook function logic.
@@ -2299,7 +2334,11 @@ def attach_snapshot_hook(space_id: str, room, *, space_path_hint: Optional[str] 
     # Handles the _after_txn function logic.
     # Input: *_args, **_kwargs.
     # Output: value produced by this function.
-    def _after_txn(*_args, **_kwargs):
+    def _after_txn(event):
+        # Reading Y.Text also opens a transaction. Such empty updates must not
+        # cancel and restart a save that is already reading its own snapshot.
+        if bytes(event.get_update()) == b'\x00\x00':
+            return
         schedule_space_snapshot(space_id, room, space_path_hint=space_path_hint)
 
     room._ydoc_thread = threading.get_ident()
@@ -4217,6 +4256,7 @@ async def main() -> None:
                     system_shared_presence_refresh_task = None
                     system_shared_presence_task = None
                     await jira_daemons.shutdown()
+                    await flush_persistent_rooms()
     except BaseException as exc:
         if BASE_EXCEPTION_GROUP_TYPE is not None and isinstance(exc, BASE_EXCEPTION_GROUP_TYPE):
             _benign, remainder = exc.split(_is_benign_shutdown_error)

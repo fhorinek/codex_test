@@ -1,4 +1,7 @@
 import sys
+import asyncio
+import os
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -65,6 +68,74 @@ class TabApiTests(unittest.IsolatedAsyncioTestCase):
         await server.FileYStore(str(path)).apply_updates(persisted)
         self.assertEqual(server.ydoc_to_text(persisted), target)
         self.assertNotIn('pending_snapshot', self.store.document(main['id']))
+
+    async def test_restart_keeps_newer_regular_snapshot_and_backs_up_stale_store(self):
+        main = self.store.document(self.space['id'])
+        path = server.ystore_path(main['id'])
+        old = server.Y.YDoc()
+        server.replace_ydoc_text(old, '% Several days old')
+        await server.FileYStore(str(path)).encode_state_as_update(old)
+        target = '% Latest saved task\n@anna'
+        self.store.write(main, target)
+        main.pop('pending_snapshot', None)
+        stamp = time.time() + 1
+        os.utime(self.store.path(main), (stamp, stamp))
+        self.store.save()
+        room = server.YRoom(ready=False, ystore=server.FileYStore(str(path)))
+        await server.hydrate_room_from_storage(main['id'], room)
+        self.assertEqual(server.ydoc_to_text(room.ydoc), target)
+        persisted = server.Y.YDoc()
+        await server.FileYStore(str(path)).apply_updates(persisted)
+        self.assertEqual(server.ydoc_to_text(persisted), target)
+        backups = [entry for entry in server.load_history_index(main['id'])
+                   if entry.get('label') == 'Startup recovery: alternate saved version']
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(server.read_history_checkpoint(main['id'], backups[0]['id']), '% Several days old')
+
+    async def test_restart_keeps_newer_collaboration_updates_after_crash(self):
+        main = self.store.document(self.space['id'])
+        previous = self.store.read(main)
+        main.pop('pending_snapshot', None)
+        os.utime(self.store.path(main), (1, 1))
+        latest = server.Y.YDoc()
+        server.replace_ydoc_text(latest, '% Not yet snapshotted')
+        path = server.ystore_path(main['id'])
+        await server.FileYStore(str(path)).encode_state_as_update(latest)
+        room = server.YRoom(ready=False, ystore=server.FileYStore(str(path)))
+        await server.hydrate_room_from_storage(main['id'], room)
+        self.assertEqual(server.ydoc_to_text(room.ydoc), '% Not yet snapshotted')
+        backup = server.load_history_index(main['id'])[-1]
+        self.assertEqual(server.read_history_checkpoint(main['id'], backup['id']), previous)
+
+    async def test_shutdown_flush_persists_room_without_pending_debounce(self):
+        main = self.store.document(self.space['id'])
+        path = server.ystore_path(main['id'])
+        room = server.YRoom(ready=False, ystore=server.FileYStore(str(path)))
+        await server.hydrate_room_from_storage(main['id'], room)
+        server.replace_ydoc_text(room.ydoc, '% Last edit before shutdown 🦄')
+        with patch.object(server.websocket_server, 'rooms', {server.room_name(main['id']): room}):
+            await server.flush_persistent_rooms()
+        self.assertEqual(self.store.read(main), '% Last edit before shutdown 🦄')
+        persisted = server.Y.YDoc()
+        await server.FileYStore(str(path)).apply_updates(persisted)
+        self.assertEqual(server.ydoc_to_text(persisted), self.store.read(main))
+
+    async def test_snapshot_read_does_not_cancel_its_own_save(self):
+        main = self.store.document(self.space['id'])
+        path = server.ystore_path(main['id'])
+        room = server.YRoom(ready=False, ystore=server.FileYStore(str(path)))
+        await server.hydrate_room_from_storage(main['id'], room)
+        with patch.object(server.websocket_server, 'rooms', {server.room_name(main['id']): room}), \
+                patch.object(server, 'SPACE_SAVE_DELAY', 0.01):
+            server.attach_snapshot_hook(main['id'], room)
+            server.replace_ydoc_text(room.ydoc, '% Saved after debounce')
+            task = server.space_save_tasks[server.room_name(main['id'])]
+            await task
+            self.assertEqual(self.store.read(main), '% Saved after debounce')
+            self.assertNotIn(server.room_name(main['id']), server.space_save_tasks)
+            persisted = server.Y.YDoc()
+            await server.FileYStore(str(path)).apply_updates(persisted)
+            self.assertEqual(server.ydoc_to_text(persisted), '% Saved after debounce')
 
     async def test_multi_document_transfer_is_atomic_and_authorized(self):
         main = self.store.document(self.space['id'])
